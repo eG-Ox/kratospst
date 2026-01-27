@@ -1,11 +1,736 @@
-// Placeholder para página de Cotizaciones
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  clientesService,
+  cotizacionesService,
+  kitsService
+} from '../../../core/services/apiServices';
+import '../styles/CotizacionesPage.css';
+
+const resolveApiBase = () => {
+  const envBase = process.env.REACT_APP_API_URL;
+  if (envBase && /^https?:\/\//i.test(envBase)) {
+    return envBase;
+  }
+  if (envBase && envBase.startsWith('/')) {
+    return `${window.location.origin}${envBase}`;
+  }
+  return 'http://localhost:5000/api';
+};
+
+const API_BASE = resolveApiBase();
+
+const emptyCliente = {
+  tipo_cliente: 'natural',
+  dni: '',
+  ruc: '',
+  nombre: '',
+  apellido: '',
+  razon_social: '',
+  direccion: '',
+  telefono: '',
+  correo: ''
+};
 
 const CotizacionesPage = () => {
+  const [tab, setTab] = useState('simple');
+  const [clientes, setClientes] = useState([]);
+  const [clienteId, setClienteId] = useState('');
+  const [mostrarModalCliente, setMostrarModalCliente] = useState(false);
+  const [clienteForm, setClienteForm] = useState(emptyCliente);
+  const [consultaMensaje, setConsultaMensaje] = useState('');
+  const [consultando, setConsultando] = useState(false);
+  const [error, setError] = useState('');
+  const [notas, setNotas] = useState('');
+  const [tipos, setTipos] = useState([]);
+  const [tipoId, setTipoId] = useState('');
+  const [marcas, setMarcas] = useState([]);
+  const [marca, setMarca] = useState('');
+  const [productos, setProductos] = useState([]);
+  const [productoId, setProductoId] = useState('');
+  const [busqueda, setBusqueda] = useState('');
+  const [resultados, setResultados] = useState([]);
+  const [kits, setKits] = useState([]);
+  const [items, setItems] = useState([]);
+
+  useEffect(() => {
+    cargarClientes();
+    cargarTipos();
+    cargarKits();
+  }, []);
+
+  useEffect(() => {
+    if (tipoId) {
+      cargarMarcas();
+    } else {
+      setMarcas([]);
+      setMarca('');
+      setProductos([]);
+      setProductoId('');
+    }
+  }, [tipoId]);
+
+  useEffect(() => {
+    if (marca) {
+      cargarProductos();
+    } else {
+      setProductos([]);
+      setProductoId('');
+    }
+  }, [marca]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (busqueda.trim().length < 1) {
+        setResultados([]);
+        return;
+      }
+      buscarProductos(busqueda.trim());
+    }, 350);
+    return () => clearTimeout(timeout);
+  }, [busqueda]);
+
+  const cargarClientes = async () => {
+    try {
+      const resp = await clientesService.getAll();
+      setClientes(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando clientes:', err);
+    }
+  };
+
+  const cargarTipos = async () => {
+    try {
+      const resp = await cotizacionesService.tiposPorAlmacen({ filtrar_stock: false });
+      setTipos(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando tipos:', err);
+    }
+  };
+
+  const cargarMarcas = async () => {
+    try {
+      const resp = await cotizacionesService.filtrosCotizacion({ tipo: tipoId });
+      setMarcas(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando marcas:', err);
+    }
+  };
+
+  const cargarProductos = async () => {
+    try {
+      const resp = await cotizacionesService.productosCotizacion({ tipo: tipoId, marca });
+      setProductos(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando productos:', err);
+    }
+  };
+
+  const buscarProductos = async (q) => {
+    try {
+      const resp = await cotizacionesService.buscarProductos({ q, limit: 20 });
+      setResultados(resp.data || []);
+    } catch (err) {
+      console.error('Error buscando productos:', err);
+    }
+  };
+
+  const cargarKits = async () => {
+    try {
+      const resp = await kitsService.listarActivos();
+      setKits(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando kits:', err);
+    }
+  };
+
+  const agregarProductoDesdeLista = async (id) => {
+    try {
+      const resp = await cotizacionesService.obtenerProducto(id, {});
+      const producto = resp.data;
+      const precio = Number(producto.precio_venta || 0);
+      setItems((prev) => [
+        ...prev,
+        {
+          producto_id: producto.id,
+          codigo: producto.codigo,
+          descripcion: producto.descripcion,
+          marca: producto.marca,
+          almacen_origen: 'productos',
+          cantidad: 1,
+          precio_regular: precio,
+          precio_unitario: precio,
+          origen: 'manual'
+        }
+      ]);
+    } catch (err) {
+      console.error('Error agregando producto:', err);
+    }
+  };
+
+  const agregarProductoDesdeFiltro = () => {
+    if (!productoId) {
+      return;
+    }
+    agregarProductoDesdeLista(productoId);
+  };
+
+  const agregarProductoDesdeBusqueda = (producto) => {
+    const precio = Number(producto.precio_venta || 0);
+    setItems((prev) => [
+      ...prev,
+      {
+        producto_id: producto.id,
+        codigo: producto.codigo,
+        descripcion: producto.descripcion,
+        marca: producto.marca,
+        almacen_origen: 'productos',
+        cantidad: 1,
+        precio_regular: precio,
+        precio_unitario: precio,
+        origen: 'manual'
+      }
+    ]);
+  };
+
+  const cargarKit = async (kitId) => {
+    try {
+      const resp = await kitsService.obtenerParaVenta(kitId);
+      const { productos_con_stock, productos_sin_stock } = resp.data;
+      if (productos_sin_stock?.length) {
+        setError('Algunos productos del kit no tienen stock.');
+      } else {
+        setError('');
+      }
+      const nuevos = (productos_con_stock || []).map((item) => ({
+        producto_id: item.producto_id,
+        codigo: item.codigo,
+        descripcion: item.descripcion,
+        marca: item.marca,
+        almacen_origen: 'kit',
+        cantidad: Number(item.cantidad || 0),
+        precio_regular: Number(item.precio_unitario || 0),
+        precio_unitario: Number(item.precio_final || item.precio_unitario || 0),
+        origen: 'kit'
+      }));
+      setItems((prev) => [...prev, ...nuevos]);
+    } catch (err) {
+      console.error('Error cargando kit:', err);
+      setError('Error al cargar kit');
+    }
+  };
+
+  const actualizarItem = (index, changes) => {
+    setItems((prev) =>
+      prev.map((item, idx) => (idx === index ? { ...item, ...changes } : item))
+    );
+  };
+
+  const quitarItem = (index) => {
+    setItems((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const totales = useMemo(() => {
+    let subtotal = 0;
+    let descuento = 0;
+    items.forEach((item) => {
+      const regular = Number(item.precio_regular || 0);
+      const final = Number(item.precio_unitario || 0);
+      const cantidad = Number(item.cantidad || 0);
+      subtotal += regular * cantidad;
+      if (regular > final) {
+        descuento += (regular - final) * cantidad;
+      }
+    });
+    const total = Math.max(subtotal - descuento, 0);
+    return { subtotal, descuento, total };
+  }, [items]);
+
+  const handleCrearCotizacion = async () => {
+    setError('');
+    if (!items.length) {
+      setError('Agrega productos antes de guardar.');
+      return;
+    }
+    try {
+      const payload = {
+        cliente_id: clienteId || null,
+        notas,
+        productos: items.map((item) => ({
+          producto_id: item.producto_id,
+          cantidad: item.cantidad,
+          precio_unitario: item.precio_unitario,
+          precio_regular: item.precio_regular,
+          almacen_origen: item.almacen_origen
+        }))
+      };
+      const resp = await cotizacionesService.crear(payload);
+      const cotizacionId = resp.data?.id;
+      if (cotizacionId) {
+        const token = localStorage.getItem('token');
+        const url = token
+          ? `${API_BASE}/cotizaciones/pdf/${cotizacionId}?token=${encodeURIComponent(token)}`
+          : `${API_BASE}/cotizaciones/pdf/${cotizacionId}`;
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
+      setItems([]);
+      setNotas('');
+      setClienteId('');
+      setError('');
+    } catch (err) {
+      console.error('Error creando cotizacion:', err);
+      setError(err.response?.data?.error || 'Error al guardar cotizacion');
+    }
+  };
+
+  const resetClienteForm = () => {
+    setClienteForm(emptyCliente);
+    setConsultaMensaje('');
+  };
+
+  const consultarDocumento = async () => {
+    setConsultaMensaje('');
+    if (clienteForm.tipo_cliente === 'natural') {
+      if (!/^\d{8}$/.test(clienteForm.dni || '')) {
+        setConsultaMensaje('El DNI debe tener 8 digitos.');
+        return;
+      }
+      try {
+        setConsultando(true);
+        const resp = await clientesService.consultaDni(clienteForm.dni);
+        if (resp.data?.success) {
+          setClienteForm((prev) => ({
+            ...prev,
+            nombre: resp.data.nombre || '',
+            apellido: resp.data.apellido || ''
+          }));
+          setConsultaMensaje('Datos obtenidos.');
+        } else {
+          setConsultaMensaje(resp.data?.error || 'No se encontraron datos.');
+        }
+      } catch (err) {
+        console.error('Error consultando DNI:', err);
+        setConsultaMensaje('Error consultando DNI.');
+      } finally {
+        setConsultando(false);
+      }
+      return;
+    }
+
+    if (!/^\d{11}$/.test(clienteForm.ruc || '')) {
+      setConsultaMensaje('El RUC debe tener 11 digitos.');
+      return;
+    }
+    try {
+      setConsultando(true);
+      const resp = await clientesService.consultaRuc(clienteForm.ruc);
+      if (resp.data?.success) {
+        setClienteForm((prev) => ({
+          ...prev,
+          razon_social: resp.data.razon_social || '',
+          direccion: resp.data.direccion || prev.direccion
+        }));
+        setConsultaMensaje('Datos obtenidos.');
+      } else {
+        setConsultaMensaje(resp.data?.error || 'No se encontraron datos.');
+      }
+    } catch (err) {
+      console.error('Error consultando RUC:', err);
+      setConsultaMensaje('Error consultando RUC.');
+    } finally {
+      setConsultando(false);
+    }
+  };
+
+  const crearCliente = async () => {
+    try {
+      const resp = await clientesService.create(clienteForm);
+      await cargarClientes();
+      setClienteId(resp.data?.id || '');
+      setMostrarModalCliente(false);
+      resetClienteForm();
+    } catch (err) {
+      console.error('Error creando cliente:', err);
+      setError(err.response?.data?.error || 'Error al crear cliente');
+    }
+  };
+
   return (
-    <div className="placeholder-container">
-      <h1>💼 Cotizaciones</h1>
-      <p>Módulo de Cotizaciones en desarrollo...</p>
+    <div className="cotizaciones-container">
+      <div className="cotizaciones-header">
+        <h1>Nueva Cotizacion</h1>
+      </div>
+
+      {error && <div className="error-message">{error}</div>}
+
+      <div className="cotizacion-card">
+        <div className="cotizacion-section">
+          <label>Cliente</label>
+          <div className="cliente-row">
+            <select value={clienteId} onChange={(e) => setClienteId(e.target.value)}>
+              <option value="">Selecciona un cliente</option>
+              {clientes.map((cliente) => (
+                <option key={cliente.id} value={cliente.id}>
+                  {cliente.tipo_cliente === 'natural'
+                    ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim()
+                    : cliente.razon_social}{' '}
+                  ({cliente.dni || cliente.ruc})
+                </option>
+              ))}
+            </select>
+            <button type="button" className="btn-secondary" onClick={() => setMostrarModalCliente(true)}>
+              Nuevo cliente
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="tabs">
+        <button className={tab === 'simple' ? 'active' : ''} onClick={() => setTab('simple')}>
+          Busqueda Simple
+        </button>
+        <button className={tab === 'avanzada' ? 'active' : ''} onClick={() => setTab('avanzada')}>
+          Busqueda Avanzada
+        </button>
+        <button className={tab === 'kits' ? 'active' : ''} onClick={() => setTab('kits')}>
+          Kits
+        </button>
+      </div>
+
+      <div className="cotizacion-panel">
+        {tab === 'simple' && (
+          <div className="filtros-grid">
+            <div className="form-group">
+              <label>Tipo</label>
+              <select value={tipoId} onChange={(e) => setTipoId(e.target.value)}>
+                <option value="">Selecciona</option>
+                {tipos.map((tipo) => (
+                  <option key={tipo.id} value={tipo.id}>
+                    {tipo.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Marca</label>
+              <select value={marca} onChange={(e) => setMarca(e.target.value)}>
+                <option value="">Selecciona</option>
+                {marcas.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Producto</label>
+              <select value={productoId} onChange={(e) => setProductoId(e.target.value)}>
+                <option value="">Selecciona</option>
+                {productos.map((prod) => (
+                  <option key={prod.id} value={prod.id}>
+                    {prod.codigo} - {prod.descripcion}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button type="button" className="btn-primary" onClick={agregarProductoDesdeFiltro}>
+              Agregar producto
+            </button>
+          </div>
+        )}
+
+        {tab === 'avanzada' && (
+          <div className="busqueda-avanzada">
+            <input
+              type="text"
+              placeholder="Buscar por codigo, descripcion o marca"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+            />
+            <div className="resultados">
+              {resultados.map((producto) => (
+                <button
+                  type="button"
+                  className="resultado-item"
+                  key={`${producto.id}-${producto.codigo}`}
+                  onClick={() => agregarProductoDesdeBusqueda(producto)}
+                >
+                  {producto.codigo} - {producto.descripcion} ({producto.marca})
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {tab === 'kits' && (
+          <div className="kits-lista">
+            {kits.map((kit) => (
+              <div className="kit-item" key={kit.id}>
+                <div>
+                  <h4>{kit.nombre}</h4>
+                  <p>{kit.descripcion || '-'}</p>
+                </div>
+                <button type="button" className="btn-primary" onClick={() => cargarKit(kit.id)}>
+                  Cargar kit
+                </button>
+              </div>
+            ))}
+            {kits.length === 0 && <p>No hay kits activos.</p>}
+          </div>
+        )}
+      </div>
+
+      <div className="cotizacion-detalle">
+        <h3>Productos agregados</h3>
+        {items.length === 0 ? (
+          <p className="empty-message">No hay productos agregados.</p>
+        ) : (
+          <table className="cotizacion-table">
+            <thead>
+              <tr>
+                <th>Codigo</th>
+                <th>Descripcion</th>
+                <th>Regular</th>
+                <th>Final</th>
+                <th>Cantidad</th>
+                <th>Subtotal</th>
+                <th>Origen</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, index) => {
+                const subtotal = Number(item.cantidad || 0) * Number(item.precio_unitario || 0);
+                return (
+                  <tr key={`${item.producto_id}-${index}`}>
+                    <td>{item.codigo}</td>
+                    <td>{item.descripcion}</td>
+                    <td>
+                      <input
+                        type="number"
+                        value={item.precio_regular}
+                        onChange={(e) =>
+                          actualizarItem(index, { precio_regular: Number(e.target.value || 0) })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        value={item.precio_unitario}
+                        onChange={(e) =>
+                          actualizarItem(index, { precio_unitario: Number(e.target.value || 0) })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        min="1"
+                        value={item.cantidad}
+                        onChange={(e) =>
+                          actualizarItem(index, { cantidad: Number(e.target.value || 1) })
+                        }
+                      />
+                    </td>
+                    <td>{subtotal.toFixed(2)}</td>
+                    <td>
+                      {item.origen === 'kit' ? <span className="tag-kit">Kit</span> : 'Manual'}
+                    </td>
+                    <td>
+                      <button className="btn-delete" onClick={() => quitarItem(index)}>
+                        Quitar
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="cotizacion-totales">
+        <div>
+          <label>Notas / Observaciones</label>
+          <textarea value={notas} onChange={(e) => setNotas(e.target.value)} />
+        </div>
+        <div className="totales-box">
+          <p>Subtotal: {totales.subtotal.toFixed(2)}</p>
+          <p>Descuento: {totales.descuento.toFixed(2)}</p>
+          <p className="total">Total: {totales.total.toFixed(2)}</p>
+          <button className="btn-success" onClick={handleCrearCotizacion}>
+            Guardar cotizacion
+          </button>
+        </div>
+      </div>
+
+      {mostrarModalCliente && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2>Nuevo Cliente</h2>
+              <button
+                type="button"
+                className="btn-icon"
+                onClick={() => {
+                  resetClienteForm();
+                  setMostrarModalCliente(false);
+                }}
+              >
+                X
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>Tipo de cliente</label>
+                <select
+                  value={clienteForm.tipo_cliente}
+                  onChange={(e) =>
+                    setClienteForm({ ...clienteForm, tipo_cliente: e.target.value })
+                  }
+                >
+                  <option value="natural">Natural</option>
+                  <option value="juridico">Juridico</option>
+                </select>
+              </div>
+
+              {clienteForm.tipo_cliente === 'natural' ? (
+                <>
+                  <div className="form-group">
+                    <label>DNI</label>
+                    <div className="consulta-row">
+                      <input
+                        type="text"
+                        value={clienteForm.dni}
+                        onChange={(e) =>
+                          setClienteForm({ ...clienteForm, dni: e.target.value.trim() })
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={consultarDocumento}
+                        disabled={consultando}
+                      >
+                        {consultando ? 'Consultando...' : 'Consultar'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Nombre</label>
+                      <input
+                        type="text"
+                        value={clienteForm.nombre}
+                        onChange={(e) =>
+                          setClienteForm({ ...clienteForm, nombre: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>Apellido</label>
+                      <input
+                        type="text"
+                        value={clienteForm.apellido}
+                        onChange={(e) =>
+                          setClienteForm({ ...clienteForm, apellido: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="form-group">
+                    <label>RUC</label>
+                    <div className="consulta-row">
+                      <input
+                        type="text"
+                        value={clienteForm.ruc}
+                        onChange={(e) =>
+                          setClienteForm({ ...clienteForm, ruc: e.target.value.trim() })
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={consultarDocumento}
+                        disabled={consultando}
+                      >
+                        {consultando ? 'Consultando...' : 'Consultar'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Razon social</label>
+                      <input
+                        type="text"
+                        value={clienteForm.razon_social}
+                        onChange={(e) =>
+                          setClienteForm({ ...clienteForm, razon_social: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {consultaMensaje && <p className="consulta-mensaje">{consultaMensaje}</p>}
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Direccion</label>
+                  <input
+                    type="text"
+                    value={clienteForm.direccion}
+                    onChange={(e) =>
+                      setClienteForm({ ...clienteForm, direccion: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Telefono</label>
+                  <input
+                    type="text"
+                    value={clienteForm.telefono}
+                    onChange={(e) =>
+                      setClienteForm({ ...clienteForm, telefono: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Correo</label>
+                  <input
+                    type="email"
+                    value={clienteForm.correo}
+                    onChange={(e) =>
+                      setClienteForm({ ...clienteForm, correo: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-success" onClick={crearCliente}>
+                Crear
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => {
+                  resetClienteForm();
+                  setMostrarModalCliente(false);
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

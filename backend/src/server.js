@@ -15,6 +15,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Servir archivos estáticos
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/static', express.static(path.join(__dirname, 'static')));
 
 // Montar todas las rutas de API
 app.use('/api', apiRoutes);

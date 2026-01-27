@@ -123,6 +123,125 @@
   color: #7f8c8d;
 }
 
+.camera-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.camera-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 31, 0.65);
+}
+
+.camera-modal__content {
+  position: relative;
+  width: min(720px, 92vw);
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.camera-modal__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.camera-modal__header h3 {
+  margin: 0;
+  color: #2c3e50;
+}
+
+.camera-modal__preview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #1f2c34;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.camera-modal__preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.scan-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.scan-cross {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  border: 2px solid rgba(255, 255, 255, 0.65);
+  border-radius: 10px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.25);
+}
+
+.scan-cross::before,
+.scan-cross::after {
+  content: '';
+  position: absolute;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.scan-cross::before {
+  left: 50%;
+  top: 10%;
+  width: 2px;
+  height: 80%;
+  transform: translateX(-50%);
+}
+
+.scan-cross::after {
+  top: 50%;
+  left: 10%;
+  height: 2px;
+  width: 80%;
+  transform: translateY(-50%);
+}
+
+.scan-line {
+  position: absolute;
+  width: 140px;
+  height: 2px;
+  background: rgba(0, 255, 165, 0.8);
+  box-shadow: 0 0 12px rgba(0, 255, 165, 0.8);
+  animation: scan-move 2s ease-in-out infinite;
+}
+
+@keyframes scan-move {
+  0% {
+    transform: translateY(-50px);
+  }
+  50% {
+    transform: translateY(50px);
+  }
+  100% {
+    transform: translateY(-50px);
+  }
+}
+.camera-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .barcode-card label {
   display: block;
   margin-bottom: 8px;
@@ -130,17 +249,75 @@
   color: #2c3e50;
 }
 
+.code-input-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
 .barcode-card input {
+  flex: 1;
   width: 100%;
   padding: 10px 12px;
   border-radius: 6px;
   border: 1px solid #ddd;
 }
 
+.btn-camera {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  border: 1px solid #3498db;
+  background: #ecf5ff;
+  color: #1d6fa5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-camera svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.btn-camera:hover {
+  background: #d9ecff;
+  transform: translateY(-1px);
+}
+
 .barcode-status {
   margin-top: 10px;
   font-size: 13px;
   color: #7f8c8d;
+}
+
+.producto-datos {
+  margin-top: 12px;
+  background: #f7f9fb;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 13px;
+  color: #2c3e50;
+}
+
+.producto-datos p {
+  margin: 6px 0;
+}
+
+.producto-vacio {
+  color: #7f8c8d;
+}
+
+.btn-link {
+  background: transparent;
+  border: none;
+  color: #3498db;
+  cursor: pointer;
+  padding: 0;
+  font-weight: 600;
 }
 
 .info-card h3 {
@@ -264,5 +441,14 @@
     width: 100%;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .code-input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .btn-camera {
+    width: 100%;
   }
 }

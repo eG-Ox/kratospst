@@ -1,4 +1,4 @@
-192.168.18.73:443 {
+192.168.18.131:443 {
   tls internal
 
   handle /api/* {
@@ -6,8 +6,17 @@
   }
 
   handle {
-    root * "G:/PROYECTO KRATOS/frontend/build"
+    root * "C:\Users\user\Documents\marco\NODE\PROYECTO KRATOS\frontend\build"
     try_files {path} /index.html
+    file_server
+  }
+
+  handle /static/img/* {
+    reverse_proxy 127.0.0.1:5000
+  }
+
+  handle /static/* {
+    root * "C:\Users\user\Documents\marco\NODE\PROYECTO KRATOS\frontend\build"
     file_server
   }
 }

@@ -9,6 +9,8 @@ import TiposMaquinasPage from './modules/tipos-maquinas/pages/TiposMaquinasPage'
 import GestorInventarioPage from './modules/movimientos/pages/GestorInventarioPage';
 import KitsPage from './modules/kits/pages/KitsPage';
 import CotizacionesPage from './modules/cotizaciones/pages/CotizacionesPage';
+import ClientesPage from './modules/clientes/pages/ClientesPage';
+import UsuariosPage from './modules/usuarios/pages/UsuariosPage';
 
 // Componentes compartidos
 import Navbar from './shared/components/Navbar';
@@ -111,6 +113,22 @@ function App() {
           element={
             <ProtectedRoute isAuthenticated={isAuthenticated}>
               <CotizacionesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/clientes"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <ClientesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/usuarios"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <UsuariosPage />
             </ProtectedRoute>
           }
         />

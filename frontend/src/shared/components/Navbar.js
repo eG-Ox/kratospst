@@ -25,6 +25,10 @@ const Navbar = ({ usuario, onLogout }) => {
         <Link to="/inventario" className="nav-link">Gestor Inventario</Link>
         <Link to="/kits" className="nav-link">Kits</Link>
         <Link to="/cotizaciones" className="nav-link">Cotizaciones</Link>
+        <Link to="/clientes" className="nav-link">Clientes</Link>
+        <Link to="/usuarios" className="nav-link">
+          {usuario?.rol === 'admin' ? 'Usuarios' : 'Mi Perfil'}
+        </Link>
       </div>
 
       <div className="navbar-user">

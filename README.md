@@ -108,7 +108,7 @@ npm run build
 
 3) Ejecutar Caddy:
 ```bash
-caddy run --config "G:\PROYECTO KRATOS\caddyfile" --adapter caddyfile
+caddy run --config "C:\Users\user\Documents\marco\NODE\PROYECTO KRATOS\caddyfile" --adapter caddyfile
 ```
 
 Abrir `https://192.168.18.73`.

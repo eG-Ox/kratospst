@@ -1,13 +1,18 @@
 const jwt = require('jsonwebtoken');
 
+const obtenerToken = (req) => {
+  const headerToken = req.headers.authorization?.split(' ')[1];
+  if (headerToken) return headerToken;
+  if (req.query && req.query.token) return req.query.token;
+  return null;
+};
+
 const autenticar = (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    
+    const token = obtenerToken(req);
     if (!token) {
       return res.status(401).json({ error: 'Token no proporcionado' });
     }
-    
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'tu_secreto_aqui');
     req.usuario = decoded;
     next();

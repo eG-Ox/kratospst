@@ -1,0 +1,50 @@
+.usuarios-container {
+  padding: 30px 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.usuarios-header {
+  margin-bottom: 20px;
+}
+
+.usuarios-header h1 {
+  color: #2c3e50;
+  font-size: 30px;
+}
+
+.usuarios-table-container {
+  background: white;
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.usuarios-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.usuarios-table th,
+.usuarios-table td {
+  padding: 12px;
+  border-bottom: 1px solid #f0f0f0;
+  text-align: left;
+}
+
+.usuarios-table th {
+  background: #f8f9fa;
+  font-weight: 600;
+}
+
+.perfil-form {
+  background: white;
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  max-width: 520px;
+}
+
+.perfil-form .form-group {
+  margin-bottom: 16px;
+}

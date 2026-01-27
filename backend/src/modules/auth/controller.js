@@ -20,7 +20,7 @@ exports.login = async (req, res) => {
   try {
     const connection = await pool.getConnection();
     const [usuarios] = await connection.execute(
-      'SELECT id, nombre, email, contraseña, rol FROM usuarios WHERE email = ? AND activo = TRUE',
+      'SELECT id, nombre, email, telefono, contraseña, rol FROM usuarios WHERE email = ? AND activo = TRUE',
       [email]
     );
     connection.release();
@@ -37,7 +37,13 @@ exports.login = async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: usuario.id, nombre: usuario.nombre, email: usuario.email, rol: usuario.rol },
+      {
+        id: usuario.id,
+        nombre: usuario.nombre,
+        email: usuario.email,
+        rol: usuario.rol,
+        telefono: usuario.telefono || null
+      },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -49,7 +55,8 @@ exports.login = async (req, res) => {
         id: usuario.id,
         nombre: usuario.nombre,
         email: usuario.email,
-        rol: usuario.rol
+        rol: usuario.rol,
+        telefono: usuario.telefono || null
       }
     });
   } catch (error) {
@@ -60,7 +67,7 @@ exports.login = async (req, res) => {
 
 // Registro
 exports.registro = async (req, res) => {
-  const { nombre, email, contraseña, rol = 'operario' } = req.body;
+  const { nombre, email, telefono, contraseña, rol = 'operario' } = req.body;
 
   if (!nombre || !email || !contraseña) {
     return res.status(400).json({ error: 'Nombre, email y contraseña requeridos' });
@@ -72,13 +79,13 @@ exports.registro = async (req, res) => {
 
     const connection = await pool.getConnection();
     const [result] = await connection.execute(
-      'INSERT INTO usuarios (nombre, email, contraseña, rol) VALUES (?, ?, ?, ?)',
-      [nombre, email, contraseñaHasheada, rol]
+      'INSERT INTO usuarios (nombre, email, telefono, contraseña, rol) VALUES (?, ?, ?, ?, ?)',
+      [nombre, email, telefono || null, contraseñaHasheada, rol]
     );
     connection.release();
 
     const token = jwt.sign(
-      { id: result.insertId, nombre, email, rol },
+      { id: result.insertId, nombre, email, rol, telefono: telefono || null },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -86,7 +93,7 @@ exports.registro = async (req, res) => {
     res.status(201).json({
       mensaje: 'Usuario registrado exitosamente',
       token,
-      usuario: { id: result.insertId, nombre, email, rol }
+      usuario: { id: result.insertId, nombre, email, rol, telefono: telefono || null }
     });
   } catch (error) {
     console.error('Error en registro:', error);
@@ -102,7 +109,7 @@ exports.obtenerUsuarioActual = async (req, res) => {
   try {
     const connection = await pool.getConnection();
     const [usuarios] = await connection.execute(
-      'SELECT id, nombre, email, rol FROM usuarios WHERE id = ?',
+      'SELECT id, nombre, email, telefono, rol FROM usuarios WHERE id = ?',
       [req.usuario.id]
     );
     connection.release();
