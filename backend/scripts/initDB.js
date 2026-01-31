@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   email VARCHAR(100) NOT NULL UNIQUE,
   telefono VARCHAR(30),
   contraseña VARCHAR(255) NOT NULL,
-  rol ENUM('admin', 'operario') NOT NULL DEFAULT 'operario',
+  rol ENUM('admin', 'ventas', 'logistica') NOT NULL DEFAULT 'ventas',
   activo BOOLEAN DEFAULT TRUE,
   fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS maquinas (
   tipo_maquina_id INT NOT NULL,
   marca VARCHAR(100) NOT NULL,
   descripcion TEXT,
+  ubicacion_letra CHAR(1),
+  ubicacion_numero INT,
   stock INT NOT NULL DEFAULT 0,
   precio_compra DECIMAL(10, 2) NOT NULL,
   precio_venta DECIMAL(10, 2) NOT NULL,
@@ -147,6 +149,88 @@ CREATE TABLE IF NOT EXISTS kit_productos (
 );
 `;
 
+// Crear tabla historial_acciones
+const crearHistorialAcciones = `
+CREATE TABLE IF NOT EXISTS historial_acciones (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  entidad VARCHAR(50) NOT NULL,
+  entidad_id INT,
+  usuario_id INT,
+  accion VARCHAR(50) NOT NULL,
+  descripcion TEXT,
+  antes_json TEXT,
+  despues_json TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_entidad (entidad),
+  INDEX idx_usuario (usuario_id),
+  INDEX idx_fecha (created_at)
+);
+`;
+
+// Tabla inventarios generales
+const crearInventarios = `
+CREATE TABLE IF NOT EXISTS inventarios (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  usuario_id INT NOT NULL,
+  estado ENUM('abierto', 'cerrado', 'aplicado') DEFAULT 'abierto',
+  observaciones TEXT,
+  aplicado_at TIMESTAMP NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE RESTRICT,
+  INDEX idx_estado (estado),
+  INDEX idx_fecha (created_at)
+);
+`;
+
+// Tabla detalle de inventarios
+const crearInventarioDetalle = `
+CREATE TABLE IF NOT EXISTS inventario_detalle (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  inventario_id INT NOT NULL,
+  producto_id INT NOT NULL,
+  ubicacion_letra CHAR(1),
+  ubicacion_numero INT,
+  stock_actual INT NOT NULL,
+  conteo INT NOT NULL DEFAULT 0,
+  diferencia INT NOT NULL DEFAULT 0,
+  FOREIGN KEY (inventario_id) REFERENCES inventarios(id) ON DELETE CASCADE,
+  FOREIGN KEY (producto_id) REFERENCES maquinas(id) ON DELETE RESTRICT,
+  INDEX idx_inventario (inventario_id),
+  INDEX idx_producto (producto_id)
+);
+`;
+
+// Tabla roles
+const crearRoles = `
+CREATE TABLE IF NOT EXISTS roles (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  nombre VARCHAR(30) NOT NULL UNIQUE
+);
+`;
+
+// Tabla permisos
+const crearPermisos = `
+CREATE TABLE IF NOT EXISTS permisos (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  clave VARCHAR(100) NOT NULL UNIQUE,
+  descripcion VARCHAR(200),
+  grupo VARCHAR(60)
+);
+`;
+
+// Tabla rol_permisos
+const crearRolPermisos = `
+CREATE TABLE IF NOT EXISTS rol_permisos (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  rol_id INT NOT NULL,
+  permiso_id INT NOT NULL,
+  permitido BOOLEAN DEFAULT TRUE,
+  UNIQUE KEY uniq_rol_permiso (rol_id, permiso_id),
+  FOREIGN KEY (rol_id) REFERENCES roles(id) ON DELETE CASCADE,
+  FOREIGN KEY (permiso_id) REFERENCES permisos(id) ON DELETE CASCADE
+);
+`;
+
 // Crear tabla de clientes
 const crearClientes = `
 CREATE TABLE IF NOT EXISTS clientes (
@@ -185,6 +269,22 @@ async function inicializarBaseDatos() {
         throw error;
       }
     }
+
+    // Actualizar enum de roles si ya existÃ­a
+    try {
+      await connection.execute(
+        "ALTER TABLE usuarios MODIFY COLUMN rol ENUM('admin','ventas','logistica') NOT NULL DEFAULT 'ventas'"
+      );
+    } catch (error) {
+      console.log('Aviso actualizando roles:', error.message);
+    }
+
+    // Migrar rol antiguo operario a ventas
+    try {
+      await connection.execute("UPDATE usuarios SET rol = 'ventas' WHERE rol = 'operario'");
+    } catch (error) {
+      console.log('Aviso migrando roles:', error.message);
+    }
     
     console.log('Creando tabla tipos_maquinas...');
     await connection.execute(crearTiposMaquinas);
@@ -193,6 +293,22 @@ async function inicializarBaseDatos() {
     console.log('Creando tabla maquinas...');
     await connection.execute(crearMaquinas);
     console.log('✓ Tabla maquinas creada exitosamente');
+
+    // Asegurar columnas de ubicacion en maquinas
+    try {
+      await connection.execute('ALTER TABLE maquinas ADD COLUMN ubicacion_letra CHAR(1) NULL AFTER descripcion');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute('ALTER TABLE maquinas ADD COLUMN ubicacion_numero INT NULL AFTER ubicacion_letra');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
     
     console.log('Creando tabla ingresos_salidas...');
     await connection.execute(crearIngresouSalidas);
@@ -222,6 +338,30 @@ async function inicializarBaseDatos() {
     await connection.execute(crearClientes);
     console.log('✓ Tabla clientes creada exitosamente');
 
+    console.log('Creando tabla inventarios...');
+    await connection.execute(crearInventarios);
+    console.log('✓ Tabla inventarios creada exitosamente');
+
+    console.log('Creando tabla inventario_detalle...');
+    await connection.execute(crearInventarioDetalle);
+    console.log('✓ Tabla inventario_detalle creada exitosamente');
+
+    // Asegurar columnas de ubicacion en inventario_detalle
+    try {
+      await connection.execute('ALTER TABLE inventario_detalle ADD COLUMN ubicacion_letra CHAR(1) NULL AFTER producto_id');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute('ALTER TABLE inventario_detalle ADD COLUMN ubicacion_numero INT NULL AFTER ubicacion_letra');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+
     // Asegurar columna usuario_id en clientes si ya existía sin esa columna
     try {
       await connection.execute('ALTER TABLE clientes ADD COLUMN usuario_id INT NULL');
@@ -229,6 +369,90 @@ async function inicializarBaseDatos() {
     } catch (error) {
       if (error.code !== 'ER_DUP_FIELDNAME' && error.code !== 'ER_DUP_KEYNAME') {
         throw error;
+      }
+    }
+
+    console.log('Creando tabla historial_acciones...');
+    await connection.execute(crearHistorialAcciones);
+    console.log('✓ Tabla historial_acciones creada exitosamente');
+
+    console.log('Creando tabla roles...');
+    await connection.execute(crearRoles);
+    console.log('✓ Tabla roles creada exitosamente');
+
+    console.log('Creando tabla permisos...');
+    await connection.execute(crearPermisos);
+    console.log('✓ Tabla permisos creada exitosamente');
+
+    console.log('Creando tabla rol_permisos...');
+    await connection.execute(crearRolPermisos);
+    console.log('✓ Tabla rol_permisos creada exitosamente');
+
+    // Insertar roles por defecto
+    const rolesBase = ['admin', 'ventas', 'logistica'];
+    for (const rol of rolesBase) {
+      try {
+        await connection.execute('INSERT INTO roles (nombre) VALUES (?)', [rol]);
+      } catch (error) {
+        if (error.code !== 'ER_DUP_ENTRY') {
+          throw error;
+        }
+      }
+    }
+
+    // Insertar permisos base
+    const permisosBase = [
+      { clave: 'productos.ver', descripcion: 'Ver productos', grupo: 'Inventario' },
+      { clave: 'productos.editar', descripcion: 'Crear/Editar productos', grupo: 'Inventario' },
+      { clave: 'productos.precio_compra.ver', descripcion: 'Ver precio de compra', grupo: 'Inventario' },
+      { clave: 'tipos_maquinas.ver', descripcion: 'Ver tipos de maquinas', grupo: 'Inventario' },
+      { clave: 'tipos_maquinas.editar', descripcion: 'Editar tipos de maquinas', grupo: 'Inventario' },
+      { clave: 'movimientos.ver', descripcion: 'Ver movimientos', grupo: 'Inventario' },
+      { clave: 'movimientos.registrar', descripcion: 'Registrar movimientos', grupo: 'Inventario' },
+      { clave: 'historial.ver', descripcion: 'Ver historial general', grupo: 'Inventario' },
+      { clave: 'inventario_general.ver', descripcion: 'Ver inventario general', grupo: 'Inventario' },
+      { clave: 'inventario_general.editar', descripcion: 'Crear/Editar inventario general', grupo: 'Inventario' },
+      { clave: 'inventario_general.aplicar', descripcion: 'Aplicar stock inventario general', grupo: 'Inventario' },
+      { clave: 'kits.ver', descripcion: 'Ver kits', grupo: 'Cotizaciones' },
+      { clave: 'kits.editar', descripcion: 'Crear/Editar kits', grupo: 'Cotizaciones' },
+      { clave: 'cotizaciones.ver', descripcion: 'Ver cotizaciones', grupo: 'Cotizaciones' },
+      { clave: 'cotizaciones.editar', descripcion: 'Crear/Editar cotizaciones', grupo: 'Cotizaciones' },
+      { clave: 'cotizaciones.historial.ver', descripcion: 'Ver historial de cotizaciones', grupo: 'Cotizaciones' },
+      { clave: 'clientes.ver', descripcion: 'Ver clientes', grupo: 'Clientes' },
+      { clave: 'clientes.editar', descripcion: 'Crear/Editar clientes', grupo: 'Clientes' },
+      { clave: 'usuarios.ver', descripcion: 'Ver usuarios', grupo: 'Cuentas' },
+      { clave: 'usuarios.editar', descripcion: 'Editar usuarios', grupo: 'Cuentas' },
+      { clave: 'permisos.editar', descripcion: 'Editar permisos por rol', grupo: 'Cuentas' }
+    ];
+
+    for (const permiso of permisosBase) {
+      try {
+        await connection.execute(
+          'INSERT INTO permisos (clave, descripcion, grupo) VALUES (?, ?, ?)',
+          [permiso.clave, permiso.descripcion, permiso.grupo]
+        );
+      } catch (error) {
+        if (error.code !== 'ER_DUP_ENTRY') {
+          throw error;
+        }
+      }
+    }
+
+    // Asignar todos los permisos a todos los roles por defecto
+    const [rolesRows] = await connection.execute('SELECT id, nombre FROM roles');
+    const [permisosRows] = await connection.execute('SELECT id, clave FROM permisos');
+    for (const rol of rolesRows) {
+      for (const permiso of permisosRows) {
+        try {
+          await connection.execute(
+            'INSERT INTO rol_permisos (rol_id, permiso_id, permitido) VALUES (?, ?, TRUE)',
+            [rol.id, permiso.id]
+          );
+        } catch (error) {
+          if (error.code !== 'ER_DUP_ENTRY') {
+            throw error;
+          }
+        }
       }
     }
     

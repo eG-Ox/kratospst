@@ -5,6 +5,7 @@ import {
   productosService,
   tiposMaquinasService
 } from '../../../core/services/apiServices';
+import { parseQRPayload } from '../../../shared/utils/qr';
 import '../styles/MovimientosPage.css';
 
 const GestorInventarioPage = () => {
@@ -21,6 +22,7 @@ const GestorInventarioPage = () => {
   const [cameraActive, setCameraActive] = useState(false);
   const [lectorSoportado, setLectorSoportado] = useState(true);
   const [scanActivo, setScanActivo] = useState(false);
+  const [qrData, setQrData] = useState(null);
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -29,6 +31,8 @@ const GestorInventarioPage = () => {
   const zxingControlRef = useRef(null);
   const rafRef = useRef(null);
   const ultimoDetectadoRef = useRef(0);
+  const ultimoTextoRef = useRef('');
+  const ultimoTextoAtRef = useRef(0);
   const scanActivoRef = useRef(false);
 
   useEffect(() => {
@@ -38,6 +42,12 @@ const GestorInventarioPage = () => {
   useEffect(() => {
     return () => detenerCamara();
   }, []);
+
+  useEffect(() => {
+    if (modo !== 'ingreso') {
+      setQrData(null);
+    }
+  }, [modo]);
 
   useEffect(() => {
     if (cameraActive && videoRef.current && streamRef.current) {
@@ -75,9 +85,36 @@ const GestorInventarioPage = () => {
     [productos, codigo]
   );
 
+  const formatearUbicacion = (producto) => {
+    if (!producto) return '-';
+    const letra = producto.ubicacion_letra || '';
+    const numero = producto.ubicacion_numero || '';
+    return letra || numero ? `${letra}${numero}` : '-';
+  };
+
+  const parsearQR = (textoQR) => {
+    const parsed = parseQRPayload(textoQR);
+    if (!parsed.ok) {
+      setError(parsed.error || 'QR invalido');
+      return null;
+    }
+    if (parsed.partial) {
+      setQrData(null);
+      return { codigo: parsed.data.codigo, partial: true };
+    }
+    if (modo === 'ingreso') {
+      setQrData(parsed.data);
+    } else {
+      setQrData(null);
+    }
+    return parsed.data;
+  };
+
   const activarCamara = async () => {
     setError('');
     setScanActivoSeguro(false);
+    ultimoTextoRef.current = '';
+    ultimoTextoAtRef.current = 0;
     try {
       if (!window.isSecureContext) {
         setError('Para usar la cámara en celular necesitas HTTPS. Abre el sitio en https:// o usa un túnel HTTPS.');
@@ -157,9 +194,19 @@ const GestorInventarioPage = () => {
 
   const procesarCodigoDetectado = (valor) => {
     const ahora = Date.now();
+    if (valor === ultimoTextoRef.current && ahora - ultimoTextoAtRef.current < 2500) {
+      return;
+    }
+    ultimoTextoRef.current = valor;
+    ultimoTextoAtRef.current = ahora;
     if (ahora - ultimoDetectadoRef.current > 1200) {
       ultimoDetectadoRef.current = ahora;
-      setCodigo(valor);
+      const parsed = parsearQR(valor);
+      if (parsed?.codigo) {
+        setCodigo(parsed.codigo);
+      } else {
+        setCodigo(valor);
+      }
       reproducirBeep();
       detenerCamara();
     }
@@ -243,6 +290,23 @@ const GestorInventarioPage = () => {
     return response.data.id;
   };
 
+  const obtenerTipoPorNombre = async (nombre) => {
+    const nombreNormalizado = String(nombre || '').trim();
+    if (!nombreNormalizado) {
+      return obtenerTipoDefault();
+    }
+    const existente = tipos.find(
+      (tipo) => String(tipo.nombre || '').toLowerCase() === nombreNormalizado.toLowerCase()
+    );
+    if (existente) return existente.id;
+    const response = await tiposMaquinasService.create({
+      nombre: nombreNormalizado,
+      descripcion: 'Creado desde QR'
+    });
+    setTipos((prev) => [...prev, response.data]);
+    return response.data.id;
+  };
+
   const crearProductoPorCodigo = async () => {
     const tipoId = await obtenerTipoDefault();
     const response = await productosService.create({
@@ -250,6 +314,23 @@ const GestorInventarioPage = () => {
       tipo_maquina_id: tipoId,
       marca: 'N/A',
       descripcion: '',
+      stock: 0,
+      precio_compra: 0,
+      precio_venta: 0,
+      precio_minimo: 0,
+      ficha_web: ''
+    });
+    return response.data.id;
+  };
+
+  const crearProductoDesdeQR = async (data) => {
+    const tipoId = await obtenerTipoPorNombre(data.tipo_maquina);
+    const response = await productosService.create({
+      codigo: data.codigo,
+      tipo_maquina_id: tipoId,
+      marca: data.marca,
+      descripcion: data.descripcion,
+      ubicacion: data.ubicacion,
       stock: 0,
       precio_compra: 0,
       precio_venta: 0,
@@ -270,6 +351,22 @@ const GestorInventarioPage = () => {
     }
 
     try {
+      let datosQR = modo === 'ingreso' ? qrData : null;
+      if (
+        modo === 'ingreso' &&
+        !datosQR &&
+        (codigo.includes('\n') || (codigo.match(/,/g) || []).length >= 3)
+      ) {
+        const parsed = parsearQR(codigo);
+        if (!parsed) {
+          return;
+        }
+        if (parsed?.codigo) {
+          setCodigo(parsed.codigo);
+          datosQR = parsed;
+        }
+      }
+
       const motivoFinal = (() => {
         if (motivo && numeroGuia) {
           return `${motivo} | Guia: ${numeroGuia}`;
@@ -289,7 +386,11 @@ const GestorInventarioPage = () => {
           setError('Producto no encontrado para salida');
           return;
         }
-        maquinaId = await crearProductoPorCodigo();
+        if (datosQR && !datosQR.partial) {
+          maquinaId = await crearProductoDesdeQR(datosQR);
+        } else {
+          maquinaId = await crearProductoPorCodigo();
+        }
       }
 
       const response = await movimientosService.registrar({
@@ -304,6 +405,7 @@ const GestorInventarioPage = () => {
       setMotivo('');
       setNumeroGuia('');
       await cargarDatos();
+      setQrData(null);
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       console.error('Error registrando movimiento:', err);
@@ -375,12 +477,30 @@ const GestorInventarioPage = () => {
                       <strong>Descripcion:</strong> {productoActual.descripcion || 'Sin descripcion'}
                     </p>
                     <p>
+                      <strong>Ubicacion:</strong> {formatearUbicacion(productoActual)}
+                    </p>
+                    <p>
                       <strong>Stock actual:</strong> {productoActual.stock}
+                    </p>
+                  </>
+                ) : qrData ? (
+                  <>
+                    <p>
+                      <strong>Producto:</strong> {qrData.marca}
+                    </p>
+                    <p>
+                      <strong>Descripcion:</strong> {qrData.descripcion}
+                    </p>
+                    <p>
+                      <strong>Ubicacion:</strong> {qrData.ubicacion}
+                    </p>
+                    <p className="producto-vacio">
+                      Producto no encontrado: se crear? si es ingreso
                     </p>
                   </>
                 ) : (
                   <p className="producto-vacio">
-                    Producto no encontrado: se creará si es ingreso
+                    Producto no encontrado: se crear? si es ingreso
                   </p>
                 )}
               </div>

@@ -1,4 +1,5 @@
 const pool = require('../../core/config/database');
+const { registrarHistorial } = require('../../shared/utils/historial');
 
 // Obtener todos los tipos de máquinas
 exports.getTiposMaquinas = async (req, res) => {
@@ -50,6 +51,15 @@ exports.crearTipoMaquina = async (req, res) => {
       'INSERT INTO tipos_maquinas (nombre, descripcion) VALUES (?, ?)',
       [nombre, descripcion || null]
     );
+    await registrarHistorial(connection, {
+      entidad: 'tipos_maquinas',
+      entidad_id: result.insertId,
+      usuario_id: req.usuario?.id,
+      accion: 'crear',
+      descripcion: `Tipo de maquina creado (${nombre})`,
+      antes: null,
+      despues: { id: result.insertId, nombre, descripcion: descripcion || null }
+    });
     connection.release();
     
     res.status(201).json({
@@ -72,10 +82,26 @@ exports.actualizarTipoMaquina = async (req, res) => {
   
   try {
     const connection = await pool.getConnection();
+    const [prev] = await connection.execute('SELECT * FROM tipos_maquinas WHERE id = ?', [
+      req.params.id
+    ]);
+    if (!prev.length) {
+      connection.release();
+      return res.status(404).json({ error: 'Tipo de mÃ¡quina no encontrado' });
+    }
     await connection.execute(
       'UPDATE tipos_maquinas SET nombre = ?, descripcion = ? WHERE id = ?',
       [nombre, descripcion || null, req.params.id]
     );
+    await registrarHistorial(connection, {
+      entidad: 'tipos_maquinas',
+      entidad_id: req.params.id,
+      usuario_id: req.usuario?.id,
+      accion: 'editar',
+      descripcion: `Tipo de maquina actualizado (${req.params.id})`,
+      antes: prev[0],
+      despues: { id: Number(req.params.id), nombre, descripcion: descripcion || null }
+    });
     connection.release();
     
     res.json({ id: req.params.id, nombre, descripcion });
@@ -92,10 +118,22 @@ exports.actualizarTipoMaquina = async (req, res) => {
 exports.eliminarTipoMaquina = async (req, res) => {
   try {
     const connection = await pool.getConnection();
+    const [prev] = await connection.execute('SELECT * FROM tipos_maquinas WHERE id = ?', [
+      req.params.id
+    ]);
     const [result] = await connection.execute(
       'DELETE FROM tipos_maquinas WHERE id = ?',
       [req.params.id]
     );
+    await registrarHistorial(connection, {
+      entidad: 'tipos_maquinas',
+      entidad_id: req.params.id,
+      usuario_id: req.usuario?.id,
+      accion: 'eliminar',
+      descripcion: `Tipo de maquina eliminado (${req.params.id})`,
+      antes: prev[0] || null,
+      despues: null
+    });
     connection.release();
     
     if (result.affectedRows === 0) {

@@ -67,10 +67,14 @@ exports.login = async (req, res) => {
 
 // Registro
 exports.registro = async (req, res) => {
-  const { nombre, email, telefono, contraseña, rol = 'operario' } = req.body;
+  const { nombre, email, telefono, contraseña, rol = 'ventas' } = req.body;
+  const rolesValidos = ['admin', 'ventas', 'logistica'];
 
   if (!nombre || !email || !contraseña) {
     return res.status(400).json({ error: 'Nombre, email y contraseña requeridos' });
+  }
+  if (rol && !rolesValidos.includes(rol)) {
+    return res.status(400).json({ error: 'Rol no valido' });
   }
 
   try {

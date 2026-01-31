@@ -1,0 +1,801 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { BrowserMultiFormatReader } from '@zxing/browser';
+import {
+  inventarioGeneralService,
+  productosService
+} from '../../../core/services/apiServices';
+import { parseQRPayload } from '../../../shared/utils/qr';
+import '../styles/InventarioGeneralPage.css';
+
+const InventarioGeneralPage = () => {
+  const [inventarioId, setInventarioId] = useState(null);
+  const [estadoInventario, setEstadoInventario] = useState('abierto');
+  const [inventarioInfo, setInventarioInfo] = useState(null);
+  const [productos, setProductos] = useState([]);
+  const [detalles, setDetalles] = useState([]);
+  const [historial, setHistorial] = useState([]);
+  const [tab, setTab] = useState('conteo');
+  const [codigo, setCodigo] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [cameraActive, setCameraActive] = useState(false);
+  const [scanActivo, setScanActivo] = useState(false);
+  const [showInicioModal, setShowInicioModal] = useState(false);
+  const [zonaLetra, setZonaLetra] = useState('');
+  const [zonaNumero, setZonaNumero] = useState('');
+  const [scanMode, setScanMode] = useState('producto');
+
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const zxingRef = useRef(null);
+  const zxingControlRef = useRef(null);
+  const scanActivoRef = useRef(false);
+  const ultimoDetectadoRef = useRef(0);
+  const ultimoTextoRef = useRef('');
+  const ultimoTextoAtRef = useRef(0);
+  const audioCtxRef = useRef(null);
+
+  const usuarioActual = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem('usuario') || '{}');
+    } catch (err) {
+      return {};
+    }
+  }, []);
+
+  const inventarioAbierto = useMemo(
+    () => historial.find((item) => item.estado === 'abierto'),
+    [historial]
+  );
+
+  const cargarProductos = async () => {
+    try {
+      setLoading(true);
+      const resp = await productosService.getAll();
+      setProductos(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando productos:', err);
+      setError('Error al cargar productos');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const cargarHistorial = async () => {
+    try {
+      const resp = await inventarioGeneralService.listar();
+      setHistorial(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando historial:', err);
+    }
+  };
+
+  const abrirInicioModal = async () => {
+    await cargarHistorial();
+    setShowInicioModal(true);
+  };
+
+  const iniciarInventario = async () => {
+    try {
+      const resp = await inventarioGeneralService.crear({});
+      await cargarInventario(resp.data.id);
+      setError('');
+      setShowInicioModal(false);
+    } catch (err) {
+      console.error('Error creando inventario:', err);
+      setError('No se pudo iniciar inventario');
+    }
+  };
+
+  const cargarInventario = async (id) => {
+    try {
+      setError('');
+      const resp = await inventarioGeneralService.obtener(id);
+      setInventarioId(resp.data.inventario.id);
+      setEstadoInventario(resp.data.inventario.estado);
+      setInventarioInfo(resp.data.inventario);
+      setDetalles(resp.data.detalles || []);
+      setTab('conteo');
+      setShowInicioModal(false);
+    } catch (err) {
+      console.error('Error cargando inventario:', err);
+      setError('No se pudo cargar inventario');
+    }
+  };
+
+  const continuarInventario = async () => {
+    if (!inventarioAbierto) return;
+    await cargarInventario(inventarioAbierto.id);
+  };
+
+  const eliminarInventarioAbierto = async () => {
+    if (!inventarioAbierto) return;
+    const confirmar = window.confirm('Deseas eliminar el inventario abierto?');
+    if (!confirmar) return;
+    try {
+      await inventarioGeneralService.eliminarInventario(inventarioAbierto.id);
+      await cargarHistorial();
+      setShowInicioModal(false);
+      if (inventarioId === inventarioAbierto.id) {
+        setInventarioId(null);
+        setEstadoInventario('abierto');
+        setInventarioInfo(null);
+        setDetalles([]);
+      }
+    } catch (err) {
+      console.error('Error eliminando inventario:', err);
+      setError(err.response?.data?.error || 'No se pudo eliminar inventario');
+    }
+  };
+
+  const habilitarAudio = async () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new AudioCtx();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
+      return ctx;
+    } catch (err) {
+      console.warn('No se pudo habilitar audio:', err);
+      return null;
+    }
+  };
+
+  const reproducirBeep = async () => {
+    try {
+      const ctx = await habilitarAudio();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 900;
+      gain.gain.value = 0.12;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      setTimeout(() => {
+        osc.stop();
+        osc.disconnect();
+        gain.disconnect();
+      }, 120);
+    } catch (err) {
+      console.warn('No se pudo reproducir el beep:', err);
+    }
+  };
+
+  const agregarCodigo = async (codigoScan) => {
+    if (!inventarioId) {
+      setError('Inicia un inventario primero');
+      return;
+    }
+    if (!zonaLetra || !zonaNumero) {
+      setError('Selecciona zona y subzona antes de contar');
+      return;
+    }
+    if (!codigoScan) {
+      return;
+    }
+    try {
+      let codigoFinal = codigoScan;
+      if (codigoScan.includes('\n') || (codigoScan.match(/,/g) || []).length >= 3) {
+        const parsed = parsearQR(codigoScan);
+        if (!parsed) {
+          return;
+        }
+        if (parsed?.codigo) {
+          setCodigo(parsed.codigo);
+          codigoFinal = parsed.codigo;
+        }
+      }
+
+      const existente = productos.find((prod) => prod.codigo === codigoFinal);
+      if (!existente) {
+        setError('Producto no encontrado');
+        return;
+      }
+
+      await inventarioGeneralService.agregar(inventarioId, {
+        codigo: codigoFinal,
+        cantidad: 1,
+        ubicacion: `${zonaLetra}${zonaNumero}`
+      });
+      await refrescarDetalles();
+      reproducirBeep();
+      setSuccess(`Codigo leido: ${codigoFinal}`);
+      setTimeout(() => setSuccess(''), 1500);
+    } catch (err) {
+      console.error('Error agregando conteo:', err);
+      setError(err.response?.data?.error || 'Error agregando conteo');
+    }
+  };
+
+  const refrescarDetalles = async () => {
+    if (!inventarioId) return;
+    const resp = await inventarioGeneralService.obtener(inventarioId);
+    setDetalles(resp.data.detalles || []);
+    setEstadoInventario(resp.data.inventario.estado);
+    setInventarioInfo(resp.data.inventario);
+  };
+
+  const ajustarConteo = async (productoId, conteo) => {
+    if (!inventarioId) return;
+    try {
+      await inventarioGeneralService.ajustar(inventarioId, {
+        producto_id: productoId,
+        conteo: Number(conteo || 0)
+      });
+      await refrescarDetalles();
+    } catch (err) {
+      console.error('Error ajustando conteo:', err);
+      setError(err.response?.data?.error || 'Error ajustando conteo');
+    }
+  };
+
+  const eliminarDetalle = async (productoId) => {
+    if (!inventarioId) return;
+    const confirmar = window.confirm('Deseas eliminar este producto del conteo?');
+    if (!confirmar) return;
+    try {
+      await inventarioGeneralService.eliminar(inventarioId, {
+        producto_id: productoId
+      });
+      await refrescarDetalles();
+    } catch (err) {
+      console.error('Error eliminando detalle:', err);
+      setError(err.response?.data?.error || 'Error al eliminar detalle');
+    }
+  };
+
+  const cerrarInventario = async () => {
+    if (!inventarioId) return;
+    try {
+      await inventarioGeneralService.cerrar(inventarioId);
+      await refrescarDetalles();
+      await cargarHistorial();
+    } catch (err) {
+      console.error('Error cerrando inventario:', err);
+      setError(err.response?.data?.error || 'Error al cerrar inventario');
+    }
+  };
+
+  const aplicarStock = async () => {
+    if (!inventarioId) return;
+    try {
+      await inventarioGeneralService.aplicar(inventarioId);
+      await refrescarDetalles();
+      await cargarHistorial();
+    } catch (err) {
+      console.error('Error aplicando stock:', err);
+      setError(err.response?.data?.error || 'Error al aplicar stock');
+    }
+  };
+
+  const exportarExcel = async (id) => {
+    try {
+      const resp = await inventarioGeneralService.exportar(id);
+      const url = window.URL.createObjectURL(new Blob([resp.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `inventario_${id}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+    } catch (err) {
+      console.error('Error exportando:', err);
+    }
+  };
+
+  const activarCamara = () => {
+    setError('');
+    habilitarAudio();
+    ultimoTextoRef.current = '';
+    ultimoTextoAtRef.current = 0;
+    setCameraActive(true);
+  };
+
+  const iniciarStream = async () => {
+    if (!cameraActive) return;
+    try {
+      if (!window.isSecureContext) {
+        setError('Para usar la camara en celular necesitas HTTPS.');
+        setCameraActive(false);
+        return;
+      }
+      if (!videoRef.current) {
+        setTimeout(iniciarStream, 120);
+        return;
+      }
+      if (!zxingRef.current) {
+        zxingRef.current = new BrowserMultiFormatReader();
+      }
+      if (!streamRef.current) {
+        streamRef.current = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            focusMode: 'continuous'
+          },
+          audio: false
+        });
+        try {
+          const [track] = streamRef.current.getVideoTracks();
+          const caps = track?.getCapabilities?.();
+          if (caps?.torch) {
+            await track.applyConstraints({ advanced: [{ torch: true }] });
+          }
+        } catch (err) {
+          // torch/advanced constraints no disponibles
+        }
+      }
+      if (videoRef.current && streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+        const playPromise = videoRef.current.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(() => {});
+        }
+        setTimeout(() => iniciarEscaneo(), 250);
+      }
+    } catch (err) {
+      console.error('Error camara:', err);
+      setError('No se pudo acceder a la camara');
+      setCameraActive(false);
+    }
+  };
+
+  const iniciarEscaneo = () => {
+    if (scanActivoRef.current || !videoRef.current) {
+      return;
+    }
+    scanActivoRef.current = true;
+    setScanActivo(true);
+    const control = zxingRef.current.decodeFromVideoDevice(
+      undefined,
+      videoRef.current,
+      (result) => {
+        if (result && scanActivoRef.current) {
+          const ahora = Date.now();
+          if (ahora - ultimoDetectadoRef.current > 1200) {
+            ultimoDetectadoRef.current = ahora;
+            const value = result.getText();
+            const ahoraTexto = Date.now();
+            if (value === ultimoTextoRef.current && ahoraTexto - ultimoTextoAtRef.current < 2500) {
+              return;
+            }
+            ultimoTextoRef.current = value;
+            ultimoTextoAtRef.current = ahoraTexto;
+            if (scanMode === 'zona') {
+              const zonaParsed = parsearZonaQR(value);
+              if (zonaParsed.error) {
+                setError(zonaParsed.error);
+                return;
+              }
+              setZonaLetra(zonaParsed.letra);
+              setZonaNumero(String(zonaParsed.numero));
+              setSuccess(`Zona activa: ${zonaParsed.letra}${zonaParsed.numero}`);
+              setTimeout(() => setSuccess(''), 1200);
+            } else {
+              const parsed = parsearQR(value);
+              if (!parsed) {
+                return;
+              }
+              if (parsed?.codigo) {
+                setCodigo(parsed.codigo);
+                agregarCodigo(parsed.codigo);
+              } else {
+                setCodigo(value);
+                agregarCodigo(value);
+              }
+            }
+            detenerCamara();
+          }
+        }
+      }
+    );
+    zxingControlRef.current = control;
+  };
+
+  const detenerStream = () => {
+    scanActivoRef.current = false;
+    setScanActivo(false);
+    if (zxingControlRef.current && typeof zxingControlRef.current.stop === 'function') {
+      zxingControlRef.current.stop();
+    }
+    zxingControlRef.current = null;
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  const detenerCamara = () => {
+    detenerStream();
+    setCameraActive(false);
+  };
+
+  useEffect(() => {
+    cargarProductos();
+    cargarHistorial();
+    return () => {
+      detenerStream();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (cameraActive) {
+      iniciarStream();
+    } else {
+      detenerStream();
+    }
+  }, [cameraActive]);
+
+  const productoActual = useMemo(
+    () => productos.find((prod) => prod.codigo === codigo),
+    [productos, codigo]
+  );
+
+  const formatearUbicacion = (producto) => {
+    if (!producto) return '-';
+    const letra = producto.ubicacion_letra || '';
+    const numero = producto.ubicacion_numero || '';
+    return letra || numero ? `${letra}${numero}` : '-';
+  };
+
+  const parsearQR = (textoQR) => {
+    const parsed = parseQRPayload(textoQR);
+    if (!parsed.ok) {
+      setError(parsed.error || 'QR invalido');
+      return null;
+    }
+    if (parsed.partial) {
+      return { codigo: parsed.data.codigo, partial: true };
+    }
+    return parsed.data;
+  };
+
+  const parsearZonaQR = (textoQR) => {
+    const raw = String(textoQR || '').trim().toUpperCase();
+    if (!raw) {
+      return { error: 'Zona vacia' };
+    }
+    const cleaned = raw.startsWith('ZONA:') ? raw.replace('ZONA:', '').trim() : raw;
+    const match = cleaned.match(/^([A-H])\s*(\d+)$/);
+    if (!match) {
+      return { error: 'Zona invalida. Usa ZONA:A1 o A1' };
+    }
+    const numero = Number(match[2]);
+    if (!Number.isInteger(numero) || (numero !== 1 && numero !== 2)) {
+      return { error: 'Subzona invalida. Solo se permite 1 o 2' };
+    }
+    return { letra: match[1], numero };
+  };
+
+  const puedeAplicar = estadoInventario === 'cerrado';
+  const fechaInventario = inventarioInfo?.created_at
+    ? new Date(inventarioInfo.created_at).toLocaleString()
+    : '';
+
+  return (
+    <div className="inventario-general-container">
+      <div className="page-header">
+        <div className="page-header__title">
+          <h5>Inventario General</h5>
+          <span className="page-header__subtitle">Conteo rapido por pistoleo</span>
+        </div>
+        <div className="page-header__actions">
+          <span className={`status-badge ${inventarioId ? 'ok' : 'warn'}`}>
+            {inventarioId ? estadoInventario : 'Sin inventario'}
+          </span>
+          <span className="status-pill">Items: {detalles.length}</span>
+          {inventarioId && (
+            <span className="status-meta">
+              {inventarioInfo?.usuario_nombre ? `Usuario: ${inventarioInfo.usuario_nombre}` : 'Usuario: --'}
+              {fechaInventario ? ` | ${fechaInventario}` : ''}
+            </span>
+          )}
+          <div className="header-buttons">
+            <button type="button" className="btn-secondary" onClick={abrirInicioModal}>
+              Nuevo
+            </button>
+            <button type="button" className="btn-secondary" onClick={cerrarInventario}>
+              Cerrar
+            </button>
+            <button type="button" className="btn-primary" onClick={aplicarStock} disabled={!puedeAplicar}>
+              Actualizar stock
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {error && <div className="error-message">{error}</div>}
+      {success && <div className="success-message">{success}</div>}
+
+      <div className="tabs">
+        <button className={tab === 'conteo' ? 'active' : ''} onClick={() => setTab('conteo')}>
+          Conteo
+        </button>
+        <button className={tab === 'historial' ? 'active' : ''} onClick={() => setTab('historial')}>
+          Historial
+        </button>
+      </div>
+
+      {tab === 'conteo' && (
+        <div className="inventario-grid">
+          <div className="inventario-panel">
+            <div className="barcode-card">
+              <div className="zone-row">
+                <div className="form-group">
+                  <label>Zona</label>
+                  <select
+                    value={zonaLetra}
+                    onChange={(e) => setZonaLetra(e.target.value)}
+                  >
+                    <option value="">-</option>
+                    {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map((letra) => (
+                      <option key={letra} value={letra}>
+                        {letra}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Subzona</label>
+                  <select
+                    value={zonaNumero}
+                    onChange={(e) => setZonaNumero(e.target.value)}
+                  >
+                    <option value="">-</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                  </select>
+                </div>
+                <div className="form-group zone-actions">
+                  <label>&nbsp;</label>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      setScanMode('zona');
+                      activarCamara();
+                    }}
+                  >
+                    Escanear zona
+                  </button>
+                </div>
+              </div>
+              {(zonaLetra && zonaNumero) && (
+                <div className="zone-active">
+                  Zona activa: <strong>{`${zonaLetra}${zonaNumero}`}</strong>
+                </div>
+              )}
+              <label htmlFor="codigo">CODIGO</label>
+              <div className="code-input-row">
+                <input
+                  id="codigo"
+                  type="text"
+                  value={codigo}
+                  onChange={(e) => setCodigo(e.target.value.trim())}
+                  placeholder="Escanea o escribe el codigo"
+                />
+                <button
+                  type="button"
+                  className="btn-camera"
+                  onClick={() => {
+                    setScanMode('producto');
+                    activarCamara();
+                  }}
+                  aria-label="Abrir camara"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M9 4.5h6l1.2 2H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h2.8L9 4.5zm3 4.5a4 4 0 1 0 .001 8.001A4 4 0 0 0 12 9zm0 2a2 2 0 1 1-.001 4.001A2 2 0 0 1 12 11z" />
+                  </svg>
+                </button>
+                <button type="button" className="btn-primary" onClick={() => agregarCodigo(codigo)}>
+                  Agregar
+                </button>
+              </div>
+
+              <div className="producto-datos">
+                {productoActual ? (
+                  <>
+                    <p><strong>Producto:</strong> {productoActual.marca || 'Sin marca'}</p>
+                    <p><strong>Descripcion:</strong> {productoActual.descripcion || 'Sin descripcion'}</p>
+                    <p><strong>Ubicacion:</strong> {formatearUbicacion(productoActual)}</p>
+                    <p><strong>Stock actual:</strong> {productoActual.stock}</p>
+                  </>
+                ) : (
+                  <p className="producto-vacio">Producto no encontrado</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="inventario-panel">
+            {loading ? (
+              <div className="loading">Cargando...</div>
+            ) : (
+              <div className="inventario-table-container">
+                <table className="inventario-table">
+                  <thead>
+                    <tr>
+                      <th>Codigo</th>
+                      <th>Descripcion</th>
+                      <th>Ubicacion</th>
+                      <th>Stock</th>
+                      <th>Conteo</th>
+                      <th>Diferencia</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detalles.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" className="empty-message">No hay conteos. Empieza a escanear.</td>
+                      </tr>
+                    ) : (
+                      detalles.map((item) => (
+                        <tr key={item.id}>
+                          <td>{item.codigo}</td>
+                          <td>{item.descripcion}</td>
+                          <td>{formatearUbicacion(item)}</td>
+                          <td>{item.stock_actual}</td>
+                          <td>
+                            <input
+                              type="number"
+                              value={item.conteo}
+                              onChange={(e) => ajustarConteo(item.producto_id, e.target.value)}
+                            />
+                          </td>
+                          <td className={item.diferencia === 0 ? '' : item.diferencia > 0 ? 'diff-plus' : 'diff-minus'}>
+                            {item.diferencia}
+                          </td>
+                          <td>
+                            <button type="button" className="btn-link danger" onClick={() => eliminarDetalle(item.producto_id)}>
+                              Eliminar
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'historial' && (
+        <div className="inventario-historial">
+          <div className="inventario-table-container">
+            <table className="inventario-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Fecha</th>
+                  <th>Usuario</th>
+                  <th>Estado</th>
+                  <th>Items</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historial.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="empty-message">No hay inventarios registrados.</td>
+                  </tr>
+                ) : (
+                  historial.map((inv) => (
+                    <tr key={inv.id}>
+                      <td>{inv.id}</td>
+                      <td>{new Date(inv.created_at).toLocaleString()}</td>
+                      <td>{inv.usuario_nombre || inv.usuario_id}</td>
+                      <td>{inv.estado}</td>
+                      <td>{inv.total_items}</td>
+                      <td className="acciones">
+                        <button type="button" className="btn-secondary" onClick={() => cargarInventario(inv.id)}>
+                          Ver
+                        </button>
+                        <button type="button" className="btn-primary" onClick={() => exportarExcel(inv.id)}>
+                          Excel
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {cameraActive && (
+        <div className="camera-modal" role="dialog" aria-modal="true" aria-label="Camara">
+          <div className="camera-modal__backdrop" onClick={detenerCamara} />
+          <div className="camera-modal__content">
+            <div className="camera-modal__header">
+              <h3>Escaner de codigo</h3>
+              <div className="camera-actions">
+                <button type="button" className="btn-link" onClick={detenerCamara}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+            <div className="camera-modal__preview">
+              <video ref={videoRef} autoPlay playsInline muted onLoadedMetadata={iniciarEscaneo} />
+              <div className="scan-overlay" aria-hidden="true">
+                <div className="scan-cross" />
+                <div className="scan-line" />
+              </div>
+            </div>
+            <p className="camera-note">
+              {scanActivo ? 'Escaneo automatico activado.' : 'Iniciando camara...'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {showInicioModal && (
+        <div className="inicio-modal" role="dialog" aria-modal="true" aria-label="Inicio inventario">
+          <div className="inicio-modal__backdrop" onClick={() => setShowInicioModal(false)} />
+          <div className="inicio-modal__content">
+            <div className="inicio-modal__header">
+              <h3>Inicio de inventario</h3>
+              <button type="button" className="btn-link" onClick={() => setShowInicioModal(false)}>
+                Cerrar
+              </button>
+            </div>
+            <div className="inicio-modal__body">
+              <div className="inicio-info">
+                <div>
+                  <span className="inicio-label">Fecha / Hora</span>
+                  <strong>{new Date().toLocaleString()}</strong>
+                </div>
+                <div>
+                  <span className="inicio-label">Usuario</span>
+                  <strong>{usuarioActual.nombre || 'Usuario'} {usuarioActual.apellido || ''}</strong>
+                </div>
+              </div>
+
+              {inventarioAbierto ? (
+                <div className="inicio-alert">
+                  Hay un inventario abierto (ID {inventarioAbierto.id}). Puedes continuar o eliminarlo.
+                </div>
+              ) : (
+                <div className="inicio-alert neutral">
+                  No hay inventarios abiertos. Puedes iniciar uno nuevo.
+                </div>
+              )}
+            </div>
+            <div className="inicio-modal__footer">
+              {inventarioAbierto && (
+                <>
+                  <button type="button" className="btn-secondary" onClick={continuarInventario}>
+                    Continuar
+                  </button>
+                  <button type="button" className="btn-secondary danger" onClick={eliminarInventarioAbierto}>
+                    Eliminar
+                  </button>
+                </>
+              )}
+              <button type="button" className="btn-primary" onClick={iniciarInventario}>
+                Empezar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default InventarioGeneralPage;

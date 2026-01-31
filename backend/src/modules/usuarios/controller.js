@@ -1,4 +1,5 @@
 const pool = require('../../core/config/database');
+const { registrarHistorial } = require('../../shared/utils/historial');
 
 exports.listarUsuarios = async (req, res) => {
   try {
@@ -17,21 +18,42 @@ exports.listarUsuarios = async (req, res) => {
 exports.actualizarUsuario = async (req, res) => {
   const { nombre, email, telefono, rol, activo } = req.body;
   const { id } = req.params;
+  const rolesValidos = ['admin', 'ventas', 'logistica'];
 
   try {
     const connection = await pool.getConnection();
-    const [existing] = await connection.execute('SELECT id FROM usuarios WHERE id = ?', [id]);
+    const [existing] = await connection.execute('SELECT * FROM usuarios WHERE id = ?', [id]);
     if (!existing.length) {
       connection.release();
       return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+    if (rol && !rolesValidos.includes(rol)) {
+      connection.release();
+      return res.status(400).json({ error: 'Rol no valido' });
     }
 
     await connection.execute(
       `UPDATE usuarios
        SET nombre = ?, email = ?, telefono = ?, rol = ?, activo = ?
-       WHERE id = ?`,
+      WHERE id = ?`,
       [nombre, email, telefono || null, rol, activo ? 1 : 0, id]
     );
+    await registrarHistorial(connection, {
+      entidad: 'usuarios',
+      entidad_id: id,
+      usuario_id: req.usuario?.id,
+      accion: 'editar',
+      descripcion: `Usuario actualizado (${id})`,
+      antes: existing[0],
+      despues: {
+        id: Number(id),
+        nombre,
+        email,
+        telefono: telefono || null,
+        rol,
+        activo: !!activo
+      }
+    });
     connection.release();
 
     res.json({ id, nombre, email, telefono: telefono || null, rol, activo: !!activo });
@@ -66,12 +88,27 @@ exports.actualizarPerfil = async (req, res) => {
   const { nombre, email, telefono } = req.body;
   try {
     const connection = await pool.getConnection();
+    const [prev] = await connection.execute('SELECT * FROM usuarios WHERE id = ?', [req.usuario.id]);
     await connection.execute(
       `UPDATE usuarios
        SET nombre = ?, email = ?, telefono = ?
        WHERE id = ?`,
       [nombre, email, telefono || null, req.usuario.id]
     );
+    await registrarHistorial(connection, {
+      entidad: 'usuarios',
+      entidad_id: req.usuario.id,
+      usuario_id: req.usuario?.id,
+      accion: 'editar',
+      descripcion: `Perfil actualizado (${req.usuario.id})`,
+      antes: prev[0] || null,
+      despues: {
+        id: req.usuario.id,
+        nombre,
+        email,
+        telefono: telefono || null
+      }
+    });
     connection.release();
     res.json({ id: req.usuario.id, nombre, email, telefono: telefono || null });
   } catch (error) {

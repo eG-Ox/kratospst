@@ -1,4 +1,5 @@
 const pool = require('../../core/config/database');
+const { registrarHistorial } = require('../../shared/utils/historial');
 
 const calcularPrecioTotal = (items) =>
   items.reduce((acc, item) => acc + Number(item.subtotal || 0), 0);
@@ -176,10 +177,19 @@ exports.crearKit = async (req, res) => {
           item.precio_unitario,
           item.precio_final,
           item.subtotal,
-        'productos'
+          'productos'
         ]
       );
     }
+    await registrarHistorial(connection, {
+      entidad: 'kits',
+      entidad_id: kitId,
+      usuario_id: req.usuario?.id,
+      accion: 'crear',
+      descripcion: `Kit creado (${nombre})`,
+      antes: null,
+      despues: { id: kitId, nombre, descripcion, precio_total, activo: !!activo, productos: items }
+    });
     connection.release();
 
     res.status(201).json({ id: kitId, nombre, descripcion, precio_total, activo: !!activo });
@@ -202,11 +212,16 @@ exports.editarKit = async (req, res) => {
 
   try {
     const connection = await pool.getConnection();
-    const [existing] = await connection.execute('SELECT id FROM kits WHERE id = ?', [id]);
+    const [existing] = await connection.execute('SELECT * FROM kits WHERE id = ?', [id]);
     if (!existing.length) {
       connection.release();
       return res.status(404).json({ error: 'Kit no encontrado' });
     }
+    const [prevItems] = await connection.execute(
+      `SELECT producto_id, cantidad, precio_unitario, precio_final, subtotal, almacen_origen
+       FROM kit_productos WHERE kit_id = ?`,
+      [id]
+    );
 
     await connection.execute(
       `UPDATE kits SET nombre = ?, descripcion = ?, precio_total = ?, activo = ? WHERE id = ?`,
@@ -226,10 +241,19 @@ exports.editarKit = async (req, res) => {
           item.precio_unitario,
           item.precio_final,
           item.subtotal,
-        'productos'
+          'productos'
         ]
       );
     }
+    await registrarHistorial(connection, {
+      entidad: 'kits',
+      entidad_id: id,
+      usuario_id: req.usuario?.id,
+      accion: 'editar',
+      descripcion: `Kit actualizado (${nombre})`,
+      antes: { ...existing[0], productos: prevItems },
+      despues: { id, nombre, descripcion, precio_total, activo: !!activo, productos: items }
+    });
     connection.release();
 
     res.json({ id, nombre, descripcion, precio_total, activo: !!activo });
@@ -244,8 +268,23 @@ exports.eliminarKit = async (req, res) => {
 
   try {
     const connection = await pool.getConnection();
+    const [prevKit] = await connection.execute('SELECT * FROM kits WHERE id = ?', [id]);
+    const [prevItems] = await connection.execute(
+      `SELECT producto_id, cantidad, precio_unitario, precio_final, subtotal, almacen_origen
+       FROM kit_productos WHERE kit_id = ?`,
+      [id]
+    );
     await connection.execute('DELETE FROM kit_productos WHERE kit_id = ?', [id]);
     const [result] = await connection.execute('DELETE FROM kits WHERE id = ?', [id]);
+    await registrarHistorial(connection, {
+      entidad: 'kits',
+      entidad_id: id,
+      usuario_id: req.usuario?.id,
+      accion: 'eliminar',
+      descripcion: `Kit eliminado (${id})`,
+      antes: { ...(prevKit[0] || {}), productos: prevItems },
+      despues: null
+    });
     connection.release();
 
     if (!result.affectedRows) {
@@ -272,6 +311,15 @@ exports.toggleKit = async (req, res) => {
 
     const nuevoEstado = !rows[0].activo;
     await connection.execute('UPDATE kits SET activo = ? WHERE id = ?', [nuevoEstado, id]);
+    await registrarHistorial(connection, {
+      entidad: 'kits',
+      entidad_id: id,
+      usuario_id: req.usuario?.id,
+      accion: 'toggle',
+      descripcion: `Kit ${nuevoEstado ? 'activado' : 'desactivado'} (${id})`,
+      antes: { activo: rows[0].activo },
+      despues: { activo: nuevoEstado }
+    });
     connection.release();
 
     res.json({ id, activo: nuevoEstado });

@@ -1,0 +1,76 @@
+.permisos-container {
+  padding: 20px 16px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.permisos-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.permisos-header h1 {
+  font-size: 24px;
+  color: #2c3e50;
+  margin: 0;
+}
+
+.permisos-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.permisos-actions select {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+  font-size: 12px;
+}
+
+.permisos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.permisos-card {
+  background: white;
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.permisos-card h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: #111827;
+}
+
+.permisos-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.permiso-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #374151;
+}
+
+.permiso-item input {
+  transform: scale(1.05);
+}
+
+@media (max-width: 700px) {
+  .permisos-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

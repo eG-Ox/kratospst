@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { productosService, tiposMaquinasService } from '../../../core/services/apiServices';
+import React, { useState, useEffect, useRef } from 'react';
+import { permisosService, productosService, tiposMaquinasService } from '../../../core/services/apiServices';
 import '../styles/ProductosPage.css';
 
 const ProductosPage = () => {
@@ -7,6 +7,10 @@ const ProductosPage = () => {
   const [tipos, setTipos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [mensajeImport, setMensajeImport] = useState('');
+  const [erroresImport, setErroresImport] = useState([]);
+  const [importando, setImportando] = useState(false);
+  const [puedeVerPrecioCompra, setPuedeVerPrecioCompra] = useState(true);
   const [mostrarModalProducto, setMostrarModalProducto] = useState(false);
   const [editandoProducto, setEditandoProducto] = useState(null);
   const [mostrarModalTipo, setMostrarModalTipo] = useState(false);
@@ -16,6 +20,8 @@ const ProductosPage = () => {
     tipo_maquina_id: '',
     marca: '',
     descripcion: '',
+    ubicacion_letra: '',
+    ubicacion_numero: '',
     stock: 0,
     precio_compra: '',
     precio_venta: '',
@@ -27,6 +33,7 @@ const ProductosPage = () => {
     nombre: '',
     descripcion: ''
   });
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     cargarDatos();
@@ -39,9 +46,19 @@ const ProductosPage = () => {
         productosService.getAll(),
         tiposMaquinasService.getAll()
       ]);
+      let permisos = [];
+      try {
+        const respPermisos = await permisosService.misPermisos();
+        permisos = respPermisos.data || [];
+      } catch (permError) {
+        console.warn('No se pudieron cargar permisos:', permError);
+      }
       setProductos(respProductos.data);
       setTipos(respTipos.data);
+      setPuedeVerPrecioCompra(permisos.includes('productos.precio_compra.ver'));
       setError('');
+      setMensajeImport('');
+      setErroresImport([]);
     } catch (error) {
       console.error('Error cargando datos:', error);
       setError('Error al cargar productos');
@@ -56,6 +73,8 @@ const ProductosPage = () => {
       tipo_maquina_id: '',
       marca: '',
       descripcion: '',
+      ubicacion_letra: '',
+      ubicacion_numero: '',
       stock: 0,
       precio_compra: '',
       precio_venta: '',
@@ -94,6 +113,8 @@ const ProductosPage = () => {
       tipo_maquina_id: producto.tipo_maquina_id ? String(producto.tipo_maquina_id) : '',
       marca: producto.marca || '',
       descripcion: producto.descripcion || '',
+      ubicacion_letra: producto.ubicacion_letra || '',
+      ubicacion_numero: producto.ubicacion_numero ?? '',
       stock: Number(producto.stock || 0),
       precio_compra: producto.precio_compra ?? '',
       precio_venta: producto.precio_venta ?? '',
@@ -194,11 +215,92 @@ const ProductosPage = () => {
     setMostrarModalTipo(true);
   };
 
+  const descargarArchivo = (data, filename) => {
+    const url = window.URL.createObjectURL(new Blob([data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const handleDescargarPlantilla = async () => {
+    try {
+      const response = await productosService.descargarPlantilla();
+      descargarArchivo(response.data, 'plantilla_productos.xlsx');
+    } catch (err) {
+      console.error('Error descargando plantilla:', err);
+      setError('Error al descargar plantilla');
+    }
+  };
+
+  const handleExportarExcel = async () => {
+    try {
+      const response = await productosService.exportarExcel();
+      descargarArchivo(response.data, 'productos.xlsx');
+    } catch (err) {
+      console.error('Error exportando productos:', err);
+      setError('Error al exportar productos');
+    }
+  };
+
+  const handleImportarClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleImportarExcel = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      setImportando(true);
+      setError('');
+      setMensajeImport('');
+      setErroresImport([]);
+      const formData = new FormData();
+      formData.append('archivo', file);
+      const response = await productosService.importarExcel(formData);
+      const { insertados, duplicados, errores } = response.data || {};
+      setMensajeImport(
+        `Importados: ${insertados || 0} | Duplicados: ${duplicados?.length || 0} | Errores: ${errores?.length || 0}`
+      );
+      setErroresImport(errores || []);
+      await cargarDatos();
+    } catch (err) {
+      console.error('Error importando productos:', err);
+      setError(err.response?.data?.error || 'Error al importar productos');
+    } finally {
+      setImportando(false);
+      if (event.target) {
+        event.target.value = '';
+      }
+    }
+  };
+
+  const formatearUbicacion = (producto) => {
+    const letra = producto?.ubicacion_letra || '';
+    const numero = producto?.ubicacion_numero || '';
+    if (!letra && !numero) return '-';
+    return `${letra}${numero}`;
+  };
+
   return (
     <div className="productos-container">
       <div className="productos-header">
-        <h1>Productos / Máquinas</h1>
+        <h1>Productos / M?quinas</h1>
         <div className="header-actions">
+          <button className="btn-secondary" onClick={handleDescargarPlantilla}>
+            Plantilla Excel
+          </button>
+          <button className="btn-secondary" onClick={handleImportarClick} disabled={importando}>
+            {importando ? 'Importando...' : 'Importar Excel'}
+          </button>
+          <button className="btn-secondary" onClick={handleExportarExcel}>
+            Exportar Excel
+          </button>
           <button className="btn-primary" onClick={abrirModalProducto}>
             + Nuevo Producto
           </button>
@@ -209,6 +311,25 @@ const ProductosPage = () => {
       </div>
 
       {error && <div className="error-message">{error}</div>}
+      {mensajeImport && <div className="success-message">{mensajeImport}</div>}
+      {erroresImport.length > 0 && (
+        <div className="warning-message">
+          <strong>Errores en importaci?n:</strong>
+          <ul>
+            {erroresImport.slice(0, 6).map((msg) => (
+              <li key={msg}>{msg}</li>
+            ))}
+            {erroresImport.length > 6 && <li>Hay m?s errores. Revisa el archivo.</li>}
+          </ul>
+        </div>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".xlsx,.xls"
+        onChange={handleImportarExcel}
+        style={{ display: 'none' }}
+      />
 
 
       {loading ? (
@@ -223,8 +344,9 @@ const ProductosPage = () => {
                   <th>Tipo</th>
                   <th>Marca</th>
                   <th>Descripción</th>
+                  <th>Ubicación</th>
                   <th>Stock</th>
-                  <th>Precio Compra</th>
+                  {puedeVerPrecioCompra && <th>Precio Compra</th>}
                   <th>Precio Venta</th>
                   <th>Precio Mínimo</th>
                   <th>Ficha Web</th>
@@ -239,8 +361,11 @@ const ProductosPage = () => {
                     <td>{prod.tipo_nombre}</td>
                     <td>{prod.marca}</td>
                     <td>{prod.descripcion || '-'}</td>
+                    <td>{formatearUbicacion(prod)}</td>
                     <td className={prod.stock < prod.precio_minimo ? 'low-stock' : ''}>{prod.stock}</td>
-                    <td>${Number(prod.precio_compra || 0).toFixed(2)}</td>
+                    {puedeVerPrecioCompra && (
+                      <td>${Number(prod.precio_compra || 0).toFixed(2)}</td>
+                    )}
                     <td>${Number(prod.precio_venta || 0).toFixed(2)}</td>
                     <td>${Number(prod.precio_minimo || 0).toFixed(2)}</td>
                     <td>
@@ -352,6 +477,40 @@ const ProductosPage = () => {
 
                 <div className="form-row">
                   <div className="form-group">
+                    <label>Ubicación (Letra)</label>
+                    <select
+                      value={formularioData.ubicacion_letra}
+                      onChange={(e) =>
+                        setFormularioData({ ...formularioData, ubicacion_letra: e.target.value })
+                      }
+                    >
+                      <option value="">-</option>
+                      {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map((letra) => (
+                        <option key={letra} value={letra}>
+                          {letra}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>Ubicación (Número)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="Ej. 1"
+                      value={formularioData.ubicacion_numero}
+                      onChange={(e) =>
+                        setFormularioData({
+                          ...formularioData,
+                          ubicacion_numero: e.target.value
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="form-row">
+                  <div className="form-group">
                     <label>Stock</label>
                     <input
                       type="number"
@@ -372,7 +531,11 @@ const ProductosPage = () => {
                       required
                       step="0.01"
                       value={formularioData.precio_compra}
-                      onChange={(e) => setFormularioData({ ...formularioData, precio_compra: e.target.value })}
+                      onChange={(e) =>
+                        setFormularioData({ ...formularioData, precio_compra: e.target.value })
+                      }
+                      disabled={!puedeVerPrecioCompra}
+                      placeholder={puedeVerPrecioCompra ? '' : 'Sin permiso'}
                     />
                   </div>
                 </div>

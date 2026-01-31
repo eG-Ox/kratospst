@@ -8,7 +8,8 @@ export const TIPOS_MOVIMIENTO = {
 
 export const ROLES_USUARIO = {
   ADMIN: 'admin',
-  OPERARIO: 'operario'
+  VENTAS: 'ventas',
+  LOGISTICA: 'logistica'
 };
 
 export const ESTADOS_PRODUCTO = {

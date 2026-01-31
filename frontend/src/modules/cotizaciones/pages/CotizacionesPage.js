@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   clientesService,
   cotizacionesService,
@@ -34,7 +35,9 @@ const emptyCliente = {
 const CotizacionesPage = () => {
   const [tab, setTab] = useState('simple');
   const [clientes, setClientes] = useState([]);
+  const [cotizacionEditId, setCotizacionEditId] = useState(null);
   const [clienteId, setClienteId] = useState('');
+  const [clienteSearch, setClienteSearch] = useState('');
   const [mostrarModalCliente, setMostrarModalCliente] = useState(false);
   const [clienteForm, setClienteForm] = useState(emptyCliente);
   const [consultaMensaje, setConsultaMensaje] = useState('');
@@ -50,7 +53,9 @@ const CotizacionesPage = () => {
   const [busqueda, setBusqueda] = useState('');
   const [resultados, setResultados] = useState([]);
   const [kits, setKits] = useState([]);
+  const [kitSeleccionado, setKitSeleccionado] = useState('');
   const [items, setItems] = useState([]);
+  const location = useLocation();
 
   useEffect(() => {
     cargarClientes();
@@ -97,6 +102,23 @@ const CotizacionesPage = () => {
       console.error('Error cargando clientes:', err);
     }
   };
+
+  const clientesFiltrados = useMemo(() => {
+    const term = clienteSearch.trim().toLowerCase();
+    if (!term) return clientes;
+    return clientes.filter((cliente) => {
+      const nombre = cliente.tipo_cliente === 'natural'
+        ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim()
+        : cliente.razon_social || '';
+      const documento = cliente.dni || cliente.ruc || '';
+      return (
+        nombre.toLowerCase().includes(term) ||
+        documento.toLowerCase().includes(term)
+      );
+    });
+  }, [clientes, clienteSearch]);
+
+  const modoEdicion = Boolean(cotizacionEditId);
 
   const cargarTipos = async () => {
     try {
@@ -219,6 +241,11 @@ const CotizacionesPage = () => {
     }
   };
 
+  const handleCargarKit = () => {
+    if (!kitSeleccionado) return;
+    cargarKit(kitSeleccionado);
+  };
+
   const actualizarItem = (index, changes) => {
     setItems((prev) =>
       prev.map((item, idx) => (idx === index ? { ...item, ...changes } : item))
@@ -245,7 +272,60 @@ const CotizacionesPage = () => {
     return { subtotal, descuento, total };
   }, [items]);
 
-  const handleCrearCotizacion = async () => {
+  const abrirPdfCotizacion = (id) => {
+    if (!id) return;
+    const token = localStorage.getItem('token');
+    const url = token
+      ? `${API_BASE}/cotizaciones/pdf/${id}?token=${encodeURIComponent(token)}`
+      : `${API_BASE}/cotizaciones/pdf/${id}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const resetCotizacion = () => {
+    setItems([]);
+    setNotas('');
+    setClienteId('');
+    setCotizacionEditId(null);
+    setError('');
+  };
+
+  const iniciarEdicion = useCallback(async (id) => {
+    try {
+      setError('');
+      const resp = await cotizacionesService.obtener(id);
+      const { cotizacion, detalles } = resp.data;
+      setClienteId(cotizacion?.cliente_id || '');
+      setNotas(cotizacion?.nota || '');
+      setItems(
+        (detalles || []).map((detalle) => ({
+          producto_id: detalle.producto_id,
+          codigo: detalle.codigo,
+          descripcion: detalle.descripcion,
+          marca: detalle.marca,
+          almacen_origen: detalle.almacen_origen || 'productos',
+          cantidad: Number(detalle.cantidad || 0),
+          precio_regular: Number(detalle.precio_regular || 0),
+          precio_unitario: Number(detalle.precio_unitario || 0),
+          origen: detalle.almacen_origen === 'kit' ? 'kit' : 'manual'
+        }))
+      );
+      setCotizacionEditId(cotizacion.id);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err) {
+      console.error('Error cargando cotizacion:', err);
+      setError('No se pudo cargar la cotizacion');
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const editId = params.get('edit');
+    if (editId) {
+      iniciarEdicion(editId);
+    }
+  }, [location.search, iniciarEdicion]);
+
+  const guardarCotizacion = async () => {
     setError('');
     if (!items.length) {
       setError('Agrega productos antes de guardar.');
@@ -263,19 +343,18 @@ const CotizacionesPage = () => {
           almacen_origen: item.almacen_origen
         }))
       };
-      const resp = await cotizacionesService.crear(payload);
-      const cotizacionId = resp.data?.id;
-      if (cotizacionId) {
-        const token = localStorage.getItem('token');
-        const url = token
-          ? `${API_BASE}/cotizaciones/pdf/${cotizacionId}?token=${encodeURIComponent(token)}`
-          : `${API_BASE}/cotizaciones/pdf/${cotizacionId}`;
-        window.open(url, '_blank', 'noopener,noreferrer');
+      let cotizacionId = null;
+      if (modoEdicion) {
+        await cotizacionesService.editar(cotizacionEditId, payload);
+        cotizacionId = cotizacionEditId;
+      } else {
+        const resp = await cotizacionesService.crear(payload);
+        cotizacionId = resp.data?.id;
       }
-      setItems([]);
-      setNotas('');
-      setClienteId('');
-      setError('');
+      if (cotizacionId) {
+        abrirPdfCotizacion(cotizacionId);
+      }
+      resetCotizacion();
     } catch (err) {
       console.error('Error creando cotizacion:', err);
       setError(err.response?.data?.error || 'Error al guardar cotizacion');
@@ -354,213 +433,287 @@ const CotizacionesPage = () => {
     }
   };
 
+  const productosCount = items.length;
+  const clienteOk = Boolean(clienteId);
+  const formOk = productosCount > 0 && clienteOk;
+
   return (
-    <div className="cotizaciones-container">
-      <div className="cotizaciones-header">
-        <h1>Nueva Cotizacion</h1>
+    <div className="cotizaciones-container cotizaciones-sap">
+      <div className="page-header">
+        <div className="page-header__title">
+          <h5>{modoEdicion ? `Editar Cotizacion #${cotizacionEditId}` : 'Nueva Cotizacion'}</h5>
+          <span className="page-header__subtitle">Modulo de cotizaciones Kratos Maquinarias</span>
+        </div>
+        <div className="page-header__actions">
+          <span className={`status-badge ${formOk ? 'ok' : 'warn'}`}>
+            {formOk ? 'Completo' : 'Incompleto'}
+          </span>
+          <span className="status-pill">Productos: {productosCount}</span>
+          <span className="status-pill">Cliente: {clienteOk ? 'Si' : 'No'}</span>
+          <div className="header-buttons">
+            <button type="button" className="btn-secondary" onClick={resetCotizacion}>
+              Limpiar
+            </button>
+            <button type="button" className="btn-primary" onClick={guardarCotizacion}>
+              {modoEdicion ? 'Actualizar' : 'Generar'}
+            </button>
+          </div>
+        </div>
       </div>
 
       {error && <div className="error-message">{error}</div>}
 
-      <div className="cotizacion-card">
-        <div className="cotizacion-section">
-          <label>Cliente</label>
-          <div className="cliente-row">
-            <select value={clienteId} onChange={(e) => setClienteId(e.target.value)}>
-              <option value="">Selecciona un cliente</option>
-              {clientes.map((cliente) => (
-                <option key={cliente.id} value={cliente.id}>
-                  {cliente.tipo_cliente === 'natural'
-                    ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim()
-                    : cliente.razon_social}{' '}
-                  ({cliente.dni || cliente.ruc})
-                </option>
-              ))}
-            </select>
-            <button type="button" className="btn-secondary" onClick={() => setMostrarModalCliente(true)}>
-              Nuevo cliente
-            </button>
+      <div className="cotizacion-grid">
+        <div className="cotizacion-left">
+          <div className="cotizacion-card">
+            <div className="tabs">
+              <button className={tab === 'simple' ? 'active' : ''} onClick={() => setTab('simple')}>
+                Simple
+              </button>
+              <button
+                className={tab === 'avanzada' ? 'active' : ''}
+                onClick={() => setTab('avanzada')}
+              >
+                Avanzada
+              </button>
+              <button className={tab === 'kits' ? 'active' : ''} onClick={() => setTab('kits')}>
+                Kits
+              </button>
+            </div>
+
+            <div className="cotizacion-panel">
+              {tab === 'simple' && (
+                <div className="filtros-grid">
+                  <div className="form-group">
+                    <label>Tipo de maquina</label>
+                    <select value={tipoId} onChange={(e) => setTipoId(e.target.value)}>
+                      <option value="">Selecciona</option>
+                      {tipos.map((tipo) => (
+                        <option key={tipo.id} value={tipo.id}>
+                          {tipo.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>Marca</label>
+                    <select value={marca} onChange={(e) => setMarca(e.target.value)}>
+                      <option value="">Selecciona</option>
+                      {marcas.map((item) => (
+                        <option key={item} value={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>Producto</label>
+                    <select value={productoId} onChange={(e) => setProductoId(e.target.value)}>
+                      <option value="">Selecciona</option>
+                      {productos.map((prod) => (
+                        <option key={prod.id} value={prod.id}>
+                          {prod.codigo} - {prod.descripcion}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button type="button" className="btn-primary" onClick={agregarProductoDesdeFiltro}>
+                    Agregar producto
+                  </button>
+                </div>
+              )}
+
+              {tab === 'avanzada' && (
+                <div className="busqueda-avanzada">
+                  <input
+                    type="text"
+                    placeholder="Buscar por codigo, descripcion o marca"
+                    value={busqueda}
+                    onChange={(e) => setBusqueda(e.target.value)}
+                  />
+                  <div className="resultados">
+                    {resultados.map((producto) => (
+                      <button
+                        type="button"
+                        className="resultado-item"
+                        key={`${producto.id}-${producto.codigo}`}
+                        onClick={() => agregarProductoDesdeBusqueda(producto)}
+                      >
+                        {producto.codigo} - {producto.descripcion} ({producto.marca})
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {tab === 'kits' && (
+                <div className="kits-select">
+                  <div className="form-group">
+                    <label>Selecciona un kit</label>
+                    <select
+                      value={kitSeleccionado}
+                      onChange={(e) => setKitSeleccionado(e.target.value)}
+                    >
+                      <option value="">Selecciona...</option>
+                      {kits.map((kit) => (
+                        <option key={kit.id} value={kit.id}>
+                          {kit.nombre} - S/. {Number(kit.precio_total || 0).toFixed(2)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button type="button" className="btn-primary" onClick={handleCargarKit}>
+                    Cargar kit
+                  </button>
+                  {kits.length === 0 && <p>No hay kits activos.</p>}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="cotizacion-detalle">
+            <h3>Productos agregados</h3>
+            {items.length === 0 ? (
+              <div className="empty-state">
+                <p>No hay productos agregados.</p>
+              </div>
+            ) : (
+              <table className="cotizacion-table">
+                <thead>
+                  <tr>
+                    <th>Codigo</th>
+                    <th>Descripcion</th>
+                    <th>Regular</th>
+                    <th>Final</th>
+                    <th>Cantidad</th>
+                    <th>Subtotal</th>
+                    <th>Origen</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item, index) => {
+                    const subtotal = Number(item.cantidad || 0) * Number(item.precio_unitario || 0);
+                    return (
+                      <tr key={`${item.producto_id}-${index}`}>
+                        <td>{item.codigo}</td>
+                        <td>{item.descripcion}</td>
+                        <td>
+                          <input
+                            type="number"
+                            value={item.precio_regular}
+                            onChange={(e) =>
+                              actualizarItem(index, { precio_regular: Number(e.target.value || 0) })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            value={item.precio_unitario}
+                            onChange={(e) =>
+                              actualizarItem(index, { precio_unitario: Number(e.target.value || 0) })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min="1"
+                            value={item.cantidad}
+                            onChange={(e) =>
+                              actualizarItem(index, { cantidad: Number(e.target.value || 1) })
+                            }
+                          />
+                        </td>
+                        <td>{subtotal.toFixed(2)}</td>
+                        <td>
+                          {item.origen === 'kit' ? <span className="tag-kit">Kit</span> : 'Manual'}
+                        </td>
+                        <td>
+                          <button className="btn-delete" onClick={() => quitarItem(index)}>
+                            Quitar
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
-      </div>
 
-      <div className="tabs">
-        <button className={tab === 'simple' ? 'active' : ''} onClick={() => setTab('simple')}>
-          Busqueda Simple
-        </button>
-        <button className={tab === 'avanzada' ? 'active' : ''} onClick={() => setTab('avanzada')}>
-          Busqueda Avanzada
-        </button>
-        <button className={tab === 'kits' ? 'active' : ''} onClick={() => setTab('kits')}>
-          Kits
-        </button>
-      </div>
-
-      <div className="cotizacion-panel">
-        {tab === 'simple' && (
-          <div className="filtros-grid">
-            <div className="form-group">
-              <label>Tipo</label>
-              <select value={tipoId} onChange={(e) => setTipoId(e.target.value)}>
-                <option value="">Selecciona</option>
-                {tipos.map((tipo) => (
-                  <option key={tipo.id} value={tipo.id}>
-                    {tipo.nombre}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Marca</label>
-              <select value={marca} onChange={(e) => setMarca(e.target.value)}>
-                <option value="">Selecciona</option>
-                {marcas.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Producto</label>
-              <select value={productoId} onChange={(e) => setProductoId(e.target.value)}>
-                <option value="">Selecciona</option>
-                {productos.map((prod) => (
-                  <option key={prod.id} value={prod.id}>
-                    {prod.codigo} - {prod.descripcion}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button type="button" className="btn-primary" onClick={agregarProductoDesdeFiltro}>
-              Agregar producto
-            </button>
-          </div>
-        )}
-
-        {tab === 'avanzada' && (
-          <div className="busqueda-avanzada">
-            <input
-              type="text"
-              placeholder="Buscar por codigo, descripcion o marca"
-              value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
-            />
-            <div className="resultados">
-              {resultados.map((producto) => (
+        <div className="cotizacion-right">
+          <div className="cotizacion-card">
+            <div className="cotizacion-section">
+              <label>Cliente</label>
+              <div className="cliente-row">
+                <div className="cliente-search">
+                  <input
+                    type="text"
+                    placeholder="Buscar cliente por nombre o documento"
+                    value={clienteSearch}
+                    onChange={(e) => setClienteSearch(e.target.value)}
+                  />
+                  <select value={clienteId} onChange={(e) => setClienteId(e.target.value)}>
+                    <option value="">Selecciona un cliente</option>
+                    {clientesFiltrados.map((cliente) => (
+                      <option key={cliente.id} value={cliente.id}>
+                        {cliente.tipo_cliente === 'natural'
+                          ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim()
+                          : cliente.razon_social}{' '}
+                        ({cliente.dni || cliente.ruc})
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <button
                   type="button"
-                  className="resultado-item"
-                  key={`${producto.id}-${producto.codigo}`}
-                  onClick={() => agregarProductoDesdeBusqueda(producto)}
+                  className="btn-secondary"
+                  onClick={() => setMostrarModalCliente(true)}
                 >
-                  {producto.codigo} - {producto.descripcion} ({producto.marca})
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {tab === 'kits' && (
-          <div className="kits-lista">
-            {kits.map((kit) => (
-              <div className="kit-item" key={kit.id}>
-                <div>
-                  <h4>{kit.nombre}</h4>
-                  <p>{kit.descripcion || '-'}</p>
-                </div>
-                <button type="button" className="btn-primary" onClick={() => cargarKit(kit.id)}>
-                  Cargar kit
+                  Nuevo
                 </button>
               </div>
-            ))}
-            {kits.length === 0 && <p>No hay kits activos.</p>}
+            </div>
+            {clienteOk && (
+              <div className="cliente-info">
+                {(() => {
+                  const cliente = clientes.find((c) => String(c.id) === String(clienteId));
+                  if (!cliente) return null;
+                  return (
+                    <>
+                      <div><strong>RUC/DNI:</strong> {cliente.ruc || cliente.dni || '-'}</div>
+                      <div><strong>Tel:</strong> {cliente.telefono || '-'}</div>
+                      <div><strong>Dir:</strong> {cliente.direccion || '-'}</div>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      <div className="cotizacion-detalle">
-        <h3>Productos agregados</h3>
-        {items.length === 0 ? (
-          <p className="empty-message">No hay productos agregados.</p>
-        ) : (
-          <table className="cotizacion-table">
-            <thead>
-              <tr>
-                <th>Codigo</th>
-                <th>Descripcion</th>
-                <th>Regular</th>
-                <th>Final</th>
-                <th>Cantidad</th>
-                <th>Subtotal</th>
-                <th>Origen</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item, index) => {
-                const subtotal = Number(item.cantidad || 0) * Number(item.precio_unitario || 0);
-                return (
-                  <tr key={`${item.producto_id}-${index}`}>
-                    <td>{item.codigo}</td>
-                    <td>{item.descripcion}</td>
-                    <td>
-                      <input
-                        type="number"
-                        value={item.precio_regular}
-                        onChange={(e) =>
-                          actualizarItem(index, { precio_regular: Number(e.target.value || 0) })
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        value={item.precio_unitario}
-                        onChange={(e) =>
-                          actualizarItem(index, { precio_unitario: Number(e.target.value || 0) })
-                        }
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        min="1"
-                        value={item.cantidad}
-                        onChange={(e) =>
-                          actualizarItem(index, { cantidad: Number(e.target.value || 1) })
-                        }
-                      />
-                    </td>
-                    <td>{subtotal.toFixed(2)}</td>
-                    <td>
-                      {item.origen === 'kit' ? <span className="tag-kit">Kit</span> : 'Manual'}
-                    </td>
-                    <td>
-                      <button className="btn-delete" onClick={() => quitarItem(index)}>
-                        Quitar
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
+          <div className="cotizacion-notas">
+            <label>Notas / Observaciones</label>
+            <textarea value={notas} onChange={(e) => setNotas(e.target.value)} />
+          </div>
 
-      <div className="cotizacion-totales">
-        <div>
-          <label>Notas / Observaciones</label>
-          <textarea value={notas} onChange={(e) => setNotas(e.target.value)} />
-        </div>
-        <div className="totales-box">
-          <p>Subtotal: {totales.subtotal.toFixed(2)}</p>
-          <p>Descuento: {totales.descuento.toFixed(2)}</p>
-          <p className="total">Total: {totales.total.toFixed(2)}</p>
-          <button className="btn-success" onClick={handleCrearCotizacion}>
-            Guardar cotizacion
-          </button>
+          <div className="cotizacion-summary">
+            <h3>Resumen de cotizacion</h3>
+            <div className="summary-row">
+              <span>Subtotal (regular)</span>
+              <strong>S/ {totales.subtotal.toFixed(2)}</strong>
+            </div>
+            <div className="summary-row">
+              <span>Descuento</span>
+              <strong>S/ {totales.descuento.toFixed(2)}</strong>
+            </div>
+            <div className="summary-total">
+              <span>Total</span>
+              <strong>S/ {totales.total.toFixed(2)}</strong>
+            </div>
+          </div>
         </div>
       </div>
 

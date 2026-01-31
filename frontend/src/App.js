@@ -9,8 +9,12 @@ import TiposMaquinasPage from './modules/tipos-maquinas/pages/TiposMaquinasPage'
 import GestorInventarioPage from './modules/movimientos/pages/GestorInventarioPage';
 import KitsPage from './modules/kits/pages/KitsPage';
 import CotizacionesPage from './modules/cotizaciones/pages/CotizacionesPage';
+import HistorialCotizacionesPage from './modules/cotizaciones/pages/HistorialCotizacionesPage';
 import ClientesPage from './modules/clientes/pages/ClientesPage';
 import UsuariosPage from './modules/usuarios/pages/UsuariosPage';
+import HistorialPage from './modules/historial/pages/HistorialPage';
+import PermisosPage from './modules/permisos/pages/PermisosPage';
+import InventarioGeneralPage from './modules/inventario-general/pages/InventarioGeneralPage';
 
 // Componentes compartidos
 import Navbar from './shared/components/Navbar';
@@ -98,6 +102,14 @@ function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/inventario-general"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <InventarioGeneralPage />
+            </ProtectedRoute>
+          }
+        />
         <Route path="/ingresos" element={<Navigate to="/inventario" />} />
         <Route path="/salidas" element={<Navigate to="/inventario" />} />
         <Route
@@ -117,6 +129,14 @@ function App() {
           }
         />
         <Route
+          path="/cotizaciones-historial"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <HistorialCotizacionesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/clientes"
           element={
             <ProtectedRoute isAuthenticated={isAuthenticated}>
@@ -129,6 +149,22 @@ function App() {
           element={
             <ProtectedRoute isAuthenticated={isAuthenticated}>
               <UsuariosPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/permisos"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <PermisosPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/historial"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated}>
+              <HistorialPage />
             </ProtectedRoute>
           }
         />

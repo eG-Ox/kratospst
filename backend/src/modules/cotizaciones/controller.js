@@ -1,4 +1,5 @@
 const pool = require('../../core/config/database');
+const { registrarHistorial } = require('../../shared/utils/historial');
 
 const escapeHtml = (value) => {
   if (value === null || value === undefined) {
@@ -454,6 +455,133 @@ exports.formularioCotizaciones = async (req, res) => {
   }
 };
 
+exports.listarCotizaciones = async (req, res) => {
+  const { cliente_id, usuario_id, fecha_inicio, fecha_fin } = req.query;
+  try {
+    const connection = await pool.getConnection();
+    let query = `
+      SELECT c.id, c.fecha, c.total, c.descuento, c.serie, c.correlativo,
+        c.usuario_id, c.cliente_id,
+        cl.tipo_cliente, cl.nombre as cliente_nombre, cl.apellido as cliente_apellido, cl.razon_social
+      FROM cotizaciones c
+      LEFT JOIN clientes cl ON c.cliente_id = cl.id
+      WHERE 1=1
+    `;
+    const params = [];
+    if (cliente_id) {
+      query += ' AND c.cliente_id = ?';
+      params.push(cliente_id);
+    }
+    if (usuario_id) {
+      query += ' AND c.usuario_id = ?';
+      params.push(usuario_id);
+    }
+    if (fecha_inicio) {
+      query += ' AND c.fecha >= ?';
+      params.push(fecha_inicio);
+    }
+    if (fecha_fin) {
+      query += ' AND c.fecha <= ?';
+      params.push(fecha_fin);
+    }
+    query += ' ORDER BY c.fecha DESC';
+    const [rows] = await connection.execute(query, params);
+    connection.release();
+    res.json(rows);
+  } catch (error) {
+    console.error('Error listando cotizaciones:', error);
+    res.status(500).json({ error: 'Error al listar cotizaciones' });
+  }
+};
+
+exports.listarHistorialCotizaciones = async (req, res) => {
+  const { cliente_id, usuario_id, fecha_inicio, fecha_fin, limite = 50, pagina = 1 } = req.query;
+  const limitValue = Number.parseInt(limite, 10);
+  const pageValue = Number.parseInt(pagina, 10);
+  const safeLimit = Number.isFinite(limitValue) && limitValue > 0 ? limitValue : 50;
+  const safePage = Number.isFinite(pageValue) && pageValue > 0 ? pageValue : 1;
+  const offset = (safePage - 1) * safeLimit;
+
+  try {
+    const connection = await pool.getConnection();
+    let query = `
+      SELECT
+        h.id,
+        h.cotizacion_id,
+        h.usuario_id,
+        h.accion,
+        h.descripcion,
+        h.created_at,
+        u.nombre as usuario_nombre,
+        c.serie,
+        c.correlativo,
+        c.total,
+        c.cliente_id,
+        cl.tipo_cliente,
+        cl.nombre as cliente_nombre,
+        cl.apellido as cliente_apellido,
+        cl.razon_social
+      FROM historial_cotizaciones h
+      LEFT JOIN usuarios u ON h.usuario_id = u.id
+      LEFT JOIN cotizaciones c ON h.cotizacion_id = c.id
+      LEFT JOIN clientes cl ON c.cliente_id = cl.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (cliente_id) {
+      query += ' AND c.cliente_id = ?';
+      params.push(cliente_id);
+    }
+    if (usuario_id) {
+      query += ' AND h.usuario_id = ?';
+      params.push(usuario_id);
+    }
+    if (fecha_inicio) {
+      query += ' AND h.created_at >= ?';
+      params.push(fecha_inicio);
+    }
+    if (fecha_fin) {
+      query += ' AND h.created_at <= ?';
+      params.push(fecha_fin);
+    }
+
+    query += ` ORDER BY h.created_at DESC LIMIT ${safeLimit} OFFSET ${offset}`;
+    const [rows] = await connection.execute(query, params);
+    connection.release();
+    res.json(rows);
+  } catch (error) {
+    console.error('Error listando historial de cotizaciones:', error);
+    res.status(500).json({ error: 'Error al obtener historial de cotizaciones' });
+  }
+};
+
+exports.obtenerCotizacion = async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+    const [cotizaciones] = await connection.execute(
+      'SELECT * FROM cotizaciones WHERE id = ?',
+      [req.params.id]
+    );
+    if (!cotizaciones.length) {
+      connection.release();
+      return res.status(404).json({ error: 'Cotizacion no encontrada' });
+    }
+    const [detalles] = await connection.execute(
+      `SELECT d.*, m.codigo, m.descripcion, m.marca
+       FROM detalle_cotizacion d
+       JOIN maquinas m ON d.producto_id = m.id
+       WHERE d.cotizacion_id = ?`,
+      [req.params.id]
+    );
+    connection.release();
+    res.json({ cotizacion: cotizaciones[0], detalles });
+  } catch (error) {
+    console.error('Error obteniendo cotizacion:', error);
+    res.status(500).json({ error: 'Error al obtener cotizacion' });
+  }
+};
+
 exports.crearCotizacion = async (req, res) => {
   const { cliente_id, notas } = req.body;
   const items = normalizarProductos(req.body).filter((item) => item.producto_id && item.cantidad);
@@ -499,12 +627,91 @@ exports.crearCotizacion = async (req, res) => {
       [ventaId, req.usuario.id]
     );
 
+    await registrarHistorial(connection, {
+      entidad: 'cotizaciones',
+      entidad_id: ventaId,
+      usuario_id: req.usuario.id,
+      accion: 'crear',
+      descripcion: 'Cotizacion creada',
+      antes: null,
+      despues: { id: ventaId, total, descuento, cliente_id: cliente_id || null, items }
+    });
+
     connection.release();
 
     res.status(201).json({ id: ventaId, serie, correlativo });
   } catch (error) {
     console.error('Error creando cotizacion:', error);
     res.status(500).json({ error: 'Error al crear cotizacion' });
+  }
+};
+
+exports.editarCotizacion = async (req, res) => {
+  const { cliente_id, notas } = req.body;
+  const items = normalizarProductos(req.body).filter((item) => item.producto_id && item.cantidad);
+  if (!items.length) {
+    return res.status(400).json({ error: 'Debe agregar productos a la cotizacion' });
+  }
+
+  try {
+    const connection = await pool.getConnection();
+    const [prevCot] = await connection.execute('SELECT * FROM cotizaciones WHERE id = ?', [
+      req.params.id
+    ]);
+    if (!prevCot.length) {
+      connection.release();
+      return res.status(404).json({ error: 'Cotizacion no encontrada' });
+    }
+    const [prevDetalles] = await connection.execute(
+      'SELECT * FROM detalle_cotizacion WHERE cotizacion_id = ?',
+      [req.params.id]
+    );
+
+    const { descuento, total } = calcularTotales(items);
+
+    await connection.execute(
+      `UPDATE cotizaciones
+       SET cliente_id = ?, total = ?, descuento = ?, nota = ?
+       WHERE id = ?`,
+      [cliente_id || null, total, descuento, notas || null, req.params.id]
+    );
+
+    await connection.execute('DELETE FROM detalle_cotizacion WHERE cotizacion_id = ?', [
+      req.params.id
+    ]);
+    for (const item of items) {
+      const subtotal = Number(item.precio_unitario || 0) * Number(item.cantidad || 0);
+      await connection.execute(
+        `INSERT INTO detalle_cotizacion
+         (cotizacion_id, producto_id, cantidad, precio_unitario, precio_regular, subtotal, almacen_origen)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.params.id,
+          item.producto_id,
+          item.cantidad,
+          item.precio_unitario,
+          item.precio_regular,
+          subtotal,
+          item.almacen_origen || 'productos'
+        ]
+      );
+    }
+
+    await registrarHistorial(connection, {
+      entidad: 'cotizaciones',
+      entidad_id: req.params.id,
+      usuario_id: req.usuario.id,
+      accion: 'editar',
+      descripcion: 'Cotizacion actualizada',
+      antes: { cotizacion: prevCot[0], detalles: prevDetalles },
+      despues: { cotizacion: { ...prevCot[0], cliente_id: cliente_id || null, total, descuento, nota: notas || null }, detalles: items }
+    });
+
+    connection.release();
+    res.json({ id: req.params.id });
+  } catch (error) {
+    console.error('Error editando cotizacion:', error);
+    res.status(500).json({ error: 'Error al editar cotizacion' });
   }
 };
 

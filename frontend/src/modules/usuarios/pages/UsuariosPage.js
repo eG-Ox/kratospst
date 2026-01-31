@@ -11,7 +11,7 @@ const UsuariosPage = () => {
     nombre: '',
     email: '',
     telefono: '',
-    rol: 'operario',
+    rol: 'ventas',
     activo: true
   });
 
@@ -48,7 +48,7 @@ const UsuariosPage = () => {
         nombre: resp.data.nombre || '',
         email: resp.data.email || '',
         telefono: resp.data.telefono || '',
-        rol: resp.data.rol || 'operario',
+        rol: resp.data.rol || 'ventas',
         activo: true
       });
       setError('');
@@ -66,7 +66,7 @@ const UsuariosPage = () => {
       nombre: usuario.nombre || '',
       email: usuario.email || '',
       telefono: usuario.telefono || '',
-      rol: usuario.rol || 'operario',
+      rol: usuario.rol || 'ventas',
       activo: !!usuario.activo
     });
   };
@@ -210,7 +210,8 @@ const UsuariosPage = () => {
                     onChange={(e) => setFormData({ ...formData, rol: e.target.value })}
                   >
                     <option value="admin">admin</option>
-                    <option value="operario">operario</option>
+                    <option value="ventas">ventas</option>
+                    <option value="logistica">logistica</option>
                   </select>
                 </div>
                 <div className="form-group">

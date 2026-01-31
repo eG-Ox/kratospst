@@ -24,6 +24,12 @@ export const productosService = {
   getAll: () => api.get('/productos'),
   getById: (id) => api.get(`/productos/${id}`),
   getByCodigo: (codigo) => api.get(`/productos?codigo=${codigo}`),
+  descargarPlantilla: () =>
+    api.get('/productos/plantilla', { responseType: 'blob' }),
+  exportarExcel: () =>
+    api.get('/productos/exportar', { responseType: 'blob' }),
+  importarExcel: (data) =>
+    api.post('/productos/importar', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
   create: (data) => {
     const formData = new FormData();
     Object.keys(data).forEach((key) => {
@@ -86,7 +92,11 @@ export const kitsService = {
 // Servicios para Cotizaciones
 export const cotizacionesService = {
   formulario: () => api.get('/cotizaciones'),
+  listar: (params) => api.get('/cotizaciones/listar', { params }),
+  historial: (params) => api.get('/cotizaciones/historial', { params }),
+  obtener: (id) => api.get(`/cotizaciones/${id}`),
   crear: (data) => api.post('/cotizaciones', data),
+  editar: (id, data) => api.put(`/cotizaciones/${id}`, data),
   ver: (id) => api.get(`/cotizaciones/ver/${id}`),
   pdf: (id) => api.get(`/cotizaciones/pdf/${id}`),
   buscarProductos: (params) => api.get('/cotizaciones/api/buscar-productos', { params }),
@@ -102,6 +112,33 @@ export const usuariosService = {
   actualizar: (id, data) => api.put(`/usuarios/${id}`, data),
   obtenerPerfil: () => api.get('/usuarios/me'),
   actualizarPerfil: (data) => api.put('/usuarios/me', data),
+};
+
+// Servicios para Historial
+export const historialService = {
+  listar: (params) => api.get('/historial', { params }),
+};
+
+// Servicios para Permisos
+export const permisosService = {
+  listarRoles: () => api.get('/permisos/roles'),
+  obtenerPorRol: (rol) => api.get(`/permisos/rol/${rol}`),
+  actualizarRol: (rol, data) => api.put(`/permisos/rol/${rol}`, data),
+  misPermisos: () => api.get('/permisos/mi')
+};
+
+// Inventario general
+export const inventarioGeneralService = {
+  listar: (params) => api.get('/inventario-general', { params }),
+  crear: (data) => api.post('/inventario-general', data),
+  obtener: (id) => api.get(`/inventario-general/${id}`),
+  agregar: (id, data) => api.post(`/inventario-general/${id}/agregar`, data),
+  ajustar: (id, data) => api.post(`/inventario-general/${id}/ajustar`, data),
+  eliminar: (id, data) => api.post(`/inventario-general/${id}/eliminar`, data),
+  eliminarInventario: (id) => api.post(`/inventario-general/${id}/eliminar-inventario`),
+  cerrar: (id) => api.post(`/inventario-general/${id}/cerrar`),
+  aplicar: (id) => api.post(`/inventario-general/${id}/aplicar`),
+  exportar: (id) => api.get(`/inventario-general/${id}/export`, { responseType: 'blob' })
 };
 
 export default api;

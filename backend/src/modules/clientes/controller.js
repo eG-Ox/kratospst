@@ -1,5 +1,6 @@
 const https = require('https');
 const pool = require('../../core/config/database');
+const { registrarHistorial } = require('../../shared/utils/historial');
 
 const DNI_REGEX = /^\d{8}$/;
 const RUC_REGEX = /^\d{11}$/;
@@ -155,6 +156,27 @@ exports.crearCliente = async (req, res) => {
         correo || null
       ]
     );
+    await registrarHistorial(connection, {
+      entidad: 'clientes',
+      entidad_id: result.insertId,
+      usuario_id: req.usuario?.id,
+      accion: 'crear',
+      descripcion: `Cliente creado (${tipo_cliente})`,
+      antes: null,
+      despues: {
+        id: result.insertId,
+        usuario_id: req.usuario?.id || null,
+        tipo_cliente,
+        dni: tipo_cliente === 'natural' ? dni : null,
+        ruc: tipo_cliente === 'juridico' ? ruc : null,
+        nombre: tipo_cliente === 'natural' ? nombre : null,
+        apellido: tipo_cliente === 'natural' ? apellido : null,
+        razon_social: tipo_cliente === 'juridico' ? razon_social : null,
+        direccion: direccion || null,
+        telefono: telefono || null,
+        correo: correo || null
+      }
+    });
     connection.release();
 
     res.status(201).json({
@@ -216,7 +238,7 @@ exports.actualizarCliente = async (req, res) => {
 
   try {
     const connection = await pool.getConnection();
-    const [existing] = await connection.execute('SELECT id, usuario_id FROM clientes WHERE id = ?', [
+    const [existing] = await connection.execute('SELECT * FROM clientes WHERE id = ?', [
       req.params.id
     ]);
     if (existing.length === 0) {
@@ -247,6 +269,27 @@ exports.actualizarCliente = async (req, res) => {
         req.params.id
       ]
     );
+    await registrarHistorial(connection, {
+      entidad: 'clientes',
+      entidad_id: req.params.id,
+      usuario_id: req.usuario?.id,
+      accion: 'editar',
+      descripcion: `Cliente actualizado (${req.params.id})`,
+      antes: existing[0],
+      despues: {
+        id: req.params.id,
+        usuario_id: existing[0].usuario_id,
+        tipo_cliente,
+        dni: tipo_cliente === 'natural' ? dni : null,
+        ruc: tipo_cliente === 'juridico' ? ruc : null,
+        nombre: tipo_cliente === 'natural' ? nombre : null,
+        apellido: tipo_cliente === 'natural' ? apellido : null,
+        razon_social: tipo_cliente === 'juridico' ? razon_social : null,
+        direccion: direccion || null,
+        telefono: telefono || null,
+        correo: correo || null
+      }
+    });
     connection.release();
 
     res.json({
@@ -273,7 +316,7 @@ exports.actualizarCliente = async (req, res) => {
 exports.eliminarCliente = async (req, res) => {
   try {
     const connection = await pool.getConnection();
-    const [existing] = await connection.execute('SELECT id, usuario_id FROM clientes WHERE id = ?', [
+    const [existing] = await connection.execute('SELECT * FROM clientes WHERE id = ?', [
       req.params.id
     ]);
     if (!existing.length) {
@@ -285,6 +328,15 @@ exports.eliminarCliente = async (req, res) => {
       return res.status(403).json({ error: 'Acceso denegado' });
     }
     const [result] = await connection.execute('DELETE FROM clientes WHERE id = ?', [req.params.id]);
+    await registrarHistorial(connection, {
+      entidad: 'clientes',
+      entidad_id: req.params.id,
+      usuario_id: req.usuario?.id,
+      accion: 'eliminar',
+      descripcion: `Cliente eliminado (${req.params.id})`,
+      antes: existing[0],
+      despues: null
+    });
     connection.release();
 
     if (result.affectedRows === 0) {

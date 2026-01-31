@@ -1,4 +1,5 @@
 const pool = require('../../core/config/database');
+const { registrarHistorial } = require('../../shared/utils/historial');
 
 // Registrar ingreso o salida
 exports.registrarMovimiento = async (req, res) => {
@@ -53,6 +54,15 @@ exports.registrarMovimiento = async (req, res) => {
       [nuevoStock, maquina_id]
     );
 
+    await registrarHistorial(connection, {
+      entidad: 'movimientos',
+      entidad_id: result.insertId,
+      usuario_id,
+      accion: tipo,
+      descripcion: `Movimiento ${tipo} (${maquina_id})`,
+      antes: { stock: stockActual },
+      despues: { stock: nuevoStock, cantidad, motivo: motivo || null }
+    });
     connection.release();
 
     res.status(201).json({

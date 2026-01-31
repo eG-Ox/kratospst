@@ -215,6 +215,25 @@ table tbody tr:last-child td {
   border-bottom: none;
 }
 
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+.table-scroll,
+.table-container,
+.table-responsive,
+.usuarios-table-container,
+.clientes-table-container,
+.kits-table-container,
+.productos-table-container,
+.tipos-table-container,
+.historial-table-container,
+.inventario-table-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* Cargando */
 .loading {
   text-align: center;
@@ -252,8 +271,47 @@ table tbody tr:last-child td {
 
 /* Responsive */
 @media (max-width: 768px) {
+  .dashboard-container,
+  .productos-container,
+  .clientes-container,
+  .usuarios-container,
+  .kits-container,
+  .tipos-container,
+  .movimientos-container,
+  .historial-container,
+  .permisos-container,
+  .cotizaciones-container,
+  .historial-cotizaciones-container,
+  .inventario-general-container,
+  .login-container {
+    padding: 16px 12px;
+  }
+
   .form-row {
     grid-template-columns: 1fr;
+  }
+
+  .form-actions,
+  .header-actions,
+  .page-header__actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .form-actions button,
+  .header-actions button,
+  .page-header__actions button {
+    width: 100%;
+  }
+
+  .modal-content {
+    max-width: 96vw;
+  }
+
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
   }
 
   table {
