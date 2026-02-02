@@ -12,21 +12,21 @@
   gap: 12px;
   padding: 12px 16px;
   border-radius: 10px;
-  background: linear-gradient(135deg, #111111 0%, #1f1f1f 100%);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
-  border: 1px solid #dedede;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid #ecf0f1;
   margin-bottom: 12px;
-  color: white;
+  color: #2c3e50;
 }
 
 .page-header__title h5 {
   margin: 0;
-  color: #ffffff;
+  color: #2c3e50;
   font-weight: 600;
 }
 
 .page-header__subtitle {
-  color: rgba(255, 255, 255, 0.7);
+  color: #7f8c8d;
   font-size: 12px;
 }
 
@@ -42,36 +42,36 @@
   border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
-  color: #111827;
-  background: #f5c542;
+  color: #2c3e50;
+  background: #f1c40f;
 }
 
 .status-badge.ok {
-  background: #16a34a;
+  background: #27ae60;
   color: white;
 }
 
 .status-badge.warn {
-  background: #f59e0b;
-  color: #111827;
+  background: #f39c12;
+  color: #2c3e50;
 }
 
 .status-pill {
   padding: 4px 10px;
   border-radius: 8px;
   font-size: 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #ecf0f1;
   background: #f8f9fa;
-  color: #111827;
+  color: #2c3e50;
 }
 
 .status-meta {
   padding: 4px 10px;
   border-radius: 8px;
   font-size: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.9);
-  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid #ecf0f1;
+  color: #2c3e50;
+  background: #f8f9fa;
 }
 
 .header-buttons {
@@ -257,17 +257,17 @@
 
 .tabs button {
   border: none;
-  background: #f3f4f6;
+  background: #ecf0f1;
   padding: 6px 10px;
   border-radius: 999px;
   cursor: pointer;
   font-weight: 600;
-  color: #374151;
+  color: #2c3e50;
   font-size: 12px;
 }
 
 .tabs button.active {
-  background: #111111;
+  background: #3498db;
   color: white;
 }
 

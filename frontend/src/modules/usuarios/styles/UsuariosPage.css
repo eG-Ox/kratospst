@@ -48,3 +48,36 @@
 .perfil-form .form-group {
   margin-bottom: 16px;
 }
+
+@media (max-width: 768px) {
+  .usuarios-container {
+    padding: 20px 12px;
+  }
+
+  .usuarios-header h1 {
+    font-size: 24px;
+  }
+
+  .usuarios-table-container {
+    padding: 12px;
+  }
+
+  .usuarios-table {
+    font-size: 13px;
+  }
+
+  .usuarios-table th,
+  .usuarios-table td {
+    padding: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .usuarios-table-container {
+    overflow-x: auto;
+  }
+
+  .usuarios-table {
+    min-width: 520px;
+  }
+}

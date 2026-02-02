@@ -4,6 +4,7 @@ const { registrarHistorial } = require('../../shared/utils/historial');
 
 const DNI_REGEX = /^\d{8}$/;
 const RUC_REGEX = /^\d{11}$/;
+const CE_REGEX = /^\d{9}$/;
 
 const fetchJson = (url) =>
   new Promise((resolve, reject) => {
@@ -115,13 +116,22 @@ exports.crearCliente = async (req, res) => {
     correo
   } = req.body;
 
-  if (!['natural', 'juridico'].includes(tipo_cliente)) {
-    return res.status(400).json({ error: 'Tipo de cliente debe ser natural o juridico' });
+  if (!['natural', 'juridico', 'ce'].includes(tipo_cliente)) {
+    return res.status(400).json({ error: 'Tipo de cliente invalido' });
   }
 
   if (tipo_cliente === 'natural') {
     if (!DNI_REGEX.test(String(dni || ''))) {
       return res.status(400).json({ error: 'DNI debe tener 8 digitos' });
+    }
+    if (!nombre || !apellido) {
+      return res.status(400).json({ error: 'Nombre y apellido son requeridos' });
+    }
+  }
+
+  if (tipo_cliente === 'ce') {
+    if (!CE_REGEX.test(String(dni || ''))) {
+      return res.status(400).json({ error: 'Carnet de extranjeria debe tener 9 digitos' });
     }
     if (!nombre || !apellido) {
       return res.status(400).json({ error: 'Nombre y apellido son requeridos' });
@@ -146,10 +156,10 @@ exports.crearCliente = async (req, res) => {
       [
         req.usuario?.id || null,
         tipo_cliente,
-        tipo_cliente === 'natural' ? dni : null,
+        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? dni : null,
         tipo_cliente === 'juridico' ? ruc : null,
-        tipo_cliente === 'natural' ? nombre : null,
-        tipo_cliente === 'natural' ? apellido : null,
+        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? nombre : null,
+        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? apellido : null,
         tipo_cliente === 'juridico' ? razon_social : null,
         direccion || null,
         telefono || null,
@@ -167,10 +177,10 @@ exports.crearCliente = async (req, res) => {
         id: result.insertId,
         usuario_id: req.usuario?.id || null,
         tipo_cliente,
-        dni: tipo_cliente === 'natural' ? dni : null,
+        dni: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? dni : null,
         ruc: tipo_cliente === 'juridico' ? ruc : null,
-        nombre: tipo_cliente === 'natural' ? nombre : null,
-        apellido: tipo_cliente === 'natural' ? apellido : null,
+        nombre: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? nombre : null,
+        apellido: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? apellido : null,
         razon_social: tipo_cliente === 'juridico' ? razon_social : null,
         direccion: direccion || null,
         telefono: telefono || null,
@@ -183,10 +193,10 @@ exports.crearCliente = async (req, res) => {
       id: result.insertId,
       usuario_id: req.usuario?.id || null,
       tipo_cliente,
-      dni: tipo_cliente === 'natural' ? dni : null,
+      dni: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? dni : null,
       ruc: tipo_cliente === 'juridico' ? ruc : null,
-      nombre: tipo_cliente === 'natural' ? nombre : null,
-      apellido: tipo_cliente === 'natural' ? apellido : null,
+      nombre: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? nombre : null,
+      apellido: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? apellido : null,
       razon_social: tipo_cliente === 'juridico' ? razon_social : null,
       direccion: direccion || null,
       telefono: telefono || null,
@@ -214,13 +224,22 @@ exports.actualizarCliente = async (req, res) => {
     correo
   } = req.body;
 
-  if (!['natural', 'juridico'].includes(tipo_cliente)) {
-    return res.status(400).json({ error: 'Tipo de cliente debe ser natural o juridico' });
+  if (!['natural', 'juridico', 'ce'].includes(tipo_cliente)) {
+    return res.status(400).json({ error: 'Tipo de cliente invalido' });
   }
 
   if (tipo_cliente === 'natural') {
     if (!DNI_REGEX.test(String(dni || ''))) {
       return res.status(400).json({ error: 'DNI debe tener 8 digitos' });
+    }
+    if (!nombre || !apellido) {
+      return res.status(400).json({ error: 'Nombre y apellido son requeridos' });
+    }
+  }
+
+  if (tipo_cliente === 'ce') {
+    if (!CE_REGEX.test(String(dni || ''))) {
+      return res.status(400).json({ error: 'Carnet de extranjeria debe tener 9 digitos' });
     }
     if (!nombre || !apellido) {
       return res.status(400).json({ error: 'Nombre y apellido son requeridos' });
@@ -258,10 +277,10 @@ exports.actualizarCliente = async (req, res) => {
        WHERE id = ?`,
       [
         tipo_cliente,
-        tipo_cliente === 'natural' ? dni : null,
+        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? dni : null,
         tipo_cliente === 'juridico' ? ruc : null,
-        tipo_cliente === 'natural' ? nombre : null,
-        tipo_cliente === 'natural' ? apellido : null,
+        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? nombre : null,
+        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? apellido : null,
         tipo_cliente === 'juridico' ? razon_social : null,
         direccion || null,
         telefono || null,
@@ -280,10 +299,10 @@ exports.actualizarCliente = async (req, res) => {
         id: req.params.id,
         usuario_id: existing[0].usuario_id,
         tipo_cliente,
-        dni: tipo_cliente === 'natural' ? dni : null,
+        dni: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? dni : null,
         ruc: tipo_cliente === 'juridico' ? ruc : null,
-        nombre: tipo_cliente === 'natural' ? nombre : null,
-        apellido: tipo_cliente === 'natural' ? apellido : null,
+        nombre: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? nombre : null,
+        apellido: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? apellido : null,
         razon_social: tipo_cliente === 'juridico' ? razon_social : null,
         direccion: direccion || null,
         telefono: telefono || null,
@@ -295,10 +314,10 @@ exports.actualizarCliente = async (req, res) => {
     res.json({
       id: req.params.id,
       tipo_cliente,
-      dni: tipo_cliente === 'natural' ? dni : null,
+      dni: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? dni : null,
       ruc: tipo_cliente === 'juridico' ? ruc : null,
-      nombre: tipo_cliente === 'natural' ? nombre : null,
-      apellido: tipo_cliente === 'natural' ? apellido : null,
+      nombre: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? nombre : null,
+      apellido: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? apellido : null,
       razon_social: tipo_cliente === 'juridico' ? razon_social : null,
       direccion: direccion || null,
       telefono: telefono || null,

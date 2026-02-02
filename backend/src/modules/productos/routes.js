@@ -6,6 +6,7 @@ const { multerUpload } = require('../../core/middleware/multer');
 const router = express.Router();
 
 router.get('/', autorizar('productos.ver'), controller.getMaquinas);
+router.get('/codigo/:codigo', autorizar('productos.ver'), controller.getMaquinaPorCodigo);
 router.get('/plantilla', autorizar('productos.ver'), controller.descargarPlantilla);
 router.get('/exportar', autorizar('productos.ver'), controller.exportarExcel);
 router.post('/importar', autorizar('productos.editar'), multerUpload.single('archivo'), controller.importarExcel);

@@ -73,7 +73,7 @@ const HistorialPage = () => {
       const stockDespues = despues?.stock ?? '-';
       if (modo === 'antes') return `Codigo: ${codigo} | Stock: ${stockAntes}`;
       if (modo === 'despues') return `Codigo: ${codigo} | Stock: ${stockDespues}`;
-      return `Codigo: ${codigo} | Stock ${stockAntes} → ${stockDespues}`;
+      return `Codigo: ${codigo} | Stock ${stockAntes} -> ${stockDespues}`;
     }
 
     if (item.entidad === 'cotizaciones') {
@@ -257,3 +257,6 @@ const HistorialPage = () => {
 };
 
 export default HistorialPage;
+
+
+

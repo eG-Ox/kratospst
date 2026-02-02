@@ -8,6 +8,8 @@ const { tienePermiso } = require('../../core/middleware/auth');
 const normalizarHeader = (header) =>
   String(header || '')
     .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]/g, '');
 
 const parseNumero = (value, fallback = 0) => {
@@ -114,6 +116,35 @@ exports.getMaquina = async (req, res) => {
   } catch (error) {
     console.error('Error obteniendo máquina:', error);
     res.status(500).json({ error: 'Error al obtener máquina' });
+  }
+};
+
+// Obtener una maquina por codigo
+exports.getMaquinaPorCodigo = async (req, res) => {
+  const codigo = String(req.params.codigo || '').trim();
+  if (!codigo) {
+    return res.status(400).json({ error: 'Codigo requerido' });
+  }
+
+  try {
+    const connection = await pool.getConnection();
+    const [maquina] = await connection.execute(
+      'SELECT m.*, t.nombre as tipo_nombre FROM maquinas m JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id WHERE m.codigo = ?',
+      [codigo]
+    );
+    connection.release();
+
+    if (maquina.length === 0) {
+      return res.status(404).json({ error: 'Maquina no encontrada' });
+    }
+
+    if (!tienePermiso(req, 'productos.precio_compra.ver')) {
+      return res.json({ ...maquina[0], precio_compra: null });
+    }
+    res.json(maquina[0]);
+  } catch (error) {
+    console.error('Error obteniendo maquina por codigo:', error);
+    res.status(500).json({ error: 'Error al obtener maquina' });
   }
 };
 
@@ -523,10 +554,18 @@ exports.importarExcel = async (req, res) => {
       const tipoNombre = String(
         normalized.tipomaquina || normalized.tipo || normalized.tipomaquinaid || ''
       ).trim();
-      const tipoId = tiposMap.get(tipoNombre.toLowerCase());
+      let tipoId = tiposMap.get(tipoNombre.toLowerCase());
       if (!tipoId) {
-        errores.push(`Fila ${index + 2}: tipo de maquina no encontrado (${tipoNombre})`);
-        continue;
+        if (!tipoNombre) {
+          errores.push(`Fila ${index + 2}: falta tipo de maquina`);
+          continue;
+        }
+        const [tipoInsert] = await connection.execute(
+          'INSERT INTO tipos_maquinas (nombre, descripcion) VALUES (?, ?)',
+          [tipoNombre, 'Creado desde importacion']
+        );
+        tipoId = tipoInsert.insertId;
+        tiposMap.set(tipoNombre.toLowerCase(), tipoId);
       }
 
       const marca = String(normalized.marca || '').trim();

@@ -29,6 +29,7 @@ import './App.css';
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [usuario, setUsuario] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -42,6 +43,7 @@ function App() {
         localStorage.removeItem('usuario');
       }
     }
+    setAuthChecked(true);
   }, []);
 
   const handleLoginSuccess = (usuarioData) => {
@@ -73,7 +75,7 @@ function App() {
         <Route
           path="/dashboard"
           element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <DashboardPage usuario={usuario} />
             </ProtectedRoute>
           }
@@ -81,7 +83,7 @@ function App() {
         <Route
           path="/productos"
           element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <ProductosPage />
             </ProtectedRoute>
           }
@@ -89,7 +91,7 @@ function App() {
         <Route
           path="/tipos-maquinas"
           element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <TiposMaquinasPage />
             </ProtectedRoute>
           }
@@ -97,7 +99,7 @@ function App() {
         <Route
           path="/inventario"
           element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <GestorInventarioPage />
             </ProtectedRoute>
           }
@@ -105,7 +107,7 @@ function App() {
         <Route
           path="/inventario-general"
           element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <InventarioGeneralPage />
             </ProtectedRoute>
           }
@@ -115,7 +117,7 @@ function App() {
         <Route
           path="/kits"
           element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <KitsPage />
             </ProtectedRoute>
           }
@@ -123,7 +125,7 @@ function App() {
         <Route
           path="/cotizaciones"
           element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <CotizacionesPage />
             </ProtectedRoute>
           }
@@ -131,7 +133,7 @@ function App() {
         <Route
           path="/cotizaciones-historial"
           element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <HistorialCotizacionesPage />
             </ProtectedRoute>
           }
@@ -139,7 +141,7 @@ function App() {
         <Route
           path="/clientes"
           element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <ClientesPage />
             </ProtectedRoute>
           }
@@ -147,7 +149,7 @@ function App() {
         <Route
           path="/usuarios"
           element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <UsuariosPage />
             </ProtectedRoute>
           }
@@ -155,7 +157,7 @@ function App() {
         <Route
           path="/permisos"
           element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <PermisosPage />
             </ProtectedRoute>
           }
@@ -163,7 +165,7 @@ function App() {
         <Route
           path="/historial"
           element={
-            <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <HistorialPage />
             </ProtectedRoute>
           }

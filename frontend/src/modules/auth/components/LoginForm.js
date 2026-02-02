@@ -4,17 +4,10 @@ import { authService } from '../../../core/services/apiServices';
 import './LoginForm.css';
 
 const LoginForm = ({ onLoginSuccess }) => {
-  const [email, setEmail] = useState('admin@inventario.com');
-  const [contraseña, setContraseña] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [contrasena, setContrasena] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [mostrarRegistro, setMostrarRegistro] = useState(false);
-  const [registroData, setRegistroData] = useState({
-    nombre: '',
-    email: '',
-    contraseña: '',
-    confirmarContraseña: ''
-  });
 
   const navigate = useNavigate();
 
@@ -22,52 +15,20 @@ const LoginForm = ({ onLoginSuccess }) => {
     e.preventDefault();
     setError('');
 
-    if (!email || !contraseña) {
-      setError('Email y contraseña requeridos');
+    if (!email || !contrasena) {
+      setError('Usuario y contrasena requeridos');
       return;
     }
 
     try {
       setLoading(true);
-      const response = await authService.login(email, contraseña);
+      const response = await authService.login(email, contrasena);
       localStorage.setItem('token', response.data.token);
       localStorage.setItem('usuario', JSON.stringify(response.data.usuario));
       onLoginSuccess(response.data.usuario);
       navigate('/dashboard');
     } catch (error) {
-      setError(error.response?.data?.error || 'Error al iniciar sesión');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRegistro = async (e) => {
-    e.preventDefault();
-    setError('');
-
-    if (!registroData.nombre || !registroData.email || !registroData.contraseña) {
-      setError('Todos los campos son requeridos');
-      return;
-    }
-
-    if (registroData.contraseña !== registroData.confirmarContraseña) {
-      setError('Las contraseñas no coinciden');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const response = await authService.registro(
-        registroData.nombre,
-        registroData.email,
-        registroData.contraseña
-      );
-      localStorage.setItem('token', response.data.token);
-      localStorage.setItem('usuario', JSON.stringify(response.data.usuario));
-      onLoginSuccess(response.data.usuario);
-      navigate('/dashboard');
-    } catch (error) {
-      setError(error.response?.data?.error || 'Error al registrar usuario');
+      setError(error.response?.data?.error || 'Error al iniciar sesion');
     } finally {
       setLoading(false);
     }
@@ -75,115 +36,51 @@ const LoginForm = ({ onLoginSuccess }) => {
 
   return (
     <div className="login-form-container">
-      {!mostrarRegistro ? (
-        <form onSubmit={handleLogin} className="login-form">
-          <h2>Iniciar Sesión</h2>
-          
-          {error && <div className="error-message">{error}</div>}
-          
-          <div className="form-group">
-            <label htmlFor="email">Email</label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="usuario@ejemplo.com"
-              disabled={loading}
-            />
-          </div>
+      <form onSubmit={handleLogin} className="login-form" autoComplete="off">
+        <h2>Iniciar Sesion</h2>
 
-          <div className="form-group">
-            <label htmlFor="contraseña">Contraseña</label>
-            <input
-              id="contraseña"
-              type="password"
-              value={contraseña}
-              onChange={(e) => setContraseña(e.target.value)}
-              placeholder="Ingrese su contraseña"
-              disabled={loading}
-            />
-          </div>
+        {error && <div className="error-message">{error}</div>}
 
-          <button type="submit" disabled={loading}>
-            {loading ? 'Cargando...' : 'Iniciar Sesión'}
-          </button>
+        <input type="text" name="fakeuser" autoComplete="username" style={{ display: 'none' }} />
+        <input
+          type="password"
+          name="fakepass"
+          autoComplete="new-password"
+          style={{ display: 'none' }}
+        />
 
-          <button
-            type="button"
-            className="link-button"
-            onClick={() => setMostrarRegistro(true)}
-          >
-            ¿No tienes cuenta? Regístrate
-          </button>
-        </form>
-      ) : (
-        <form onSubmit={handleRegistro} className="login-form">
-          <h2>Registrarse</h2>
-          
-          {error && <div className="error-message">{error}</div>}
-          
-          <div className="form-group">
-            <label htmlFor="nombre">Nombre</label>
-            <input
-              id="nombre"
-              type="text"
-              value={registroData.nombre}
-              onChange={(e) => setRegistroData({ ...registroData, nombre: e.target.value })}
-              placeholder="Nombre completo"
-              disabled={loading}
-            />
-          </div>
+        <div className="form-group">
+          <label htmlFor="email">Usuario o Email</label>
+          <input
+            id="email"
+            type="text"
+            name="usuario"
+            autoComplete="off"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="usuario o usuario@ejemplo.com"
+            disabled={loading}
+          />
+        </div>
 
-          <div className="form-group">
-            <label htmlFor="reg-email">Email</label>
-            <input
-              id="reg-email"
-              type="email"
-              value={registroData.email}
-              onChange={(e) => setRegistroData({ ...registroData, email: e.target.value })}
-              placeholder="usuario@ejemplo.com"
-              disabled={loading}
-            />
-          </div>
+        <div className="form-group">
+          <label htmlFor="contrasena">Contrasena</label>
+          <input
+            id="contrasena"
+            type="password"
+            name="contrasena"
+            autoComplete="new-password"
+            value={contrasena}
+            onChange={(e) => setContrasena(e.target.value)}
+            placeholder="Ingrese su contrasena"
+            disabled={loading}
+          />
+        </div>
 
-          <div className="form-group">
-            <label htmlFor="reg-contraseña">Contraseña</label>
-            <input
-              id="reg-contraseña"
-              type="password"
-              value={registroData.contraseña}
-              onChange={(e) => setRegistroData({ ...registroData, contraseña: e.target.value })}
-              placeholder="Contraseña"
-              disabled={loading}
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="confirmar">Confirmar Contraseña</label>
-            <input
-              id="confirmar"
-              type="password"
-              value={registroData.confirmarContraseña}
-              onChange={(e) => setRegistroData({ ...registroData, confirmarContraseña: e.target.value })}
-              placeholder="Confirmar contraseña"
-              disabled={loading}
-            />
-          </div>
-
-          <button type="submit" disabled={loading}>
-            {loading ? 'Registrando...' : 'Registrarse'}
-          </button>
-
-          <button
-            type="button"
-            className="link-button"
-            onClick={() => setMostrarRegistro(false)}
-          >
-            ¿Ya tienes cuenta? Inicia Sesión
-          </button>
-        </form>
-      )}
+        <button type="submit" disabled={loading}>
+          {loading ? 'Cargando...' : 'Iniciar Sesion'}
+        </button>
+      </form>
     </div>
   );
 };

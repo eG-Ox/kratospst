@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import {
   movimientosService,
@@ -21,7 +21,6 @@ const GestorInventarioPage = () => {
   const [success, setSuccess] = useState('');
   const [cameraActive, setCameraActive] = useState(false);
   const [lectorSoportado, setLectorSoportado] = useState(true);
-  const [scanActivo, setScanActivo] = useState(false);
   const [qrData, setQrData] = useState(null);
 
   const videoRef = useRef(null);
@@ -38,30 +37,6 @@ const GestorInventarioPage = () => {
   useEffect(() => {
     cargarDatos();
   }, []);
-
-  useEffect(() => {
-    return () => detenerCamara();
-  }, []);
-
-  useEffect(() => {
-    if (modo !== 'ingreso') {
-      setQrData(null);
-    }
-  }, [modo]);
-
-  useEffect(() => {
-    if (cameraActive && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-      const playPromise = videoRef.current.play();
-      if (playPromise && typeof playPromise.catch === 'function') {
-        playPromise.catch(() => {});
-      }
-      const autoScanTimer = setTimeout(() => {
-        iniciarEscaneo();
-      }, 300);
-      return () => clearTimeout(autoScanTimer);
-    }
-  }, [cameraActive]);
 
   const cargarDatos = async () => {
     try {
@@ -149,12 +124,11 @@ const GestorInventarioPage = () => {
     iniciarEscaneo();
   };
 
-  const setScanActivoSeguro = (value) => {
+  const setScanActivoSeguro = useCallback((value) => {
     scanActivoRef.current = value;
-    setScanActivo(value);
-  };
+  }, []);
 
-  const detenerEscaneo = () => {
+  const detenerEscaneo = useCallback(() => {
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
@@ -178,9 +152,9 @@ const GestorInventarioPage = () => {
       zxingRef.current.reset();
     }
     setScanActivoSeguro(false);
-  };
+  }, [setScanActivoSeguro]);
 
-  const detenerCamara = () => {
+  const detenerCamara = useCallback(() => {
     detenerEscaneo();
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -190,7 +164,7 @@ const GestorInventarioPage = () => {
       videoRef.current.srcObject = null;
     }
     setCameraActive(false);
-  };
+  }, [detenerEscaneo]);
 
   const procesarCodigoDetectado = (valor) => {
     const ahora = Date.now();
@@ -212,6 +186,7 @@ const GestorInventarioPage = () => {
     }
   };
 
+
   const reproducirBeep = () => {
     try {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -232,7 +207,7 @@ const GestorInventarioPage = () => {
     }
   };
 
-  const iniciarEscaneo = () => {
+  const iniciarEscaneo = useCallback(() => {
     if (scanActivoRef.current) {
       return;
     }
@@ -276,7 +251,31 @@ const GestorInventarioPage = () => {
         console.error('Error iniciando ZXing:', err);
       }
     }
-  };
+  }, [setScanActivoSeguro]);
+
+  useEffect(() => {
+    return () => detenerCamara();
+  }, [detenerCamara]);
+
+  useEffect(() => {
+    if (modo !== 'ingreso') {
+      setQrData(null);
+    }
+  }, [modo]);
+
+  useEffect(() => {
+    if (cameraActive && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      const playPromise = videoRef.current.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {});
+      }
+      const autoScanTimer = setTimeout(() => {
+        iniciarEscaneo();
+      }, 300);
+      return () => clearTimeout(autoScanTimer);
+    }
+  }, [cameraActive, iniciarEscaneo]);
 
   const obtenerTipoDefault = async () => {
     if (tipos.length > 0) {
@@ -434,8 +433,7 @@ const GestorInventarioPage = () => {
           onClick={() => setModo('salida')}
         >
           Salida
-        </button>
-      </div>
+        </button></div>
 
       {error && <div className="error-message">{error}</div>}
       {success && <div className="success-message">{success}</div>}
@@ -443,133 +441,143 @@ const GestorInventarioPage = () => {
       {loading ? (
         <div className="loading">Cargando productos...</div>
       ) : (
-        <div className="inventario-grid">
-          <div className="inventario-panel">
-            <div className="barcode-card">
-              <label htmlFor="codigo">CODIGO</label>
-              <div className="code-input-row">
-                <input
-                  id="codigo"
-                  type="text"
-                  value={codigo}
-                  onChange={(e) => setCodigo(e.target.value.trim())}
-                  placeholder="Escanea o escribe el codigo"
-                />
-                <button
-                  type="button"
-                  className="btn-camera"
-                  onClick={toggleEscaneoDesdeBoton}
-                  aria-label="Abrir cámara y escanear"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M9 4.5h6l1.2 2H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h2.8L9 4.5zm3 4.5a4 4 0 1 0 .001 8.001A4 4 0 0 0 12 9zm0 2a2 2 0 1 1-.001 4.001A2 2 0 0 1 12 11z" />
-                  </svg>
-                </button>
+        <form className="movimientos-form" onSubmit={handleRegistrar}>
+          <div className="inventario-grid">
+            <div className="inventario-panel">
+              <div className="barcode-card">
+                <label htmlFor="codigo">CODIGO</label>
+                <div className="code-input-row">
+                  <input
+                    id="codigo"
+                    type="text"
+                    value={codigo}
+                    onChange={(e) => setCodigo(e.target.value.trim())}
+                    placeholder="Escanea o escribe el codigo"
+                  />
+                  <button
+                    type="button"
+                    className="btn-camera"
+                    onClick={toggleEscaneoDesdeBoton}
+                    aria-label="Abrir cámara y escanear"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M9 4.5h6l1.2 2H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h2.8L9 4.5zm3 4.5a4 4 0 1 0 .001 8.001A4 4 0 0 0 12 9zm0 2a2 2 0 1 1-.001 4.001A2 2 0 0 1 12 11z" />
+                    </svg>
+                  </button>
               </div>
 
-              <div className="producto-datos">
-                {productoActual ? (
-                  <>
-                    <p>
-                      <strong>Producto:</strong> {productoActual.marca || 'Sin marca'}
-                    </p>
-                    <p>
-                      <strong>Descripcion:</strong> {productoActual.descripcion || 'Sin descripcion'}
-                    </p>
-                    <p>
-                      <strong>Ubicacion:</strong> {formatearUbicacion(productoActual)}
-                    </p>
-                    <p>
-                      <strong>Stock actual:</strong> {productoActual.stock}
-                    </p>
-                  </>
-                ) : qrData ? (
-                  <>
-                    <p>
-                      <strong>Producto:</strong> {qrData.marca}
-                    </p>
-                    <p>
-                      <strong>Descripcion:</strong> {qrData.descripcion}
-                    </p>
-                    <p>
-                      <strong>Ubicacion:</strong> {qrData.ubicacion}
-                    </p>
+              </div>
+
+              <div className="form-card">
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Cantidad *</label>
+                    <input
+                      type="number"
+                      min="1"
+                      required
+                      value={cantidad}
+                      onChange={(e) => setCantidad(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Motivo</label>
+                    <select value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+                      <option value="">Selecciona un motivo</option>
+                      <option value="VENTA">VENTA</option>
+                      <option value="COMPRA">COMPRA</option>
+                      <option value="CAMBIO DE CODIGO">CAMBIO DE CODIGO</option>
+                      <option value="DEVOLUCIONES">DEVOLUCIONES</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Numero de guia (opcional)</label>
+                    <input
+                      type="text"
+                      placeholder="Ej. 000-12345"
+                      value={numeroGuia}
+                      onChange={(e) => setNumeroGuia(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="inventario-panel">
+              <div className="info-card product-card">
+                <h3>Detalle del producto</h3>
+                <div className="producto-datos">
+                  {productoActual ? (
+                    <>
+                      <p>
+                        <strong>Producto:</strong> {productoActual.marca || 'Sin marca'}
+                      </p>
+                      <p>
+                        <strong>Descripcion:</strong>{' '}
+                        {productoActual.descripcion || 'Sin descripcion'}
+                      </p>
+                      <p>
+                        <strong>Ubicacion:</strong> {formatearUbicacion(productoActual)}
+                      </p>
+                      <p>
+                        <strong>Stock actual:</strong> {productoActual.stock}
+                      </p>
+                    </>
+                  ) : qrData ? (
+                    <>
+                      <p>
+                        <strong>Producto:</strong> {qrData.marca}
+                      </p>
+                      <p>
+                        <strong>Descripcion:</strong> {qrData.descripcion}
+                      </p>
+                      <p>
+                        <strong>Ubicacion:</strong> {qrData.ubicacion}
+                      </p>
+                      <p className="producto-vacio">
+                        Producto no encontrado: se crear? si es ingreso
+                      </p>
+                    </>
+                  ) : (
                     <p className="producto-vacio">
                       Producto no encontrado: se crear? si es ingreso
                     </p>
-                  </>
-                ) : (
-                  <p className="producto-vacio">
-                    Producto no encontrado: se crear? si es ingreso
+                  )}
+                </div>
+              </div>
+
+              <div className="summary-row">
+                <div className="info-card summary-card">
+                  <h3>Resumen</h3>
+                  <p>
+                    Código: <strong>{codigo || '-'}</strong>
                   </p>
-                )}
+                  <p>
+                    Acción: <strong>{modo === 'ingreso' ? 'Ingreso' : 'Salida'}</strong>
+                  </p>
+                  <p>
+                    Motivo: <strong>{motivo || (numeroGuia ? 'Guia registrada' : '-')}</strong>
+                  </p>
+                  <p>
+                    Guia: <strong>{numeroGuia || '-'}</strong>
+                  </p>
+                  <p>
+                    Stock actual:{' '}
+                    <strong>{productoActual ? productoActual.stock : 'No registrado'}</strong>
+                  </p>
+                </div>
+
+                <div className="action-card">
+                  <button type="submit" className="btn-primary">
+                    Registrar {modo === 'ingreso' ? 'Ingreso' : 'Salida'}
+                  </button></div>
               </div>
             </div>
           </div>
-
-          <div className="inventario-panel">
-            <form className="movimientos-form" onSubmit={handleRegistrar}>
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Cantidad *</label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={cantidad}
-                    onChange={(e) => setCantidad(e.target.value)}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Motivo</label>
-                  <select value={motivo} onChange={(e) => setMotivo(e.target.value)}>
-                    <option value="">Selecciona un motivo</option>
-                    <option value="VENTA">VENTA</option>
-                    <option value="COMPRA">COMPRA</option>
-                    <option value="CAMBIO DE CODIGO">CAMBIO DE CODIGO</option>
-                    <option value="DEVOLUCIONES">DEVOLUCIONES</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Numero de guia (opcional)</label>
-                  <input
-                    type="text"
-                    placeholder="Ej. 000-12345"
-                    value={numeroGuia}
-                    onChange={(e) => setNumeroGuia(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="info-card">
-                <h3>Resumen</h3>
-                <p>
-                  Código: <strong>{codigo || '-'}</strong>
-                </p>
-                <p>
-                  Acción: <strong>{modo === 'ingreso' ? 'Ingreso' : 'Salida'}</strong>
-                </p>
-                <p>
-                  Motivo: <strong>{motivo || (numeroGuia ? 'Guia registrada' : '-')}</strong>
-                </p>
-                <p>
-                  Guia: <strong>{numeroGuia || '-'}</strong>
-                </p>
-                <p>
-                  Stock actual:{' '}
-                  <strong>{productoActual ? productoActual.stock : 'No registrado'}</strong>
-                </p>
-              </div>
-
-              <button type="submit" className="btn-primary">
-                Registrar {modo === 'ingreso' ? 'Ingreso' : 'Salida'}
-              </button>
-            </form>
-          </div>
-        </div>
+        </form>
       )}
 
       {cameraActive && (
@@ -580,8 +588,7 @@ const GestorInventarioPage = () => {
               <h3>Escaner de codigo</h3>
               <button type="button" className="btn-link" onClick={detenerCamara}>
                 Cerrar
-              </button>
-            </div>
+              </button></div>
             <div className="camera-modal__preview">
               <video
                 ref={videoRef}
@@ -609,3 +616,9 @@ const GestorInventarioPage = () => {
 };
 
 export default GestorInventarioPage;
+
+
+
+
+
+

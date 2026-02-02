@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { usuariosService } from '../../../core/services/apiServices';
+import { authService, usuariosService } from '../../../core/services/apiServices';
 import '../styles/UsuariosPage.css';
 
 const UsuariosPage = () => {
@@ -7,12 +7,19 @@ const UsuariosPage = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(null);
+  const [creando, setCreando] = useState(false);
   const [formData, setFormData] = useState({
     nombre: '',
     email: '',
     telefono: '',
     rol: 'ventas',
     activo: true
+  });
+  const [nuevoUsuario, setNuevoUsuario] = useState({
+    nombre: '',
+    usuario: '',
+    contrasena: '',
+    rol: 'ventas'
   });
 
   const usuarioActual = JSON.parse(localStorage.getItem('usuario') || '{}');
@@ -93,6 +100,29 @@ const UsuariosPage = () => {
     }
   };
 
+  const abrirCrear = () => {
+    setNuevoUsuario({ nombre: '', usuario: '', contrasena: '', rol: 'ventas' });
+    setCreando(true);
+  };
+
+  const handleCrear = async (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      await authService.registro({
+        nombre: nuevoUsuario.nombre,
+        email: nuevoUsuario.usuario,
+        contrasena: nuevoUsuario.contrasena,
+        rol: nuevoUsuario.rol
+      });
+      setCreando(false);
+      await cargarUsuarios();
+    } catch (err) {
+      console.error('Error creando usuario:', err);
+      setError(err.response?.data?.error || 'Error al crear usuario');
+    }
+  };
+
   if (loading) {
     return <div className="loading">Cargando...</div>;
   }
@@ -101,6 +131,11 @@ const UsuariosPage = () => {
     <div className="usuarios-container">
       <div className="usuarios-header">
         <h1>{esAdmin ? 'Usuarios' : 'Mi Perfil'}</h1>
+        {esAdmin && (
+          <button type="button" className="btn-primary" onClick={abrirCrear}>
+            + Nuevo Usuario
+          </button>
+        )}
       </div>
 
       {error && <div className="error-message">{error}</div>}
@@ -232,6 +267,88 @@ const UsuariosPage = () => {
                   Guardar
                 </button>
                 <button type="button" className="btn-secondary" onClick={() => setEditando(null)}>
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {creando && esAdmin && (
+        <div className="modal-overlay">
+          <div className="modal-content modal-sm">
+            <div className="modal-header">
+              <h2>Crear Usuario</h2>
+              <button type="button" className="btn-icon" onClick={() => setCreando(false)}>
+                X
+              </button>
+            </div>
+            <form onSubmit={handleCrear} autoComplete="off">
+              <div className="modal-body">
+                <input type="text" name="fakeuser" autoComplete="username" style={{ display: 'none' }} />
+                <input
+                  type="password"
+                  name="fakepass"
+                  autoComplete="new-password"
+                  style={{ display: 'none' }}
+                />
+                <div className="form-group">
+                  <label>Nombre</label>
+                  <input
+                    type="text"
+                    name="nuevo-nombre"
+                    autoComplete="off"
+                    value={nuevoUsuario.nombre}
+                    onChange={(e) =>
+                      setNuevoUsuario({ ...nuevoUsuario, nombre: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Usuario</label>
+                  <input
+                    type="text"
+                    name="nuevo-usuario"
+                    autoComplete="off"
+                    value={nuevoUsuario.usuario}
+                    onChange={(e) =>
+                      setNuevoUsuario({ ...nuevoUsuario, usuario: e.target.value.trim() })
+                    }
+                    placeholder="usuario"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>ContraseÃ±a</label>
+                  <input
+                    type="password"
+                    name="nuevo-contrasena"
+                    autoComplete="new-password"
+                    value={nuevoUsuario.contrasena}
+                    onChange={(e) =>
+                      setNuevoUsuario({ ...nuevoUsuario, contrasena: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Rol</label>
+                  <select
+                    value={nuevoUsuario.rol}
+                    onChange={(e) =>
+                      setNuevoUsuario({ ...nuevoUsuario, rol: e.target.value })
+                    }
+                  >
+                    <option value="admin">admin</option>
+                    <option value="ventas">ventas</option>
+                    <option value="logistica">logistica</option>
+                  </select>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="submit" className="btn-success">
+                  Crear
+                </button>
+                <button type="button" className="btn-secondary" onClick={() => setCreando(false)}>
                   Cancelar
                 </button>
               </div>

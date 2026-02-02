@@ -3,7 +3,7 @@ import { clientesService } from '../../../core/services/apiServices';
 import '../styles/ClientesPage.css';
 
 const emptyForm = {
-  tipo_cliente: 'natural',
+  tipo_cliente: '',
   dni: '',
   ruc: '',
   nombre: '',
@@ -58,9 +58,9 @@ const ClientesPage = () => {
     setFormData((prev) => ({
       ...prev,
       tipo_cliente: value,
-      dni: value === 'natural' ? prev.dni : '',
-      nombre: value === 'natural' ? prev.nombre : '',
-      apellido: value === 'natural' ? prev.apellido : '',
+      dni: value === 'natural' || value === 'ce' ? prev.dni : '',
+      nombre: value === 'natural' || value === 'ce' ? prev.nombre : '',
+      apellido: value === 'natural' || value === 'ce' ? prev.apellido : '',
       ruc: value === 'juridico' ? prev.ruc : '',
       razon_social: value === 'juridico' ? prev.razon_social : ''
     }));
@@ -97,6 +97,9 @@ const ClientesPage = () => {
       return;
     }
 
+    if (formData.tipo_cliente !== 'juridico') {
+      return;
+    }
     if (!/^\d{11}$/.test(formData.ruc || '')) {
       setConsultaMensaje('El RUC debe tener 11 digitos.');
       return;
@@ -174,15 +177,20 @@ const ClientesPage = () => {
     if (cliente.tipo_cliente === 'natural') {
       return `DNI: ${cliente.dni || '-'}`;
     }
+    if (cliente.tipo_cliente === 'ce') {
+      return `CE: ${cliente.dni || '-'}`;
+    }
     return `RUC: ${cliente.ruc || '-'}`;
   };
 
   const renderNombre = (cliente) => {
-    if (cliente.tipo_cliente === 'natural') {
+    if (cliente.tipo_cliente === 'natural' || cliente.tipo_cliente === 'ce') {
       return `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim() || '-';
     }
     return cliente.razon_social || '-';
   };
+
+  const tipoSeleccionado = !!formData.tipo_cliente;
 
   return (
     <div className="clientes-container">
@@ -215,7 +223,13 @@ const ClientesPage = () => {
               <tbody>
                 {clientes.map((cliente) => (
                   <tr key={cliente.id}>
-                    <td>{cliente.tipo_cliente === 'natural' ? 'Natural' : 'Juridico'}</td>
+                    <td>
+                      {cliente.tipo_cliente === 'natural'
+                        ? 'Natural'
+                        : cliente.tipo_cliente === 'ce'
+                          ? 'CE'
+                          : 'Juridico'}
+                    </td>
                     <td>{renderDocumento(cliente)}</td>
                     <td>{renderNombre(cliente)}</td>
                     <td>{cliente.direccion || '-'}</td>
@@ -263,33 +277,39 @@ const ClientesPage = () => {
                     value={formData.tipo_cliente}
                     onChange={(e) => handleTipoChange(e.target.value)}
                   >
+                    <option value="">Selecciona tipo</option>
                     <option value="natural">Natural (DNI)</option>
                     <option value="juridico">Juridico (RUC)</option>
+                    <option value="ce">Carnet de extranjeria (CE)</option>
                   </select>
                 </div>
 
-                {formData.tipo_cliente === 'natural' ? (
+                {!tipoSeleccionado ? (
+                  <p className="consulta-mensaje">Selecciona el tipo de cliente para habilitar los campos.</p>
+                ) : formData.tipo_cliente === 'natural' || formData.tipo_cliente === 'ce' ? (
                   <>
                     <div className="form-row">
                       <div className="form-group">
-                        <label>DNI *</label>
+                        <label>{formData.tipo_cliente === 'ce' ? 'Carnet de extranjeria *' : 'DNI *'}</label>
                         <div className="consulta-row">
                           <input
                             type="text"
-                            maxLength="8"
+                            maxLength={formData.tipo_cliente === 'ce' ? '9' : '8'}
                             value={formData.dni}
                             onChange={(e) =>
                               setFormData({ ...formData, dni: e.target.value.trim() })
                             }
                           />
-                          <button
-                            type="button"
-                            className="btn-secondary"
-                            onClick={handleConsultar}
-                            disabled={consultando}
-                          >
-                            {consultando ? 'Consultando...' : 'Consultar'}
-                          </button>
+                          {formData.tipo_cliente === 'natural' && (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={handleConsultar}
+                              disabled={consultando}
+                            >
+                              {consultando ? 'Consultando...' : 'Consultar'}
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -365,6 +385,7 @@ const ClientesPage = () => {
                       type="text"
                       value={formData.direccion}
                       onChange={(e) => setFormData({ ...formData, direccion: e.target.value })}
+                      disabled={!tipoSeleccionado}
                     />
                   </div>
                 </div>
@@ -376,6 +397,7 @@ const ClientesPage = () => {
                       type="text"
                       value={formData.telefono}
                       onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
+                      disabled={!tipoSeleccionado}
                     />
                   </div>
                   <div className="form-group">
@@ -384,6 +406,7 @@ const ClientesPage = () => {
                       type="email"
                       value={formData.correo}
                       onChange={(e) => setFormData({ ...formData, correo: e.target.value })}
+                      disabled={!tipoSeleccionado}
                     />
                   </div>
                 </div>

@@ -12,28 +12,44 @@ const JWT_SECRET = process.env.JWT_SECRET || 'tu_secreto_aqui';
 // Login
 exports.login = async (req, res) => {
   const { email, contraseña } = req.body;
+  const identificador = String(email || '').trim();
 
-  if (!email || !contraseña) {
-    return res.status(400).json({ error: 'Email y contraseña requeridos' });
+  if (!identificador || !contraseña) {
+    return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
   }
 
   try {
     const connection = await pool.getConnection();
-    const [usuarios] = await connection.execute(
-      'SELECT id, nombre, email, telefono, contraseña, rol FROM usuarios WHERE email = ? AND activo = TRUE',
-      [email]
-    );
+    let usuarios = [];
+    if (identificador.includes('@')) {
+      const [rows] = await connection.execute(
+        'SELECT id, nombre, email, telefono, contraseña, rol FROM usuarios WHERE email = ? AND activo = TRUE',
+        [identificador]
+      );
+      usuarios = rows;
+    } else {
+      const [rows] = await connection.execute(
+        `SELECT id, nombre, email, telefono, contraseña, rol
+         FROM usuarios
+         WHERE (email = ? OR email LIKE ? OR nombre = ?) AND activo = TRUE`,
+        [identificador, `${identificador}@%`, identificador]
+      );
+      usuarios = rows;
+    }
     connection.release();
 
     if (usuarios.length === 0) {
-      return res.status(401).json({ error: 'Email o contraseña incorrectos' });
+      return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
+    }
+    if (usuarios.length > 1 && !identificador.includes('@')) {
+      return res.status(400).json({ error: 'Usuario ambiguo, use el email completo' });
     }
 
     const usuario = usuarios[0];
     const validPassword = await bcrypt.compare(contraseña, usuario.contraseña);
 
     if (!validPassword) {
-      return res.status(401).json({ error: 'Email o contraseña incorrectos' });
+      return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
     }
 
     const token = jwt.sign(
@@ -64,7 +80,6 @@ exports.login = async (req, res) => {
     res.status(500).json({ error: 'Error al iniciar sesión' });
   }
 };
-
 // Registro
 exports.registro = async (req, res) => {
   const { nombre, email, telefono, contraseña, rol = 'ventas' } = req.body;
@@ -133,3 +148,4 @@ exports.obtenerUsuarioActual = async (req, res) => {
 exports.logout = (req, res) => {
   res.json({ mensaje: 'Logout exitoso' });
 };
+

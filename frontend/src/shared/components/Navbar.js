@@ -56,7 +56,7 @@ const Navbar = ({ usuario, onLogout }) => {
           className="menu-toggle"
           type="button"
           onClick={() => setMenuAbierto(true)}
-          aria-label="Abrir menú"
+          aria-label="Abrir menu"
         >
           <span />
           <span />
@@ -79,7 +79,7 @@ const Navbar = ({ usuario, onLogout }) => {
         </div>
       </nav>
 
-      <div className={`side-menu ${menuAbierto ? 'open' : ''}`}>
+      <div className={`side-menu ${menuAbierto ? 'open' : ''}`} onClick={(event) => event.stopPropagation()}>
         <div className="side-menu__header">
           <span>Menú</span>
           <button type="button" className="btn-icon" onClick={() => setMenuAbierto(false)}>
@@ -102,6 +102,16 @@ const Navbar = ({ usuario, onLogout }) => {
               ))}
             </div>
           ))}
+          <div className="side-menu__group">
+            <div className="side-menu__group-title">Sesion</div>
+            <button
+              type="button"
+              className="nav-link nav-link--danger"
+              onClick={handleLogout}
+            >
+              Cerrar Sesion
+            </button>
+          </div>
         </div>
       </div>
       {menuAbierto && <div className="side-menu__backdrop" onClick={() => setMenuAbierto(false)} />}
@@ -110,6 +120,7 @@ const Navbar = ({ usuario, onLogout }) => {
 };
 
 export default Navbar;
+
 
 
 

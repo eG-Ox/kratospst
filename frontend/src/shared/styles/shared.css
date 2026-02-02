@@ -4,9 +4,9 @@
 
 /* Botones */
 .btn-primary, .btn-success, .btn-danger, .btn-secondary, .btn-delete {
-  padding: 10px 20px;
-  border: none;
-  border-radius: var(--border-radius);
+  padding: 10px 18px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   cursor: pointer;
   font-weight: 600;
   transition: var(--transition);
@@ -14,45 +14,44 @@
 }
 
 .btn-primary {
-  background-color: var(--primary-color);
+  background: linear-gradient(120deg, var(--primary-color), #2563eb 60%, #0ea5e9);
   color: white;
+  box-shadow: 0 12px 25px rgba(37, 99, 235, 0.25);
 }
 
 .btn-primary:hover {
-  background-color: var(--primary-light);
-  transform: translateY(-2px);
-  box-shadow: var(--box-shadow);
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px rgba(37, 99, 235, 0.32);
 }
 
 .btn-success {
-  background-color: var(--secondary-color);
+  background: linear-gradient(120deg, var(--secondary-color), #14b8a6);
   color: white;
 }
 
 .btn-success:hover {
-  background-color: var(--secondary-light);
-  transform: translateY(-2px);
-  box-shadow: var(--box-shadow);
+  transform: translateY(-1px);
+  box-shadow: var(--box-shadow-soft);
 }
 
 .btn-danger, .btn-delete {
-  background-color: var(--danger-color);
+  background: linear-gradient(120deg, var(--danger-color), #f97316);
   color: white;
 }
 
 .btn-danger:hover, .btn-delete:hover {
-  background-color: var(--danger-light);
-  transform: translateY(-2px);
-  box-shadow: var(--box-shadow);
+  transform: translateY(-1px);
+  box-shadow: var(--box-shadow-soft);
 }
 
 .btn-secondary {
-  background-color: var(--gray-color);
-  color: white;
+  background-color: transparent;
+  border-color: var(--border-strong);
+  color: var(--dark-color);
 }
 
 .btn-secondary:hover {
-  background-color: #7f8c8d;
+  background-color: rgba(15, 23, 42, 0.06);
 }
 
 /* Formularios */
@@ -72,12 +71,13 @@
 .form-group input,
 .form-group select,
 .form-group textarea {
-  padding: 10px 12px;
-  border: 1px solid #ddd;
-  border-radius: var(--border-radius);
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
   font-size: 14px;
   font-family: var(--font-family);
   transition: var(--transition);
+  background-color: var(--surface);
 }
 
 .form-group input:focus,
@@ -85,7 +85,7 @@
 .form-group textarea:focus {
   outline: none;
   border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
 }
 
 .form-row {
@@ -96,8 +96,8 @@
 
 /* Mensajes */
 .error-message {
-  background-color: #fadbd8;
-  color: #c0392b;
+  background-color: rgba(220, 38, 38, 0.08);
+  color: #b91c1c;
   padding: 12px 15px;
   border-radius: var(--border-radius);
   margin-bottom: 20px;
@@ -105,8 +105,8 @@
 }
 
 .success-message {
-  background-color: #d5f4e6;
-  color: #27ae60;
+  background-color: rgba(15, 118, 110, 0.1);
+  color: #0f766e;
   padding: 12px 15px;
   border-radius: var(--border-radius);
   margin-bottom: 20px;
@@ -114,8 +114,8 @@
 }
 
 .warning-message {
-  background-color: #fef5e7;
-  color: #f39c12;
+  background-color: rgba(217, 119, 6, 0.12);
+  color: #b45309;
   padding: 12px 15px;
   border-radius: var(--border-radius);
   margin-bottom: 20px;
@@ -131,16 +131,21 @@
   align-items: center;
   justify-content: center;
   padding: 20px;
+  padding-top: calc(20px + env(safe-area-inset-top));
+  padding-bottom: calc(20px + env(safe-area-inset-bottom));
   z-index: 1000;
 }
 
 .modal-content {
-  background: white;
-  border-radius: var(--border-radius);
+  background: var(--surface);
+  border-radius: var(--border-radius-lg);
   width: 100%;
   max-width: 900px;
   box-shadow: var(--box-shadow);
   overflow: hidden;
+  border: 1px solid var(--border-color);
+  max-height: calc(100dvh - 40px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
 }
 
 .modal-header {
@@ -148,7 +153,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .modal-header h2 {
@@ -167,7 +172,7 @@
   justify-content: flex-end;
   gap: 12px;
   padding: 16px 20px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--border-color);
 }
 
 .btn-icon {
@@ -182,15 +187,16 @@
 table {
   width: 100%;
   border-collapse: collapse;
-  background-color: white;
-  box-shadow: var(--box-shadow);
+  background-color: var(--surface);
+  box-shadow: var(--box-shadow-soft);
   border-radius: var(--border-radius);
   overflow: hidden;
+  border: 1px solid var(--border-color);
 }
 
 table thead {
-  background-color: var(--dark-color);
-  color: white;
+  background-color: rgba(15, 23, 42, 0.04);
+  color: var(--dark-color);
 }
 
 table th {
@@ -199,16 +205,16 @@ table th {
   font-weight: 600;
   font-size: 13px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.06em;
 }
 
 table td {
   padding: 12px 15px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--border-color);
 }
 
 table tbody tr:hover {
-  background-color: #f9f9f9;
+  background-color: rgba(15, 23, 42, 0.04);
 }
 
 table tbody tr:last-child td {
@@ -285,6 +291,26 @@ img {
   .inventario-general-container,
   .login-container {
     padding: 16px 12px;
+  }
+
+  .productos-header,
+  .clientes-header,
+  .usuarios-header,
+  .kits-header,
+  .tipos-header,
+  .historial-cotizaciones-header,
+  .permisos-header,
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .header-actions,
+  .page-header__actions,
+  .permisos-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .form-row {

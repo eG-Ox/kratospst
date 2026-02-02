@@ -2,12 +2,21 @@ import api from '../config/api';
 
 // Servicios de Autenticación
 export const authService = {
-  login: (email, contraseña) => 
+  login: (email, contraseña) =>
     api.post('/auth/login', { email, contraseña }),
-  registro: (nombre, email, contraseña) => 
-    api.post('/auth/registro', { nombre, email, contraseña }),
+  registro: (nombre, email, contraseña, rol) => {
+    if (typeof nombre === 'object' && nombre !== null) {
+      const data = { ...nombre };
+      if (data.contrasena && !data['contraseña']) {
+        data['contraseña'] = data.contrasena;
+        delete data.contrasena;
+      }
+      return api.post('/auth/registro', data);
+    }
+    return api.post('/auth/registro', { nombre, email, contraseña, rol });
+  },
   obtenerUsuarioActual: () => api.get('/auth/me'),
-  logout: () => api.post('/auth/logout'),
+  logout: () => api.post('/auth/logout')
 };
 
 // Servicios para Tipos de Máquinas
@@ -142,3 +151,4 @@ export const inventarioGeneralService = {
 };
 
 export default api;
+
