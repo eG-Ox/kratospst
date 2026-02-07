@@ -97,7 +97,8 @@
   position: fixed;
   top: 0;
   left: 0;
-  height: 100dvh;
+  bottom: 0;
+  height: auto;
   width: 88vw;
   max-width: 320px;
   background: linear-gradient(180deg, #0b0f14 0%, #101827 100%);
@@ -193,8 +194,12 @@
 
 .side-menu__backdrop {
   position: fixed;
-  inset: 0;
-  height: 100dvh;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100vw;
+  height: auto;
   background: rgba(2, 6, 23, 0.4);
   z-index: 1100;
 }

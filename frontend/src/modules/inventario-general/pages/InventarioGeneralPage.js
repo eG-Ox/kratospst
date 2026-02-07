@@ -22,9 +22,19 @@ const InventarioGeneralPage = () => {
   const [cameraActive, setCameraActive] = useState(false);
   const [scanActivo, setScanActivo] = useState(false);
   const [showInicioModal, setShowInicioModal] = useState(false);
+  const [showAplicarModal, setShowAplicarModal] = useState(false);
+  const [aplicarId, setAplicarId] = useState('');
   const [zonaLetra, setZonaLetra] = useState('');
   const [zonaNumero, setZonaNumero] = useState('');
   const [scanMode, setScanMode] = useState('producto');
+  const [faseConteo, setFaseConteo] = useState('zona');
+  const [ultimoScanOk, setUltimoScanOk] = useState(null);
+  const [ultimoScanTexto, setUltimoScanTexto] = useState('');
+
+  const isNativeScannerAvailable = () =>
+    typeof window !== 'undefined' &&
+    window.Android &&
+    typeof window.Android.openQrScanner === 'function';
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -74,6 +84,13 @@ const InventarioGeneralPage = () => {
   const abrirInicioModal = async () => {
     await cargarHistorial();
     setShowInicioModal(true);
+  };
+
+  const abrirAplicarModal = async () => {
+    await cargarHistorial();
+    const ultimo = historial?.[0]?.id ? String(historial[0].id) : '';
+    setAplicarId(ultimo);
+    setShowAplicarModal(true);
   };
 
   const iniciarInventario = async () => {
@@ -169,46 +186,56 @@ const InventarioGeneralPage = () => {
     }
   };
 
+  const limpiarErrores = () => {
+    setError('');
+    setSuccess('');
+  };
+
   const agregarCodigo = async (codigoScan) => {
     if (!inventarioId) {
       setError('Inicia un inventario primero');
       return;
     }
-    if (!zonaLetra || !zonaNumero) {
-      setError('Selecciona zona y subzona antes de contar');
-      return;
-    }
+    const zonaFinal = zonaLetra && zonaNumero
+      ? `${zonaLetra}${zonaNumero}`.trim().toUpperCase()
+      : 'H1';
     if (!codigoScan) {
       return;
     }
     try {
-      let codigoFinal = codigoScan;
-      if (codigoScan.includes('\n') || (codigoScan.match(/,/g) || []).length >= 3) {
-        const parsed = parsearQR(codigoScan);
+      limpiarErrores();
+      let codigoFinal = String(codigoScan || '').trim();
+      if (codigoFinal.includes('\n') || (codigoFinal.match(/,/g) || []).length >= 1) {
+        const parsed = parsearQR(codigoFinal);
         if (!parsed) {
           return;
         }
         if (parsed?.codigo) {
-          setCodigo(parsed.codigo);
           codigoFinal = parsed.codigo;
         }
       }
 
       const existente = productos.find((prod) => prod.codigo === codigoFinal);
       if (!existente) {
-        setError('Producto no encontrado');
+        setUltimoScanOk(false);
+        setUltimoScanTexto(codigoFinal);
+        setError(`QR no registrado: ${codigoFinal}`);
+        setCodigo('');
         return;
       }
 
       await inventarioGeneralService.agregar(inventarioId, {
         codigo: codigoFinal,
         cantidad: 1,
-        ubicacion: `${zonaLetra}${zonaNumero}`
+        ubicacion: zonaFinal
       });
       await refrescarDetalles();
       reproducirBeep();
+      setUltimoScanOk(true);
+      setUltimoScanTexto(codigoFinal);
       setSuccess(`Codigo leido: ${codigoFinal}`);
-      setTimeout(() => setSuccess(''), 1500);
+      setTimeout(() => setSuccess(''), 900);
+      setCodigo('');
     } catch (err) {
       console.error('Error agregando conteo:', err);
       setError(err.response?.data?.error || 'Error agregando conteo');
@@ -265,11 +292,17 @@ const InventarioGeneralPage = () => {
   };
 
   const aplicarStock = async () => {
-    if (!inventarioId) return;
+    if (!aplicarId) {
+      setError('Selecciona un inventario para aplicar.');
+      return;
+    }
     try {
-      await inventarioGeneralService.aplicar(inventarioId);
+      await inventarioGeneralService.aplicar(aplicarId);
       await refrescarDetalles();
       await cargarHistorial();
+      setShowAplicarModal(false);
+      setSuccess('Stock actualizado');
+      setTimeout(() => setSuccess(''), 1500);
     } catch (err) {
       console.error('Error aplicando stock:', err);
       setError(err.response?.data?.error || 'Error al aplicar stock');
@@ -292,6 +325,10 @@ const InventarioGeneralPage = () => {
   };
 
   const activarCamara = () => {
+    if (isNativeScannerAvailable()) {
+      window.Android.openQrScanner();
+      return;
+    }
     setError('');
     habilitarAudio();
     ultimoTextoRef.current = '';
@@ -361,11 +398,11 @@ const InventarioGeneralPage = () => {
       (result) => {
         if (result && scanActivoRef.current) {
           const ahora = Date.now();
-          if (ahora - ultimoDetectadoRef.current > 1200) {
+          if (ahora - ultimoDetectadoRef.current > 700) {
             ultimoDetectadoRef.current = ahora;
             const value = result.getText();
             const ahoraTexto = Date.now();
-            if (value === ultimoTextoRef.current && ahoraTexto - ultimoTextoAtRef.current < 2500) {
+            if (value === ultimoTextoRef.current && ahoraTexto - ultimoTextoAtRef.current < 1200) {
               return;
             }
             ultimoTextoRef.current = value;
@@ -378,6 +415,7 @@ const InventarioGeneralPage = () => {
               }
               setZonaLetra(zonaParsed.letra);
               setZonaNumero(String(zonaParsed.numero));
+              setFaseConteo('scan');
               setSuccess(`Zona activa: ${zonaParsed.letra}${zonaParsed.numero}`);
               setTimeout(() => setSuccess(''), 1200);
             } else {
@@ -451,15 +489,18 @@ const InventarioGeneralPage = () => {
   };
 
   const parsearQR = (textoQR) => {
-    const parsed = parseQRPayload(textoQR);
-    if (!parsed.ok) {
-      setError(parsed.error || 'QR invalido');
+    const raw = String(textoQR || '').trim();
+    if (!raw) {
+      setError('QR invalido');
       return null;
     }
-    if (parsed.partial) {
-      return { codigo: parsed.data.codigo, partial: true };
-    }
-    return parsed.data;
+    const tokens = raw
+      .replace(/\r/g, '')
+      .split(/[\n,;]+/g)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const codigo = tokens[0] || raw;
+    return { codigo, partial: true };
   };
 
   const parsearZonaQR = (textoQR) => {
@@ -478,6 +519,56 @@ const InventarioGeneralPage = () => {
     }
     return { letra: match[1], numero };
   };
+
+  useEffect(() => {
+    const handler = (value) => {
+      if (!value) return;
+      const ahora = Date.now();
+      if (ahora - ultimoDetectadoRef.current > 1200) {
+        ultimoDetectadoRef.current = ahora;
+        const nowText = Date.now();
+        if (value === ultimoTextoRef.current && nowText - ultimoTextoAtRef.current < 2500) {
+          return;
+        }
+        ultimoTextoRef.current = value;
+        ultimoTextoAtRef.current = nowText;
+        if (scanMode === 'zona') {
+          const zonaParsed = parsearZonaQR(value);
+          if (zonaParsed.error) {
+            setError(zonaParsed.error);
+            return;
+          }
+          setZonaLetra(zonaParsed.letra);
+          setZonaNumero(String(zonaParsed.numero));
+          setSuccess(`Zona activa: ${zonaParsed.letra}${zonaParsed.numero}`);
+          setTimeout(() => setSuccess(''), 1200);
+        } else {
+          const parsed = parsearQR(value);
+          if (!parsed) {
+            return;
+          }
+          const code = parsed?.codigo ? parsed.codigo : String(value);
+          const existente = productos.find((prod) => prod.codigo === code);
+          if (!existente) {
+            setUltimoScanOk(false);
+            setUltimoScanTexto(code);
+            setError(`QR no registrado: ${code}`);
+            setCodigo('');
+            return;
+          }
+          setCodigo(code);
+          agregarCodigo(code);
+        }
+        detenerCamara();
+      }
+    };
+    window.handleNativeQr = handler;
+    return () => {
+      if (window.handleNativeQr === handler) {
+        delete window.handleNativeQr;
+      }
+    };
+  }, [scanMode, parsearQR, parsearZonaQR, agregarCodigo]);
 
   const puedeAplicar = estadoInventario === 'cerrado';
   const fechaInventario = inventarioInfo?.created_at
@@ -509,7 +600,7 @@ const InventarioGeneralPage = () => {
             <button type="button" className="btn-secondary" onClick={cerrarInventario}>
               Cerrar
             </button>
-            <button type="button" className="btn-primary" onClick={aplicarStock} disabled={!puedeAplicar}>
+            <button type="button" className="btn-primary" onClick={abrirAplicarModal} disabled={!puedeAplicar}>
               Actualizar stock
             </button>
           </div>
@@ -529,148 +620,177 @@ const InventarioGeneralPage = () => {
       </div>
 
       {tab === 'conteo' && (
-        <div className="inventario-grid">
-          <div className="inventario-panel">
-            <div className="barcode-card">
-              <div className="zone-row">
-                <div className="form-group">
-                  <label>Zona</label>
-                  <select
-                    value={zonaLetra}
-                    onChange={(e) => setZonaLetra(e.target.value)}
-                  >
-                    <option value="">-</option>
-                    {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map((letra) => (
-                      <option key={letra} value={letra}>
-                        {letra}
-                      </option>
-                    ))}
-                  </select>
+        <div className="inventario-flow">
+          {faseConteo === 'zona' ? (
+            <div className="inventario-zone-setup">
+              <div className="zone-card">
+                <h3>Selecciona zona</h3>
+                <div className="zone-grid">
+                  <div className="form-group">
+                    <label>Zona</label>
+                    <select value={zonaLetra} onChange={(e) => setZonaLetra(e.target.value)}>
+                      <option value="">-</option>
+                      {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map((letra) => (
+                        <option key={letra} value={letra}>{letra}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>Subzona</label>
+                    <select value={zonaNumero} onChange={(e) => setZonaNumero(e.target.value)}>
+                      <option value="">-</option>
+                      <option value="1">1</option>
+                      <option value="2">2</option>
+                    </select>
+                  </div>
+                  <div className="zone-actions">
+                    <button
+                      type="button"
+                      className="btn-secondary icon-btn-inline"
+                      onClick={() => {
+                        setScanMode('zona');
+                        activarCamara();
+                      }}
+                      title="Escanear zona"
+                      aria-label="Escanear zona"
+                    >
+                      📷
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => {
+                        if (zonaLetra && zonaNumero) {
+                          setFaseConteo('scan');
+                        } else {
+                          setError('Selecciona zona y subzona');
+                        }
+                      }}
+                    >
+                      Iniciar zona
+                    </button>
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label>Subzona</label>
-                  <select
-                    value={zonaNumero}
-                    onChange={(e) => setZonaNumero(e.target.value)}
-                  >
-                    <option value="">-</option>
-                    <option value="1">1</option>
-                    <option value="2">2</option>
-                  </select>
-                </div>
-                <div className="form-group zone-actions">
-                  <label>&nbsp;</label>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => {
-                      setScanMode('zona');
-                      activarCamara();
-                    }}
-                  >
-                    Escanear zona
-                  </button>
-                </div>
-              </div>
-              {(zonaLetra && zonaNumero) && (
-                <div className="zone-active">
-                  Zona activa: <strong>{`${zonaLetra}${zonaNumero}`}</strong>
-                </div>
-              )}
-              <label htmlFor="codigo">CODIGO</label>
-              <div className="code-input-row">
-                <input
-                  id="codigo"
-                  type="text"
-                  value={codigo}
-                  onChange={(e) => setCodigo(e.target.value.trim())}
-                  placeholder="Escanea o escribe el codigo"
-                />
-                <button
-                  type="button"
-                  className="btn-camera"
-                  onClick={() => {
-                    setScanMode('producto');
-                    activarCamara();
-                  }}
-                  aria-label="Abrir camara"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M9 4.5h6l1.2 2H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h2.8L9 4.5zm3 4.5a4 4 0 1 0 .001 8.001A4 4 0 0 0 12 9zm0 2a2 2 0 1 1-.001 4.001A2 2 0 0 1 12 11z" />
-                  </svg>
-                </button>
-                <button type="button" className="btn-primary" onClick={() => agregarCodigo(codigo)}>
-                  Agregar
-                </button>
-              </div>
-
-              <div className="producto-datos">
-                {productoActual ? (
-                  <>
-                    <p><strong>Producto:</strong> {productoActual.marca || 'Sin marca'}</p>
-                    <p><strong>Descripcion:</strong> {productoActual.descripcion || 'Sin descripcion'}</p>
-                    <p><strong>Ubicacion:</strong> {formatearUbicacion(productoActual)}</p>
-                    <p><strong>Stock actual:</strong> {productoActual.stock}</p>
-                  </>
-                ) : (
-                  <p className="producto-vacio">Producto no encontrado</p>
-                )}
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="inventario-scan-layout">
+              <div className="scan-panel">
+                <div className="scan-header">
+                  <div>
+                    <h3>Zona activa</h3>
+                    <p className="zone-pill">{zonaLetra && zonaNumero ? `${zonaLetra}${zonaNumero}` : 'H1'}</p>
+                  </div>
+                  <div className="scan-actions">
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => {
+                        setZonaLetra('');
+                        setZonaNumero('');
+                        setFaseConteo('zona');
+                      }}
+                    >
+                      Terminar zona
+                    </button>
+                    <button type="button" className="btn-secondary" onClick={cerrarInventario}>
+                      Terminar inventario
+                    </button>
+                  </div>
+                </div>
 
-          <div className="inventario-panel">
-            {loading ? (
-              <div className="loading">Cargando...</div>
-            ) : (
-              <div className="inventario-table-container">
-                <table className="inventario-table">
-                  <thead>
-                    <tr>
-                      <th>Codigo</th>
-                      <th>Descripcion</th>
-                      <th>Ubicacion</th>
-                      <th>Stock</th>
-                      <th>Conteo</th>
-                      <th>Diferencia</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detalles.length === 0 ? (
-                      <tr>
-                        <td colSpan="6" className="empty-message">No hay conteos. Empieza a escanear.</td>
-                      </tr>
+                <div className="scan-input-card">
+                  <div className="scan-input-row">
+                    <input
+                      id="codigo"
+                      type="text"
+                      value={codigo}
+                      onChange={(e) => setCodigo(e.target.value.trim())}
+                      placeholder="Escanea o escribe el codigo"
+                    />
+                    <button
+                      type="button"
+                      className="btn-camera"
+                      onClick={() => {
+                        setScanMode('producto');
+                        activarCamara();
+                      }}
+                      aria-label="Abrir camara"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 7h3l2-2h6l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zm8 3a4 4 0 1 0 .001 8.001A4 4 0 0 0 12 10z" />
+                      </svg>
+                    </button>
+                  </div>
+                  <button type="button" className="btn-primary" onClick={() => agregarCodigo(codigo)}>
+                    Agregar
+                  </button>
+                  <div className={`scan-status ${ultimoScanOk === null ? '' : ultimoScanOk ? 'ok' : 'bad'}`}>
+                    {ultimoScanOk === null ? (
+                      <span>Listo para escanear</span>
+                    ) : ultimoScanOk ? (
+                      <span>OK: {ultimoScanTexto}</span>
                     ) : (
-                      detalles.map((item) => (
-                        <tr key={item.id}>
-                          <td>{item.codigo}</td>
-                          <td>{item.descripcion}</td>
-                          <td>{formatearUbicacion(item)}</td>
-                          <td>{item.stock_actual}</td>
-                          <td>
-                            <input
-                              type="number"
-                              value={item.conteo}
-                              onChange={(e) => ajustarConteo(item.producto_id, e.target.value)}
-                            />
-                          </td>
-                          <td className={item.diferencia === 0 ? '' : item.diferencia > 0 ? 'diff-plus' : 'diff-minus'}>
-                            {item.diferencia}
-                          </td>
-                          <td>
-                            <button type="button" className="btn-link danger" onClick={() => eliminarDetalle(item.producto_id)}>
-                              Eliminar
-                            </button>
-                          </td>
-                        </tr>
-                      ))
+                      <span>Error: {ultimoScanTexto}</span>
                     )}
-                  </tbody>
-                </table>
+                  </div>
+                </div>
+
+                <div className="inventario-table-container">
+                  <table className="inventario-table">
+                    <thead>
+                      <tr>
+                        <th>Codigo</th>
+                        <th>Descripcion</th>
+                        <th>Ubicacion</th>
+                        <th>Stock</th>
+                        <th>Conteo</th>
+                        <th>Diferencia</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detalles.length === 0 ? (
+                        <tr>
+                          <td colSpan="6" className="empty-message">No hay conteos. Empieza a escanear.</td>
+                        </tr>
+                      ) : (
+                        detalles.map((item) => (
+                          <tr key={item.id}>
+                            <td>{item.codigo}</td>
+                            <td>{item.descripcion}</td>
+                            <td>{formatearUbicacion(item)}</td>
+                            <td>{item.stock_actual}</td>
+                            <td>
+                              <input
+                                type="number"
+                                value={item.conteo}
+                                onChange={(e) => ajustarConteo(item.producto_id, e.target.value)}
+                              />
+                            </td>
+                            <td className={item.diferencia === 0 ? '' : item.diferencia > 0 ? 'diff-plus' : 'diff-minus'}>
+                              {item.diferencia}
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="icon-btn icon-btn--delete"
+                                onClick={() => eliminarDetalle(item.producto_id)}
+                                title="Eliminar"
+                                aria-label="Eliminar"
+                              >
+                                🗑️
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -685,7 +805,9 @@ const InventarioGeneralPage = () => {
                   <th>Usuario</th>
                   <th>Estado</th>
                   <th>Items</th>
-                  <th>Acciones</th>
+                  <th className="icon-col" title="Acciones">
+                    <span className="icon-label" aria-label="Acciones">⋯</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -702,11 +824,23 @@ const InventarioGeneralPage = () => {
                       <td>{inv.estado}</td>
                       <td>{inv.total_items}</td>
                       <td className="acciones">
-                        <button type="button" className="btn-secondary" onClick={() => cargarInventario(inv.id)}>
-                          Ver
+                        <button
+                          type="button"
+                          className="icon-btn icon-btn--view"
+                          onClick={() => cargarInventario(inv.id)}
+                          title="Ver"
+                          aria-label="Ver"
+                        >
+                          👁️
                         </button>
-                        <button type="button" className="btn-primary" onClick={() => exportarExcel(inv.id)}>
-                          Excel
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={() => exportarExcel(inv.id)}
+                          title="Excel"
+                          aria-label="Excel"
+                        >
+                          📊
                         </button>
                       </td>
                     </tr>
@@ -789,6 +923,46 @@ const InventarioGeneralPage = () => {
               )}
               <button type="button" className="btn-primary" onClick={iniciarInventario}>
                 Empezar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAplicarModal && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Aplicar inventario">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2>Aplicar inventario</h2>
+              <button type="button" className="btn-icon" onClick={() => setShowAplicarModal(false)}>
+                X
+              </button>
+            </div>
+            <div className="modal-body">
+              <p>Selecciona el inventario a aplicar. Por defecto es el ultimo registrado.</p>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Inventario</label>
+                  <select value={aplicarId} onChange={(e) => setAplicarId(e.target.value)}>
+                    <option value="">Seleccionar</option>
+                    {historial.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        #{item.id} - {item.estado} - {new Date(item.created_at).toLocaleString()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <p className="warning-message">
+                Se actualizaran stock y ubicaciones de productos segun el inventario seleccionado.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn-secondary" onClick={() => setShowAplicarModal(false)}>
+                Cancelar
+              </button>
+              <button type="button" className="btn-primary" onClick={aplicarStock} disabled={!aplicarId}>
+                Aplicar
               </button>
             </div>
           </div>

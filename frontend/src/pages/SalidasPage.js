@@ -134,13 +134,19 @@ const SalidasPage = ({ usuario }) => {
           <h2>Escanear Código QR/Barras</h2>
           {!camaraActiva ? (
             <button className="btn-camera" onClick={iniciarCamara}>
-              📷 Iniciar Cámara
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h3l2-2h6l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zm8 3a4 4 0 1 0 .001 8.001A4 4 0 0 0 12 10z" />
+              </svg>
+              <span>Iniciar cámara</span>
             </button>
           ) : (
             <>
               <div id="qr-reader-salida" style={{ width: '100%' }}></div>
               <button className="btn-camera stop" onClick={detenerCamara}>
-                ⏹️ Detener Cámara
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 6h12v12H6z" />
+                </svg>
+                <span>Detener cámara</span>
               </button>
             </>
           )}

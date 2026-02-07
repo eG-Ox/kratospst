@@ -459,15 +459,6 @@ exports.descargarPlantilla = async (req, res) => {
 
 exports.exportarExcel = async (req, res) => {
   try {
-    const ubicacionParse = normalizarUbicacion({
-      ubicacion,
-      ubicacion_letra,
-      ubicacion_numero
-    });
-    if (ubicacionParse.error) {
-      return res.status(400).json({ error: ubicacionParse.error });
-    }
-
     const connection = await pool.getConnection();
     const [rows] = await connection.execute(`
       SELECT m.codigo, t.nombre as tipo_maquina, m.marca, m.descripcion,
@@ -506,6 +497,44 @@ exports.exportarExcel = async (req, res) => {
   } catch (error) {
     console.error('Error exportando productos:', error);
     res.status(500).json({ error: 'Error al exportar productos' });
+  }
+};
+
+exports.exportarStockMinimo = async (req, res) => {
+  const limite = Number(req.query.minimo || 2);
+  try {
+    const connection = await pool.getConnection();
+    const [rows] = await connection.execute(
+      `
+      SELECT m.codigo, m.descripcion, m.marca, m.stock, m.precio_venta
+      FROM maquinas m
+      WHERE m.stock <= ?
+      ORDER BY m.stock ASC, m.codigo
+      `,
+      [Number.isFinite(limite) ? limite : 2]
+    );
+    connection.release();
+
+    const data = rows.map((row) => ({
+      codigo: row.codigo,
+      descripcion: row.descripcion,
+      marca: row.marca,
+      stock: row.stock,
+      precio_venta: row.precio_venta
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Stock_minimo');
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader('Content-Disposition', 'attachment; filename="stock_minimo.xlsx"');
+    res.send(buffer);
+  } catch (error) {
+    console.error('Error exportando stock minimo:', error);
+    res.status(500).json({ error: 'Error al exportar stock minimo' });
   }
 };
 

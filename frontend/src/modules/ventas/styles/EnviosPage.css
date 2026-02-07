@@ -1,0 +1,76 @@
+.envios-container {
+  padding: 30px 24px 50px;
+}
+
+.envios-table {
+  min-width: 900px;
+  font-size: 12px;
+}
+
+.envios-table th,
+.envios-table td {
+  padding: 8px 10px;
+}
+
+.envios-table input,
+.envios-table select {
+  width: 120px;
+  font-size: 12px;
+}
+
+.estado-select {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--surface);
+}
+
+.estado-select.pendiente {
+  background: rgba(217, 119, 6, 0.12);
+  color: #b45309;
+}
+
+.estado-select.enviado {
+  background: rgba(234, 179, 8, 0.18);
+  color: #a16207;
+}
+
+.estado-select.cancelado {
+  background: rgba(148, 163, 184, 0.2);
+  color: #475569;
+}
+
+.estado-select.visita {
+  background: rgba(14, 116, 144, 0.18);
+  color: #0e7490;
+}
+
+.pedido-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 110px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border-color);
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.pedido-pill.picking {
+  background: rgba(234, 179, 8, 0.16);
+  color: #a16207;
+}
+
+.pedido-pill.pedido_listo {
+  background: rgba(16, 185, 129, 0.16);
+  color: #047857;
+}
+
+@media (max-width: 768px) {
+  .envios-container {
+    padding: 16px 12px 32px;
+  }
+}

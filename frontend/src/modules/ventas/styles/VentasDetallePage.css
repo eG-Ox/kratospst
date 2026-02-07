@@ -1,0 +1,16 @@
+.ventas-detalle-container {
+  padding: 30px 24px 50px;
+}
+
+.detalle-filtros {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+@media (max-width: 900px) {
+  .detalle-filtros {
+    grid-template-columns: 1fr;
+  }
+}

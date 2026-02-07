@@ -150,7 +150,9 @@ const UsuariosPage = () => {
                 <th>Telefono</th>
                 <th>Rol</th>
                 <th>Activo</th>
-                <th>Acciones</th>
+                <th className="icon-col" title="Acciones">
+                  <span className="icon-label" aria-label="Acciones">...</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -162,8 +164,16 @@ const UsuariosPage = () => {
                   <td>{usuario.rol}</td>
                   <td>{usuario.activo ? 'Si' : 'No'}</td>
                   <td>
-                    <button className="btn-edit" onClick={() => handleEditar(usuario)}>
-                      Editar
+                    <button
+                      className="icon-btn icon-btn--edit"
+                      onClick={() => handleEditar(usuario)}
+                      title="Editar"
+                      aria-label="Editar"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 17.5V20h2.5L17.9 8.6l-2.5-2.5L4 17.5z" />
+                        <path d="M20.7 7.2a1 1 0 0 0 0-1.4l-2.5-2.5a1 1 0 0 0-1.4 0l-1.7 1.7 2.5 2.5 1.7-1.7z" />
+                      </svg>
                     </button>
                   </td>
                 </tr>

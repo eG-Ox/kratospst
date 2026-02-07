@@ -28,6 +28,15 @@ export const tiposMaquinasService = {
   delete: (id) => api.delete(`/tipos-maquinas/${id}`),
 };
 
+// Servicios para Marcas
+export const marcasService = {
+  getAll: () => api.get('/marcas'),
+  getById: (id) => api.get(`/marcas/${id}`),
+  create: (data) => api.post('/marcas', data),
+  update: (id, data) => api.put(`/marcas/${id}`, data),
+  delete: (id) => api.delete(`/marcas/${id}`),
+};
+
 // Servicios para Máquinas/Productos
 export const productosService = {
   getAll: () => api.get('/productos'),
@@ -37,6 +46,8 @@ export const productosService = {
     api.get('/productos/plantilla', { responseType: 'blob' }),
   exportarExcel: () =>
     api.get('/productos/exportar', { responseType: 'blob' }),
+  exportarStockMinimo: (minimo = 2) =>
+    api.get('/productos/exportar-stock', { params: { minimo }, responseType: 'blob' }),
   importarExcel: (data) =>
     api.post('/productos/importar', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
   create: (data) => {
@@ -123,9 +134,29 @@ export const usuariosService = {
   actualizarPerfil: (data) => api.put('/usuarios/me', data),
 };
 
+// Servicios para Ventas
+export const ventasService = {
+  listar: (params) => api.get('/ventas', { params }),
+  obtener: (id) => api.get(`/ventas/${id}`),
+  detalle: (params) => api.get('/ventas/detalle/listar', { params }),
+  historialRequerimientos: (params) => api.get('/ventas/requerimientos/historial', { params }),
+  exportarExcel: (params) => api.get('/ventas/export', { params, responseType: 'blob' }),
+  requerimientosPendientes: (params) => api.get('/ventas/requerimientos/pendientes', { params }),
+  actualizarRequerimiento: (id, data) => api.patch(`/ventas/requerimientos/${id}`, data),
+  pickingPendientes: (params) => api.get('/ventas/picking/pendientes', { params }),
+  confirmarPicking: (data) => api.post('/ventas/picking/confirmar', data),
+  cerrarPedido: (data) => api.post('/ventas/picking/cerrar', data),
+  crear: (data) => api.post('/ventas', data),
+  editar: (id, data) => api.put(`/ventas/${id}`, data),
+  actualizarEstado: (id, data) => api.patch(`/ventas/${id}/estado`, data),
+  actualizarEnvio: (id, data) => api.patch(`/ventas/${id}/envio`, data),
+  eliminar: (id) => api.delete(`/ventas/${id}`)
+};
+
 // Servicios para Historial
 export const historialService = {
   listar: (params) => api.get('/historial', { params }),
+  exportar: (params) => api.get('/historial/exportar', { params, responseType: 'blob' })
 };
 
 // Servicios para Permisos

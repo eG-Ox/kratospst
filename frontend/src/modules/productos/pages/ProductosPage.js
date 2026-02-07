@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { permisosService, productosService, tiposMaquinasService } from '../../../core/services/apiServices';
 import '../styles/ProductosPage.css';
 
@@ -29,11 +30,55 @@ const ProductosPage = () => {
     ficha_web: '',
     ficha_tecnica: null
   });
+
+  const [filtros, setFiltros] = useState({
+    q: '',
+    tipo: '',
+    marca: '',
+    stock: 'all'
+  });
   const [tipoForm, setTipoForm] = useState({
     nombre: '',
     descripcion: ''
   });
   const fileInputRef = useRef(null);
+
+
+  const marcasDisponibles = useMemo(() => {
+    const marcas = new Set();
+    productos.forEach((prod) => {
+      if (prod.marca) {
+        marcas.add(String(prod.marca));
+      }
+    });
+    return Array.from(marcas).sort((a, b) => a.localeCompare(b));
+  }, [productos]);
+
+  const productosFiltrados = useMemo(() => {
+    const q = filtros.q.trim().toLowerCase();
+    return productos.filter((prod) => {
+      if (filtros.tipo && String(prod.tipo_maquina_id || '') !== String(filtros.tipo)) {
+        return false;
+      }
+      if (filtros.marca && String(prod.marca || '') !== String(filtros.marca)) {
+        return false;
+      }
+      if (filtros.stock === 'bajo') {
+        const min = Number(prod.precio_minimo || 0);
+        if (!(Number(prod.stock || 0) <= min)) return false;
+      }
+      if (filtros.stock === 'sin') {
+        if (Number(prod.stock || 0) > 0) return false;
+      }
+      if (q) {
+        const hay = [prod.codigo, prod.descripcion, prod.marca, prod.tipo_nombre]
+          .map((v) => String(v || '').toLowerCase())
+          .some((v) => v.includes(q));
+        if (!hay) return false;
+      }
+      return true;
+    });
+  }, [productos, filtros]);
 
   useEffect(() => {
     cargarDatos();
@@ -335,6 +380,58 @@ const ProductosPage = () => {
       {loading ? (
         <div className="loading">Cargando productos...</div>
       ) : (
+        <>
+        <div className="productos-filters">
+          <input
+            type="text"
+            placeholder="Buscar codigo, descripcion, marca..."
+            value={filtros.q}
+            onChange={(e) => setFiltros((prev) => ({ ...prev, q: e.target.value }))}
+          />
+          <select
+            value={filtros.tipo}
+            onChange={(e) => setFiltros((prev) => ({ ...prev, tipo: e.target.value }))}
+          >
+            <option value="">Tipo</option>
+            {tipos.map((tipo) => (
+              <option key={tipo.id} value={tipo.id}>
+                {tipo.nombre}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filtros.marca}
+            onChange={(e) => setFiltros((prev) => ({ ...prev, marca: e.target.value }))}
+          >
+            <option value="">Marca</option>
+            {marcasDisponibles.map((marca) => (
+              <option key={marca} value={marca}>
+                {marca}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filtros.stock}
+            onChange={(e) => setFiltros((prev) => ({ ...prev, stock: e.target.value }))}
+          >
+            <option value="all">Stock</option>
+            <option value="bajo">Bajo</option>
+            <option value="sin">Sin stock</option>
+          </select>
+          <button
+            type="button"
+            className="btn-secondary icon-btn-inline"
+            onClick={() => setFiltros({ q: '', tipo: '', marca: '', stock: 'all' })}
+            title="Limpiar"
+            aria-label="Limpiar filtros"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6h12v2H6z" />
+              <path d="M9 11h6v2H9z" />
+              <path d="M11 16h2v2h-2z" />
+            </svg>
+          </button>
+        </div>
         <div className="productos-table-container">
           {productos.length > 0 ? (
             <table className="productos-table">
@@ -355,7 +452,7 @@ const ProductosPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {productos.map(prod => (
+                {productosFiltrados.map(prod => (
                   <tr key={prod.id}>
                     <td>{prod.codigo}</td>
                     <td>{prod.tipo_nombre}</td>
@@ -364,37 +461,64 @@ const ProductosPage = () => {
                     <td>{formatearUbicacion(prod)}</td>
                     <td className={prod.stock < prod.precio_minimo ? 'low-stock' : ''}>{prod.stock}</td>
                     {puedeVerPrecioCompra && (
-                      <td>${Number(prod.precio_compra || 0).toFixed(2)}</td>
+                      <td>S/. {Number(prod.precio_compra || 0).toFixed(2)}</td>
                     )}
-                    <td>${Number(prod.precio_venta || 0).toFixed(2)}</td>
-                    <td>${Number(prod.precio_minimo || 0).toFixed(2)}</td>
-                    <td>
+                    <td>S/. {Number(prod.precio_venta || 0).toFixed(2)}</td>
+                    <td>S/. {Number(prod.precio_minimo || 0).toFixed(2)}</td>
+                    <td className="icon-col">
                       {prod.ficha_web ? (
-                        <a href={prod.ficha_web} target="_blank" rel="noreferrer">
-                          Ver
+                        <a
+                          className="icon-btn"
+                          href={prod.ficha_web}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Ficha Web"
+                          aria-label="Ficha Web"
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 2a10 10 0 1 0 0 20a10 10 0 0 0 0-20zm6.9 9h-3.12a15.4 15.4 0 0 0-1.2-5A8.03 8.03 0 0 1 18.9 11zM12 4c1.02 1.3 1.82 3.31 2.2 5H9.8c.38-1.69 1.18-3.7 2.2-5zM5.1 13h3.12a15.4 15.4 0 0 0 1.2 5A8.03 8.03 0 0 1 5.1 13zm0-2a8.03 8.03 0 0 1 4.22-5a15.4 15.4 0 0 0-1.2 5H5.1zm6.9 9c-1.02-1.3-1.82-3.31-2.2-5h4.4c-.38 1.69-1.18 3.7-2.2 5zm2.78-2a15.4 15.4 0 0 0 1.2-5h3.12a8.03 8.03 0 0 1-4.32 5z" />
+                          </svg>
                         </a>
                       ) : (
                         '-'
                       )}
                     </td>
-                    <td>
+                    <td className="icon-col">
                       {prod.ficha_tecnica_ruta ? (
                         <button
-                          className="btn-link"
+                          className="icon-btn"
                           onClick={() => handleDescargarFicha(prod.ficha_tecnica_ruta)}
+                          title="Ficha Tecnica"
+                          aria-label="Ficha Tecnica"
                         >
-                          Descargar
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M6 2h9l5 5v15a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1.5V8h4.5L14 3.5zM8 12h8v2H8v-2zm0 4h8v2H8v-2z" />
+                          </svg>
                         </button>
                       ) : (
                         '-'
                       )}
                     </td>
                     <td className="acciones">
-                      <button className="btn-edit" onClick={() => handleEditarProducto(prod)}>
-                        Editar
+                      <button
+                        className="icon-btn icon-btn--edit"
+                        onClick={() => handleEditarProducto(prod)}
+                        title="Editar"
+                        aria-label="Editar"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zm2.92 2.83H5v-.92l9.06-9.06.92.92L5.92 20.08zM20.71 7.04a1 1 0 0 0 0-1.41L18.37 3.3a1 1 0 0 0-1.41 0l-1.84 1.84 3.75 3.75 1.84-1.85z" />
+                        </svg>
                       </button>
-                      <button className="btn-delete" onClick={() => handleEliminar(prod.id)}>
-                        Eliminar
+                      <button
+                        className="icon-btn icon-btn--delete"
+                        onClick={() => handleEliminar(prod.id)}
+                        title="Eliminar"
+                        aria-label="Eliminar"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M6 7h12l-1 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 7zm3-4h6l1 2h4v2H4V5h4l1-2z" />
+                        </svg>
                       </button>
                     </td>
                   </tr>
@@ -405,9 +529,10 @@ const ProductosPage = () => {
             <p className="empty-message">No hay productos creados</p>
           )}
         </div>
+        </>
       )}
 
-      {mostrarModalProducto && (
+      {mostrarModalProducto && createPortal(
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
@@ -420,7 +545,7 @@ const ProductosPage = () => {
                   setMostrarModalProducto(false);
                 }}
               >
-                ✕
+                X
               </button>
             </div>
             <form onSubmit={handleGuardarProducto}>
@@ -612,10 +737,11 @@ const ProductosPage = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {mostrarModalTipo && (
+      {mostrarModalTipo && createPortal(
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
@@ -628,7 +754,7 @@ const ProductosPage = () => {
                   setMostrarModalTipo(false);
                 }}
               >
-                ✕
+                X
               </button>
             </div>
             <form onSubmit={handleGuardarTipo}>
@@ -670,7 +796,8 @@ const ProductosPage = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
     </div>

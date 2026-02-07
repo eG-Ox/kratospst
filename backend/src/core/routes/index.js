@@ -11,7 +11,9 @@ const clientesRoutes = require('../../modules/clientes/routes');
 const usuariosRoutes = require('../../modules/usuarios/routes');
 const historialRoutes = require('../../modules/historial/routes');
 const permisosRoutes = require('../../modules/permisos/routes');
+const marcasRoutes = require('../../modules/marcas/routes');
 const inventarioGeneralRoutes = require('../../modules/inventario-general/routes');
+const ventasRoutes = require('../../modules/ventas/routes');
 const pool = require('../config/database');
 
 const router = express.Router();
@@ -21,6 +23,7 @@ router.use('/auth', authRoutes);
 
 // Rutas protegidas (requieren autenticación)
 router.use('/tipos-maquinas', autenticar, tiposMaquinasRoutes);
+router.use('/marcas', autenticar, marcasRoutes);
 router.use('/productos', autenticar, productosRoutes);
 router.use('/movimientos', autenticar, movimientosRoutes);
 router.use('/kits', autenticar, kitsRoutes);
@@ -30,6 +33,7 @@ router.use('/usuarios', usuariosRoutes);
 router.use('/historial', historialRoutes);
 router.use('/permisos', permisosRoutes);
 router.use('/inventario-general', autenticar, inventarioGeneralRoutes);
+router.use('/ventas', autenticar, ventasRoutes);
 
 // Tipos por almacen
 router.get('/tipos_por_almacen', autenticar, async (req, res) => {

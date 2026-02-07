@@ -36,28 +36,38 @@
 .btn-camera {
   width: 100%;
   padding: 12px;
-  background-color: #667eea;
-  color: white;
-  border: none;
+  background-color: #ffffff;
+  color: #111827;
+  border: 1px solid #d1d5db;
   border-radius: 6px;
   font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-camera svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
 }
 
 .btn-camera:hover {
-  background-color: #5568d3;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  background-color: #f3f4f6;
 }
 
 .btn-camera.stop {
-  background-color: #ef4444;
+  background-color: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
 }
 
 .btn-camera.stop:hover {
-  background-color: #dc2626;
+  background-color: #fecaca;
 }
 
 .salida-form {

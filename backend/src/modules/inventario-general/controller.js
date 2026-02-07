@@ -170,7 +170,16 @@ exports.agregarConteo = async (req, res) => {
   }
 
   try {
-    const ubicacionParse = parseUbicacion(ubicacion);
+    const rawCodigo = String(codigo || '').trim();
+    const tokenCodigo = rawCodigo
+      .replace(/\r/g, '')
+      .split(/[\n,;]+/g)
+      .map((item) => item.trim())
+      .filter(Boolean)[0];
+    const codigoFinal = tokenCodigo || rawCodigo;
+
+    const ubicacionFinal = ubicacion && String(ubicacion).trim() ? ubicacion : 'H1';
+    const ubicacionParse = parseUbicacion(ubicacionFinal);
     if (ubicacionParse.error) {
       return res.status(400).json({ error: ubicacionParse.error });
     }
@@ -188,7 +197,7 @@ exports.agregarConteo = async (req, res) => {
 
     const [productos] = await connection.execute(
       'SELECT id, codigo, descripcion, stock FROM maquinas WHERE codigo = ?',
-      [codigo]
+      [codigoFinal]
     );
     if (!productos.length) {
       connection.release();
@@ -238,6 +247,14 @@ exports.agregarConteo = async (req, res) => {
           [nuevoConteo, diferencia, actual.id]
         );
       }
+    }
+
+    // Actualizar ubicacion del producto al escanear en inventario general
+    if (ubicacionParse.letra && ubicacionParse.numero) {
+      await connection.execute(
+        'UPDATE maquinas SET ubicacion_letra = ?, ubicacion_numero = ? WHERE id = ?',
+        [ubicacionParse.letra, ubicacionParse.numero, producto.id]
+      );
     }
 
     connection.release();
@@ -410,6 +427,17 @@ exports.aplicarStock = async (req, res) => {
       [req.params.id]
     );
 
+    // Detectar productos no escaneados en este inventario
+    const [noEscaneados] = await connection.execute(
+      `SELECT m.id, m.codigo
+       FROM maquinas m
+       WHERE NOT EXISTS (
+         SELECT 1 FROM inventario_detalle d
+         WHERE d.inventario_id = ? AND d.producto_id = m.id
+       )`,
+      [req.params.id]
+    );
+
     for (const detalle of detalles) {
       if (detalle.ubicacion_letra && detalle.ubicacion_numero) {
         await connection.execute(
@@ -422,6 +450,10 @@ exports.aplicarStock = async (req, res) => {
           [detalle.conteo, detalle.producto_id]
         );
       }
+    }
+
+    for (const item of noEscaneados) {
+      await connection.execute('UPDATE maquinas SET stock = 0 WHERE id = ?', [item.id]);
     }
 
     await connection.execute(

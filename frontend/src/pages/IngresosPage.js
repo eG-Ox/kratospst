@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { maquinasService, movimientosService } from '../services/api';
+import { productosService, tiposMaquinasService, marcasService } from '../core/services/apiServices';
+import { parseQRPayload } from '../shared/utils/qr';
 import '../styles/IngresosPage.css';
 
 const IngresosPage = ({ usuario }) => {
   const [maquinas, setMaquinas] = useState([]);
+  const [tipos, setTipos] = useState([]);
+  const [marcas, setMarcas] = useState([]);
   const [maquinaSeleccionada, setMaquinaSeleccionada] = useState(null);
   const [cantidad, setCantidad] = useState(1);
   const [motivo, setMotivo] = useState('Compra a proveedor');
@@ -13,11 +17,12 @@ const IngresosPage = ({ usuario }) => {
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
   const [camaraActiva, setCamaraActiva] = useState(false);
+  const [qrData, setQrData] = useState(null);
   const qrRef = useRef(null);
   const html5QrcodeScanner = useRef(null);
 
   useEffect(() => {
-    cargarMaquinas();
+    cargarDatos();
     return () => {
       if (html5QrcodeScanner.current) {
         html5QrcodeScanner.current.clear();
@@ -25,12 +30,18 @@ const IngresosPage = ({ usuario }) => {
     };
   }, []);
 
-  const cargarMaquinas = async () => {
+  const cargarDatos = async () => {
     try {
-      const response = await maquinasService.getAll();
-      setMaquinas(response.data);
+      const [respMaquinas, respTipos, respMarcas] = await Promise.all([
+        maquinasService.getAll(),
+        tiposMaquinasService.getAll(),
+        marcasService.getAll()
+      ]);
+      setMaquinas(respMaquinas.data);
+      setTipos(respTipos.data);
+      setMarcas(respMarcas.data || []);
     } catch (error) {
-      setError('Error al cargar máquinas');
+      setError('Error al cargar datos');
     }
   };
 
@@ -63,26 +74,51 @@ const IngresosPage = ({ usuario }) => {
 
   const onScanSuccess = (decodedText) => {
     setCodigoScaneado(decodedText);
-    buscarMaquina(decodedText);
+    buscarOMaquina(decodedText);
     detenerCamara();
   };
 
-  const onScanError = (error) => {
-    // Ignorar errores de lectura continuos
-  };
-
-  const buscarMaquina = async (codigo) => {
+  const buscarOMaquina = async (codigoOQr) => {
     try {
-      const response = await maquinasService.getAll();
-      const maquina = response.data.find(m => m.codigo === codigo);
+      setError('');
+      
+      // Primero intentar parsear como QR completo
+      const parsed = parsearQR(codigoOQr);
+      if (parsed && !parsed.partial) {
+        // QR completo con todos los campos
+        const maquina = maquinas.find(m => m.codigo === parsed.codigo);
+        if (maquina) {
+          setMaquinaSeleccionada(maquina);
+        } else {
+          // Producto nuevo - pedir confirmación
+          const confirmar = window.confirm(
+            `¿Crear nuevo producto?\n\nCódigo: ${parsed.codigo}\nMarca: ${parsed.marca}\nTipo: ${parsed.tipo_maquina}\nDescripción: ${parsed.descripcion}\nUbicación: ${parsed.ubicacion}`
+          );
+          if (confirmar) {
+            const id = await crearProductoDesdeQR(parsed);
+            await cargarDatos();
+            const maquinaCreada = (await maquinasService.getAll()).data.find(m => m.id === id);
+            setMaquinaSeleccionada(maquinaCreada);
+            setSuccess(`Producto creado: ${parsed.codigo}`);
+            setTimeout(() => setSuccess(''), 2000);
+          } else {
+            setError('Creación de producto cancelada');
+          }
+        }
+        return;
+      }
+
+      // Si no es QR completo, buscar por código simple
+      const maquina = maquinas.find(m => m.codigo === codigoOQr);
       if (maquina) {
         setMaquinaSeleccionada(maquina);
         setError('');
       } else {
-        setError('Máquina no encontrada');
+        setError('Máquina no encontrada. Escanea un QR completo para crear producto nuevo.');
       }
     } catch (error) {
-      setError('Error buscando máquina');
+      console.error('Error:', error);
+      setError('Error procesando código QR');
     }
   };
 
@@ -107,10 +143,11 @@ const IngresosPage = ({ usuario }) => {
       setMaquinaSeleccionada(null);
       setCantidad(1);
       setCodigoScaneado('');
+      setQrData(null);
       setError('');
 
       setTimeout(() => setSuccess(''), 3000);
-      cargarMaquinas();
+      await cargarDatos();
     } catch (error) {
       setError(error.response?.data?.error || 'Error al registrar ingreso');
     } finally {
@@ -130,13 +167,19 @@ const IngresosPage = ({ usuario }) => {
           <h2>Escanear Código QR/Barras</h2>
           {!camaraActiva ? (
             <button className="btn-camera" onClick={iniciarCamara}>
-              📷 Iniciar Cámara
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h3l2-2h6l2 2h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zm8 3a4 4 0 1 0 .001 8.001A4 4 0 0 0 12 10z" />
+              </svg>
+              <span>Iniciar cámara</span>
             </button>
           ) : (
             <>
               <div id="qr-reader" style={{ width: '100%' }}></div>
               <button className="btn-camera stop" onClick={detenerCamara}>
-                ⏹️ Detener Cámara
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M6 6h12v12H6z" />
+                </svg>
+                <span>Detener cámara</span>
               </button>
             </>
           )}
@@ -152,7 +195,7 @@ const IngresosPage = ({ usuario }) => {
               value={codigoScaneado}
               onChange={(e) => {
                 setCodigoScaneado(e.target.value);
-                buscarMaquina(e.target.value);
+                buscarOMaquina(e.target.value);
               }}
               placeholder="Escanea o ingresa código manualmente"
               autoFocus

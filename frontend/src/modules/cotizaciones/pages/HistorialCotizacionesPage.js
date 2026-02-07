@@ -211,11 +211,28 @@ const HistorialCotizacionesPage = () => {
                     <td>{row.usuario_nombre || row.usuario_id || '-'}</td>
                     <td>{Number(row.total || 0).toFixed(2)}</td>
                     <td>
-                      <button type="button" onClick={() => abrirPdfCotizacion(row.cotizacion_id)}>
-                        Ver
+                      <button
+                        type="button"
+                        className="icon-btn icon-btn--view"
+                        onClick={() => abrirPdfCotizacion(row.cotizacion_id)}
+                        title="Ver PDF"
+                        aria-label="Ver PDF"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M12 5c4.5 0 8.3 2.7 10 6.5C20.3 15.3 16.5 18 12 18S3.7 15.3 2 11.5C3.7 7.7 7.5 5 12 5zm0 2c-3.2 0-6 1.7-7.6 4.5C6 14.3 8.8 16 12 16s6-1.7 7.6-4.5C18 8.7 15.2 7 12 7zm0 2.5a2.5 2.5 0 1 1 0 5a2.5 2.5 0 0 1 0-5z" />
+                        </svg>
                       </button>
-                      <button type="button" onClick={() => editarCotizacion(row.cotizacion_id)}>
-                        Editar
+                      <button
+                        type="button"
+                        className="icon-btn icon-btn--edit"
+                        onClick={() => editarCotizacion(row.cotizacion_id)}
+                        title="Editar"
+                        aria-label="Editar"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M4 17.5V20h2.5L17.9 8.6l-2.5-2.5L4 17.5z" />
+                          <path d="M20.7 7.2a1 1 0 0 0 0-1.4l-2.5-2.5a1 1 0 0 0-1.4 0l-1.7 1.7 2.5 2.5 1.7-1.7z" />
+                        </svg>
                       </button>
                     </td>
                   </tr>

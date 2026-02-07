@@ -15,6 +15,11 @@ import UsuariosPage from './modules/usuarios/pages/UsuariosPage';
 import HistorialPage from './modules/historial/pages/HistorialPage';
 import PermisosPage from './modules/permisos/pages/PermisosPage';
 import InventarioGeneralPage from './modules/inventario-general/pages/InventarioGeneralPage';
+import VentasPage from './modules/ventas/pages/VentasPage';
+import EnviosPage from './modules/ventas/pages/EnviosPage';
+import VentasDetallePage from './modules/ventas/pages/VentasDetallePage';
+import RequerimientosPage from './modules/ventas/pages/RequerimientosPage';
+import PickingPage from './modules/picking/pages/PickingPage';
 
 // Componentes compartidos
 import Navbar from './shared/components/Navbar';
@@ -44,6 +49,16 @@ function App() {
       }
     }
     setAuthChecked(true);
+  }, []);
+
+  useEffect(() => {
+    const updateVh = () => {
+      const vh = window.innerHeight * 0.01;
+      document.documentElement.style.setProperty('--vh', `${vh}px`);
+    };
+    updateVh();
+    window.addEventListener('resize', updateVh);
+    return () => window.removeEventListener('resize', updateVh);
   }, []);
 
   const handleLoginSuccess = (usuarioData) => {
@@ -167,6 +182,46 @@ function App() {
           element={
             <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <HistorialPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/ventas"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+              <VentasPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/ventas-envios"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+              <EnviosPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/ventas-detalle"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+              <VentasDetallePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/ventas-requerimientos"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+              <RequerimientosPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/picking"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+              <PickingPage />
             </ProtectedRoute>
           }
         />

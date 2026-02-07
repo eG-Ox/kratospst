@@ -209,7 +209,9 @@ const KitsPage = () => {
                   <th>Descripcion</th>
                   <th>Precio total</th>
                   <th>Estado</th>
-                  <th>Acciones</th>
+                  <th className="icon-col" title="Acciones">
+                    <span className="icon-label" aria-label="Acciones">...</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>

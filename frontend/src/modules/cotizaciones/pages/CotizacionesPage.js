@@ -189,11 +189,29 @@ const CotizacionesPage = () => {
     }
   };
 
+  const limpiarFiltrosSimple = () => {
+    setTipoId('');
+    setMarcas([]);
+    setMarca('');
+    setProductos([]);
+    setProductoId('');
+  };
+
+  const limpiarFiltrosAvanzada = () => {
+    setBusqueda('');
+    setResultados([]);
+  };
+
+  const limpiarFiltrosKits = () => {
+    setKitSeleccionado('');
+  };
+
   const agregarProductoDesdeFiltro = () => {
     if (!productoId) {
       return;
     }
     agregarProductoDesdeLista(productoId);
+    limpiarFiltrosSimple();
   };
 
   const agregarProductoDesdeBusqueda = (producto) => {
@@ -212,6 +230,7 @@ const CotizacionesPage = () => {
         origen: 'manual'
       }
     ]);
+    limpiarFiltrosAvanzada();
   };
 
   const cargarKit = async (kitId) => {
@@ -244,6 +263,7 @@ const CotizacionesPage = () => {
   const handleCargarKit = () => {
     if (!kitSeleccionado) return;
     cargarKit(kitSeleccionado);
+    limpiarFiltrosKits();
   };
 
   const actualizarItem = (index, changes) => {
@@ -667,6 +687,32 @@ const CotizacionesPage = () => {
                       </option>
                     ))}
                   </select>
+                  {clienteSearch.trim().length > 0 && (
+                    <div className="cliente-resultados">
+                      {clientesFiltrados.slice(0, 10).map((cliente) => {
+                        const label = cliente.tipo_cliente === 'natural'
+                          ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim()
+                          : cliente.razon_social;
+                        const doc = cliente.dni || cliente.ruc || '';
+                        return (
+                          <button
+                            type="button"
+                            key={cliente.id}
+                            className="cliente-item"
+                            onClick={() => {
+                              setClienteId(String(cliente.id));
+                              setClienteSearch(label);
+                            }}
+                          >
+                            {label} ({doc})
+                          </button>
+                        );
+                      })}
+                      {clientesFiltrados.length === 0 && (
+                        <div className="cliente-vacio">Sin resultados</div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <button
                   type="button"

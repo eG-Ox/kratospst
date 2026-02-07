@@ -8,8 +8,9 @@
 .dashboard-header {
   margin-bottom: 28px;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
 }
 
 .dashboard-header h1 {
@@ -23,6 +24,13 @@
 .dashboard-header p {
   color: rgba(15, 23, 42, 0.68);
   font-size: 15px;
+}
+
+.dashboard-header__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .dashboard-stats {
@@ -82,9 +90,235 @@
 .dashboard-content {
   background: var(--surface);
   border-radius: var(--border-radius-lg);
-  padding: 28px;
+  padding: 20px;
   box-shadow: var(--box-shadow-soft);
   border: 1px solid var(--border-color);
+}
+
+.dashboard-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.dashboard-tabs button {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-alt);
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.dashboard-tabs button.active {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.3);
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.dashboard-grid + .dashboard-grid {
+  margin-top: 16px;
+}
+
+.dashboard-panel {
+  align-self: start;
+  height: fit-content;
+}
+
+.dashboard-panel {
+  background: var(--surface);
+  border-radius: var(--border-radius-lg);
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  box-shadow: var(--box-shadow-soft);
+  display: grid;
+  gap: 12px;
+}
+
+.dashboard-panel h2 {
+  margin-bottom: 14px;
+  font-size: 16px;
+}
+
+.stock-alert {
+  color: var(--danger-color);
+  font-weight: 700;
+}
+
+.ventas-resumen {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.inventario-filtros {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.inventario-filtros input,
+.inventario-filtros select {
+  padding: 10px 12px;
+  border-radius: var(--border-radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--surface);
+  font-size: 14px;
+}
+
+.panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.chart {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 8px;
+  align-items: end;
+  min-height: 160px;
+  padding: 6px 2px;
+}
+
+.chart-line {
+  width: 100%;
+  height: 120px;
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.12), transparent);
+  border-radius: 14px;
+  padding: 8px;
+}
+
+.chart-line svg {
+  width: 100%;
+  height: 100%;
+}
+
+.chart-bar {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+}
+
+.chart-bar__fill {
+  width: 100%;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #2563eb, #0ea5e9);
+  min-height: 6px;
+}
+
+.chart-bar__label {
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.6);
+}
+
+.stock-distribucion {
+  display: grid;
+  gap: 10px;
+}
+
+.chart-pie {
+  width: 140px;
+  height: 140px;
+  margin: 0 auto;
+}
+
+.chart-pie svg {
+  width: 100%;
+  height: 100%;
+}
+
+.ventas-filtros-fecha {
+  display: flex;
+  gap: 10px;
+}
+
+.ventas-filtros-fecha input {
+  padding: 10px 12px;
+  border-radius: var(--border-radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--surface);
+  font-size: 14px;
+}
+
+.ventas-rango {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ventas-rango button {
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-alt);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.chart-hbar {
+  display: grid;
+  gap: 10px;
+}
+
+.hbar-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 100px;
+  gap: 10px;
+  align-items: center;
+}
+
+.hbar-label {
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.7);
+}
+
+.hbar-track {
+  height: 10px;
+  background: rgba(15, 23, 42, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.hbar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #2563eb, #0ea5e9);
+}
+
+.hbar-value {
+  font-size: 12px;
+  text-align: right;
+  font-weight: 600;
+}
+
+.stock-pill {
+  padding: 10px 12px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.stock-pill.danger {
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+}
+
+.stock-pill.warn {
+  background: rgba(217, 119, 6, 0.16);
+  color: #b45309;
+}
+
+.stock-pill.ok {
+  background: rgba(16, 185, 129, 0.12);
+  color: #0f766e;
 }
 
 .recent-movements h2 {
@@ -134,9 +368,9 @@
 
 .empty-message {
   text-align: center;
-  padding: 40px;
+  padding: 18px;
   color: rgba(15, 23, 42, 0.6);
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .loading {
@@ -168,8 +402,34 @@
     font-size: 24px;
   }
 
+  .dashboard-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .dashboard-content {
     padding: 22px;
+  }
+
+  .dashboard-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .inventario-filtros {
+    flex-direction: column;
+  }
+
+  .ventas-filtros-fecha {
+    flex-direction: column;
+  }
+
+  .ventas-rango {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .movements-table {

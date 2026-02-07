@@ -110,7 +110,7 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Inter', sans-serif; line-height: 1.1; color: #1f2937; background: #fff; font-size: 0.7rem; }
     .control-buttons { position: fixed; top: 15px; right: 15px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
-    .pdf-download-btn, .brand-toggle-btn { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; box-shadow: 0 3px 8px rgba(15, 23, 42, 0.25); font-size: 0.7rem; }
+    .pdf-download-btn, .brand-toggle-btn, .pdf-print-btn { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; box-shadow: 0 3px 8px rgba(15, 23, 42, 0.25); font-size: 0.7rem; }
     .brand-toggle-btn.active { background: linear-gradient(135deg, #064e3b 0%, #065f46 100%); }
     .invoice-container { width: 100%; max-width: 210mm; margin: auto; padding: 2px; background: white; min-height: 280mm; max-height: 290mm; display: flex; flex-direction: column; position: relative; overflow: hidden; }
     .watermark-logo { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); opacity: 0.05; z-index: 1; width: 400%; height: 250px; background-image: url('${staticBase}/img/KRATOS_LOGO.PNG'); background-size: contain; background-repeat: no-repeat; background-position: center; pointer-events: none; max-width: 100%; max-height: 100%; }
@@ -167,6 +167,10 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
     .summary-total td { color: white !important; border-bottom: none; padding: 8px; }
     .footer { text-align: center; font-size: 0.65rem; color: #333; border-top: 2px solid #1e3a8a; margin-top: 12px; padding-top: 8px; background: white; position: relative; }
     .footer p:first-child { font-weight: 700; color: #000; margin-bottom: 3px; }
+    @media screen {
+      body { background: #e5e7eb; display: flex; justify-content: center; padding: 10mm; }
+      .invoice-container { width: 210mm; max-width: 210mm; min-height: 297mm; max-height: none; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12); }
+    }
     @media print {
       body { font-size: 0.7rem; }
       .invoice-container { box-shadow: none; padding: 0; max-width: none; margin: 0; }
@@ -188,6 +192,7 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
 <body>
 <div class="control-buttons">
   <button class="pdf-download-btn" onclick="downloadPDF()">📄 Guardar como PDF</button>
+  <button class="pdf-print-btn" onclick="printPDF()">🖨️ Imprimir</button>
   <button class="brand-toggle-btn" onclick="toggleBrandColumn()">🏷️ Ocultar Marca</button>
 </div>
 
@@ -372,6 +377,30 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
       button.disabled = false;
       alert('Error al generar el PDF. Por favor, intente nuevamente.');
     }
+  }
+
+  function printPDF() {
+    const button = document.querySelector('.pdf-print-btn');
+    const controlButtons = document.querySelector('.control-buttons');
+    if (button) {
+      button.textContent = '🖨️ Imprimiendo...';
+      button.disabled = true;
+    }
+    if (controlButtons) {
+      controlButtons.style.display = 'none';
+    }
+    const restore = () => {
+      if (controlButtons) {
+        controlButtons.style.display = '';
+      }
+      if (button) {
+        button.textContent = '🖨️ Imprimir';
+        button.disabled = false;
+      }
+      window.removeEventListener('afterprint', restore);
+    };
+    window.addEventListener('afterprint', restore);
+    setTimeout(() => window.print(), 50);
   }
 </script>
 </body>

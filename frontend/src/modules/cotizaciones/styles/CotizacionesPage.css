@@ -247,6 +247,33 @@
   flex: 1;
 }
 
+.cliente-resultados {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  max-height: 200px;
+  overflow: auto;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+}
+
+.cliente-item {
+  border: 1px solid #ecf0f1;
+  background: #f8f9fa;
+  padding: 6px 8px;
+  text-align: left;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.cliente-vacio {
+  font-size: 12px;
+  color: #6b7280;
+  padding: 6px;
+}
+
 .cliente-search input,
 .cliente-search select {
   padding: 6px 8px;

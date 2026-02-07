@@ -14,6 +14,7 @@ const HistorialPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [expandido, setExpandido] = useState(null);
+  const [exportando, setExportando] = useState(false);
 
   useEffect(() => {
     cargarHistorial();
@@ -36,6 +37,30 @@ const HistorialPage = () => {
   const handleBuscar = (e) => {
     e.preventDefault();
     cargarHistorial();
+  };
+
+  const descargarArchivo = (data, filename) => {
+    const url = window.URL.createObjectURL(new Blob([data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const handleExportar = async () => {
+    try {
+      setExportando(true);
+      const resp = await historialService.exportar(filtros);
+      descargarArchivo(resp.data, 'historial.xlsx');
+    } catch (err) {
+      console.error('Error exportando historial:', err);
+      setError('Error al exportar historial');
+    } finally {
+      setExportando(false);
+    }
   };
 
   const formatJson = (value) => {
@@ -131,6 +156,14 @@ const HistorialPage = () => {
     <div className="historial-container">
       <div className="historial-header">
         <h1>Historial</h1>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={handleExportar}
+          disabled={exportando}
+        >
+          {exportando ? 'Exportando...' : 'Exportar Excel'}
+        </button>
       </div>
 
       <form className="historial-filtros" onSubmit={handleBuscar}>

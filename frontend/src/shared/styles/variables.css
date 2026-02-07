@@ -19,11 +19,11 @@
   --border-color: rgba(15, 23, 42, 0.08);
   --border-strong: rgba(15, 23, 42, 0.16);
 
-  --border-radius: 14px;
-  --border-radius-sm: 10px;
-  --border-radius-lg: 20px;
-  --box-shadow: 0 14px 40px rgba(15, 23, 42, 0.08);
-  --box-shadow-soft: 0 6px 18px rgba(15, 23, 42, 0.06);
+  --border-radius: 8px;
+  --border-radius-sm: 6px;
+  --border-radius-lg: 10px;
+  --box-shadow: 0 10px 26px rgba(15, 23, 42, 0.07);
+  --box-shadow-soft: 0 4px 12px rgba(15, 23, 42, 0.06);
   --transition: all 0.25s ease;
   --font-family: 'IBM Plex Sans', sans-serif;
   --font-display: 'Space Grotesk', sans-serif;
@@ -52,9 +52,41 @@ body {
     radial-gradient(circle at 80% 12%, rgba(14, 116, 144, 0.14), transparent 46%),
     linear-gradient(180deg, var(--page-bg) 0%, var(--page-bg-alt) 100%);
   color: var(--dark-color);
-  line-height: 1.6;
+  line-height: 1.25;
+  font-size: 11px;
+  margin: 0;
+  overflow-x: hidden;
 }
 
 html {
   scroll-behavior: smooth;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+}
+
+html,
+body {
+  overflow: visible !important;
+}
+
+body,
+#root {
+  transform: none !important;
+  filter: none !important;
+  perspective: none !important;
+}
+
+#root,
+.layout,
+.page,
+.container {
+  overflow: visible !important;
+  contain: none !important;
+  transform: none !important;
 }

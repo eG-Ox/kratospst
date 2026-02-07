@@ -1,5 +1,5 @@
 .productos-container {
-  padding: 30px 20px;
+  padding: 18px 16px;
   max-width: 1400px;
   margin: 0 auto;
 }
@@ -8,39 +8,56 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 30px;
+  margin-bottom: 16px;
 }
 
 .header-actions {
   display: flex;
-  gap: 12px;
+  gap: 6px;
   align-items: center;
 }
 
 .productos-header h1 {
   color: #2c3e50;
-  font-size: 32px;
+  font-size: 24px;
   margin: 0;
+}
+
+.productos-filters {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.productos-filters input,
+.productos-filters select {
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 11px;
+  background: var(--surface);
 }
 
 .producto-form {
   background: white;
-  border-radius: 10px;
-  padding: 30px;
+  border-radius: 8px;
+  padding: 16px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  margin-bottom: 30px;
+  margin-bottom: 16px;
 }
 
 .producto-form h2 {
   color: #2c3e50;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 
 .form-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  margin-bottom: 20px;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .form-group {
@@ -51,16 +68,16 @@
 .form-group label {
   color: #2c3e50;
   font-weight: 600;
-  margin-bottom: 8px;
-  font-size: 14px;
+  margin-bottom: 6px;
+  font-size: 11px;
 }
 
 .form-group input,
 .form-group select {
-  padding: 10px 12px;
+  padding: 7px 10px;
   border: 1px solid #ddd;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 11px;
   font-family: inherit;
   transition: all 0.3s ease;
 }
@@ -73,12 +90,12 @@
 }
 
 .btn-primary, .btn-success, .btn-secondary {
-  padding: 12px 24px;
+  padding: 8px 14px;
   border: none;
   border-radius: 6px;
   cursor: pointer;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 11px;
   transition: all 0.3s ease;
 }
 
@@ -120,8 +137,8 @@
   border: none;
   color: #3498db;
   cursor: pointer;
-  padding: 6px 0;
-  font-size: 13px;
+  padding: 4px 0;
+  font-size: 11px;
   text-align: left;
 }
 
@@ -131,23 +148,23 @@
 
 .form-actions {
   display: flex;
-  gap: 12px;
+  gap: 6px;
   align-items: center;
-  margin-top: 10px;
+  margin-top: 6px;
 }
 
 .error-message {
   background-color: #fadbd8;
   color: #c0392b;
-  padding: 12px 15px;
+  padding: 8px 10px;
   border-radius: 8px;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   border-left: 4px solid #e74c3c;
 }
 
 .productos-table-container {
   background: white;
-  border-radius: 10px;
+  border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
@@ -162,16 +179,16 @@
 }
 
 .productos-table th {
-  padding: 15px;
+  padding: 10px;
   text-align: left;
   font-weight: 600;
   color: #2c3e50;
   border-bottom: 2px solid #bdc3c7;
-  font-size: 13px;
+  font-size: 11px;
 }
 
 .productos-table td {
-  padding: 12px 15px;
+  padding: 8px 10px;
   border-bottom: 1px solid #ecf0f1;
 }
 
@@ -186,18 +203,69 @@
 
 .acciones {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
+}
+
+.icon-col {
+  text-align: center;
+  width: 52px;
+}
+
+.icon-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+}
+
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: #f8fafc;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: #1f2937;
+}
+
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.icon-btn:hover {
+  background: #eef2f7;
+  transform: translateY(-1px);
+}
+
+.icon-btn--edit {
+  color: #1d4ed8;
+  border-color: rgba(29, 78, 216, 0.2);
+  background: rgba(29, 78, 216, 0.08);
+}
+
+.icon-btn--delete {
+  color: #b91c1c;
+  border-color: rgba(185, 28, 28, 0.2);
+  background: rgba(185, 28, 28, 0.08);
 }
 
 .btn-edit {
   background-color: #f1c40f;
   color: #2c3e50;
-  padding: 6px 12px;
+  padding: 5px 10px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   transition: all 0.3s ease;
 }
 
@@ -209,11 +277,11 @@
 .btn-delete {
   background-color: #e74c3c;
   color: white;
-  padding: 6px 12px;
+  padding: 5px 10px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   transition: all 0.3s ease;
 }
 
@@ -224,36 +292,36 @@
 
 .loading {
   text-align: center;
-  padding: 40px;
+  padding: 24px;
   color: #7f8c8d;
 }
 
 .empty-message {
   text-align: center;
-  padding: 40px;
+  padding: 24px;
   color: #7f8c8d;
 }
 
 .tipo-form {
   background: white;
-  border-radius: 10px;
-  padding: 20px;
+  border-radius: 8px;
+  padding: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  margin-bottom: 30px;
+  margin-bottom: 16px;
 }
 
 .tipos-section {
-  margin-top: 30px;
+  margin-top: 16px;
 }
 
 .tipos-section h2 {
-  margin-bottom: 15px;
+  margin-bottom: 10px;
   color: #2c3e50;
 }
 
 .tipos-list {
   background: white;
-  border-radius: 10px;
+  border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   overflow: hidden;
 }
@@ -262,7 +330,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 15px 20px;
+  padding: 10px 12px;
   border-bottom: 1px solid #ecf0f1;
 }
 
@@ -273,12 +341,12 @@
 .tipo-item strong {
   display: block;
   color: #2c3e50;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .tipo-item span {
   color: #7f8c8d;
-  font-size: 13px;
+  font-size: 11px;
 }
 
 @media (max-width: 768px) {
@@ -309,7 +377,7 @@
   }
 
   .productos-table {
-    font-size: 13px;
+    font-size: 11px;
   }
 
   .productos-table th,

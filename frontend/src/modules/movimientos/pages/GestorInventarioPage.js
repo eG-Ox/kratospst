@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import {
+  clientesService,
+  marcasService,
   movimientosService,
   productosService,
   tiposMaquinasService
@@ -11,17 +13,26 @@ import '../styles/MovimientosPage.css';
 const GestorInventarioPage = () => {
   const [productos, setProductos] = useState([]);
   const [tipos, setTipos] = useState([]);
+  const [marcas, setMarcas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modo, setModo] = useState('ingreso');
   const [codigo, setCodigo] = useState('');
-  const [cantidad, setCantidad] = useState('');
+  const [codigoInput, setCodigoInput] = useState('');
+  const [fase, setFase] = useState('filtro');
+  const [itemsBatch, setItemsBatch] = useState([]);
   const [motivo, setMotivo] = useState('');
   const [numeroGuia, setNumeroGuia] = useState('');
+  const [dniCliente, setDniCliente] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [cameraActive, setCameraActive] = useState(false);
   const [lectorSoportado, setLectorSoportado] = useState(true);
-  const [qrData, setQrData] = useState(null);
+  const [ultimoScan, setUltimoScan] = useState(null);
+
+  const isNativeScannerAvailable = () =>
+    typeof window !== 'undefined' &&
+    window.Android &&
+    typeof window.Android.openQrScanner === 'function';
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -41,12 +52,14 @@ const GestorInventarioPage = () => {
   const cargarDatos = async () => {
     try {
       setLoading(true);
-      const [respProductos, respTipos] = await Promise.all([
+      const [respProductos, respTipos, respMarcas] = await Promise.all([
         productosService.getAll(),
-        tiposMaquinasService.getAll()
+        tiposMaquinasService.getAll(),
+        marcasService.getAll()
       ]);
       setProductos(respProductos.data);
       setTipos(respTipos.data);
+      setMarcas(respMarcas.data || []);
     } catch (err) {
       console.error('Error cargando datos:', err);
       setError('Error al cargar productos');
@@ -55,10 +68,23 @@ const GestorInventarioPage = () => {
     }
   };
 
-  const productoActual = useMemo(
-    () => productos.find((prod) => prod.codigo === codigo),
-    [productos, codigo]
-  );
+  const normalizarMarcaCodigo = (value) => String(value || '').trim().toUpperCase();
+
+  const marcasMap = useMemo(() => {
+    const map = {};
+    (marcas || []).forEach((marca) => {
+      const code = normalizarMarcaCodigo(marca.codigo);
+      if (code) {
+        map[code] = marca.nombre;
+      }
+    });
+    return map;
+  }, [marcas]);
+
+  const resolverMarcaCodigo = (value) => {
+    const code = normalizarMarcaCodigo(value);
+    return marcasMap[code] || value || '';
+  };
 
   const formatearUbicacion = (producto) => {
     if (!producto) return '-';
@@ -74,15 +100,125 @@ const GestorInventarioPage = () => {
       return null;
     }
     if (parsed.partial) {
-      setQrData(null);
       return { codigo: parsed.data.codigo, partial: true };
     }
+    const marcaNormalizada = resolverMarcaCodigo(parsed.data?.marca);
     if (modo === 'ingreso') {
-      setQrData(parsed.data);
-    } else {
-      setQrData(null);
+      return {
+        ...parsed.data,
+        marca: marcaNormalizada,
+        marca_codigo: parsed.data?.marca
+      };
     }
-    return parsed.data;
+    return {
+      ...parsed.data,
+      marca: marcaNormalizada,
+      marca_codigo: parsed.data?.marca
+    };
+  };
+
+  const construirMotivo = () => {
+    const base = (motivo || '').trim();
+    if (!base) return '';
+    if (base === 'VENTA') {
+      return dniCliente ? `${base} | DNI: ${dniCliente}` : base;
+    }
+    if (numeroGuia) {
+      return `${base} | Guia: ${numeroGuia}`;
+    }
+    return base;
+  };
+
+  const asegurarClientePorDni = async () => {
+    const dni = String(dniCliente || '').trim();
+    if (!dni) {
+      setError('DNI requerido para VENTA');
+      return false;
+    }
+    const existing = await clientesService.getAll({ documento: dni });
+    if (Array.isArray(existing.data) && existing.data.length) {
+      return true;
+    }
+    const consulta = await clientesService.consultaDni(dni);
+    if (!consulta.data?.success) {
+      setError(consulta.data?.error || 'No se pudo validar DNI');
+      return false;
+    }
+    await clientesService.create({
+      tipo_cliente: 'natural',
+      dni,
+      nombre: consulta.data.nombre,
+      apellido: consulta.data.apellido
+    });
+    return true;
+  };
+
+  const construirInfoItem = (producto, parsed) => {
+    if (parsed && !parsed.partial) {
+      return {
+        marca: parsed.marca || '',
+        descripcion: parsed.descripcion || '',
+        tipo: parsed.tipo_maquina || '',
+        ubicacion: parsed.ubicacion || ''
+      };
+    }
+    if (producto) {
+      return {
+        marca: producto.marca || '',
+        descripcion: producto.descripcion || '',
+        tipo: producto.tipo_nombre || '',
+        ubicacion: formatearUbicacion(producto)
+      };
+    }
+    return { marca: '', descripcion: '', tipo: '', ubicacion: '' };
+  };
+
+  const agregarCodigo = (valor) => {
+    const raw = String(valor || '').trim();
+    if (!raw) return;
+    const parsed = parsearQR(raw);
+    const code = parsed?.codigo || raw;
+    if (!code) return;
+    const encontrado = productos.find((prod) => prod.codigo === code);
+    if (modo === 'ingreso' && !encontrado && parsed?.partial) {
+      setError('QR completo requerido para registrar producto nuevo');
+      return;
+    }
+    if (modo === 'salida' && !encontrado) {
+      setError('Producto no encontrado para salida');
+      return;
+    }
+    setError('');
+    const infoItem = construirInfoItem(encontrado, parsed);
+    setItemsBatch((prev) => {
+      const idx = prev.findIndex((item) => item.codigo === code);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = {
+          ...next[idx],
+          cantidad: next[idx].cantidad + 1,
+          info: next[idx].info || infoItem
+        };
+        return next;
+      }
+      return [
+        ...prev,
+        {
+          codigo: code,
+          cantidad: 1,
+          qrData: parsed && !parsed.partial ? parsed : null,
+          info: infoItem
+        }
+      ];
+    });
+    setCodigo(code);
+    setCodigoInput('');
+    setUltimoScan({
+      codigo: code,
+      producto: encontrado || null,
+      qrData: parsed && !parsed.partial ? parsed : null,
+      info: infoItem
+    });
   };
 
   const activarCamara = async () => {
@@ -112,6 +248,10 @@ const GestorInventarioPage = () => {
   };
 
   const toggleEscaneoDesdeBoton = async () => {
+    if (isNativeScannerAvailable()) {
+      window.Android.openQrScanner();
+      return;
+    }
     if (!cameraActive) {
       await activarCamara();
     }
@@ -175,16 +315,23 @@ const GestorInventarioPage = () => {
     ultimoTextoAtRef.current = ahora;
     if (ahora - ultimoDetectadoRef.current > 1200) {
       ultimoDetectadoRef.current = ahora;
-      const parsed = parsearQR(valor);
-      if (parsed?.codigo) {
-        setCodigo(parsed.codigo);
-      } else {
-        setCodigo(valor);
-      }
+      agregarCodigo(valor);
       reproducirBeep();
-      detenerCamara();
     }
   };
+
+  useEffect(() => {
+    const handler = (value) => {
+      if (!value) return;
+      procesarCodigoDetectado(String(value));
+    };
+    window.handleNativeQr = handler;
+    return () => {
+      if (window.handleNativeQr === handler) {
+        delete window.handleNativeQr;
+      }
+    };
+  }, [modo]);
 
 
   const reproducirBeep = () => {
@@ -258,9 +405,14 @@ const GestorInventarioPage = () => {
   }, [detenerCamara]);
 
   useEffect(() => {
-    if (modo !== 'ingreso') {
-      setQrData(null);
-    }
+    setItemsBatch([]);
+    setCodigo('');
+    setCodigoInput('');
+    setMotivo('');
+    setNumeroGuia('');
+    setDniCliente('');
+    setFase('filtro');
+    setUltimoScan(null);
   }, [modo]);
 
   useEffect(() => {
@@ -306,13 +458,14 @@ const GestorInventarioPage = () => {
     return response.data.id;
   };
 
-  const crearProductoPorCodigo = async () => {
+  const crearProductoPorCodigo = async (codigoValue) => {
     const tipoId = await obtenerTipoDefault();
     const response = await productosService.create({
-      codigo,
+      codigo: codigoValue,
       tipo_maquina_id: tipoId,
       marca: 'N/A',
       descripcion: '',
+      ubicacion: 'H1',
       stock: 0,
       precio_compra: 0,
       precio_venta: 0,
@@ -322,14 +475,50 @@ const GestorInventarioPage = () => {
     return response.data.id;
   };
 
+
+  const handleContinuar = async () => {
+    setError('');
+    if (!motivo) {
+      setError('Selecciona un motivo');
+      return;
+    }
+    if ((motivo === 'COMPRA' || motivo === 'DEVOLUCION') && !numeroGuia.trim()) {
+      setError('Numero de guia requerido');
+      return;
+    }
+    if (motivo === 'VENTA') {
+      const ok = await asegurarClientePorDni();
+      if (!ok) return;
+    }
+    setFase('scan');
+  };
+
+  const removerItem = (codigoItem) => {
+    setItemsBatch((prev) => prev.filter((item) => item.codigo !== codigoItem));
+  };
+
+  const actualizarCantidad = (codigoItem, cantidadValue) => {
+    const cantidadNum = Number(cantidadValue || 0);
+    if (!Number.isFinite(cantidadNum) || cantidadNum <= 0) {
+      return;
+    }
+    setItemsBatch((prev) =>
+      prev.map((item) =>
+        item.codigo === codigoItem ? { ...item, cantidad: cantidadNum } : item
+      )
+    );
+  };
   const crearProductoDesdeQR = async (data) => {
     const tipoId = await obtenerTipoPorNombre(data.tipo_maquina);
+    const ubicacionFinal =
+      data?.ubicacion && String(data.ubicacion).trim() ? data.ubicacion : 'H1';
+    const marcaFinal = resolverMarcaCodigo(data?.marca);
     const response = await productosService.create({
       codigo: data.codigo,
       tipo_maquina_id: tipoId,
-      marca: data.marca,
+      marca: marcaFinal,
       descripcion: data.descripcion,
-      ubicacion: data.ubicacion,
+      ubicacion: ubicacionFinal,
       stock: 0,
       precio_compra: 0,
       precio_venta: 0,
@@ -344,67 +533,50 @@ const GestorInventarioPage = () => {
     setError('');
     setSuccess('');
 
-    if (!codigo || !cantidad) {
-      setError('Código y cantidad son requeridos');
+    if (!itemsBatch.length) {
+      setError('No hay productos escaneados');
       return;
     }
 
     try {
-      let datosQR = modo === 'ingreso' ? qrData : null;
-      if (
-        modo === 'ingreso' &&
-        !datosQR &&
-        (codigo.includes('\n') || (codigo.match(/,/g) || []).length >= 3)
-      ) {
-        const parsed = parsearQR(codigo);
-        if (!parsed) {
-          return;
-        }
-        if (parsed?.codigo) {
-          setCodigo(parsed.codigo);
-          datosQR = parsed;
-        }
+      const motivoFinal = construirMotivo();
+      if (!motivoFinal) {
+        setError('Selecciona un motivo');
+        return;
       }
 
-      const motivoFinal = (() => {
-        if (motivo && numeroGuia) {
-          return `${motivo} | Guia: ${numeroGuia}`;
+      for (const item of itemsBatch) {
+        const encontrado = productos.find((prod) => prod.codigo === item.codigo);
+        let maquinaId = encontrado?.id;
+        if (!maquinaId) {
+          if (modo === 'salida') {
+            setError(`Producto no encontrado para salida: ${item.codigo}`);
+            return;
+          }
+          if (item.qrData && !item.qrData.partial) {
+            maquinaId = await crearProductoDesdeQR(item.qrData);
+          } else {
+            maquinaId = await crearProductoPorCodigo(item.codigo);
+          }
         }
-        if (motivo) {
-          return motivo;
-        }
-        if (numeroGuia) {
-          return `Guia: ${numeroGuia}`;
-        }
-        return null;
-      })();
-
-      let maquinaId = productoActual?.id;
-      if (!maquinaId) {
-        if (modo === 'salida') {
-          setError('Producto no encontrado para salida');
-          return;
-        }
-        if (datosQR && !datosQR.partial) {
-          maquinaId = await crearProductoDesdeQR(datosQR);
-        } else {
-          maquinaId = await crearProductoPorCodigo();
-        }
+        await movimientosService.registrar({
+          maquina_id: maquinaId,
+          tipo: modo,
+          cantidad: parseInt(item.cantidad, 10),
+          motivo: motivoFinal
+        });
       }
 
-      const response = await movimientosService.registrar({
-        maquina_id: maquinaId,
-        tipo: modo,
-        cantidad: parseInt(cantidad, 10),
-        motivo: motivoFinal
-      });
-
-      setSuccess(`Movimiento registrado. Stock actual: ${response.data.nuevo_stock}`);
-      setCantidad('');
+      setSuccess(`Movimientos registrados: ${itemsBatch.length}`);
+      setItemsBatch([]);
+      setCodigo('');
+      setCodigoInput('');
       setMotivo('');
       setNumeroGuia('');
+      setDniCliente('');
+      setFase('filtro');
       await cargarDatos();
-      setQrData(null);
+      setUltimoScan(null);
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       console.error('Error registrando movimiento:', err);
@@ -414,7 +586,7 @@ const GestorInventarioPage = () => {
 
   return (
     <div className="movimientos-container">
-      <div className="movimientos-header">
+      <div className="movimientos-header movimientos-header--compact">
         <h1>Gestor de Inventario</h1>
         <p>Escanea códigos y registra ingresos o salidas</p>
       </div>
@@ -441,143 +613,232 @@ const GestorInventarioPage = () => {
       {loading ? (
         <div className="loading">Cargando productos...</div>
       ) : (
+        
         <form className="movimientos-form" onSubmit={handleRegistrar}>
-          <div className="inventario-grid">
-            <div className="inventario-panel">
-              <div className="barcode-card">
-                <label htmlFor="codigo">CODIGO</label>
-                <div className="code-input-row">
-                  <input
-                    id="codigo"
-                    type="text"
-                    value={codigo}
-                    onChange={(e) => setCodigo(e.target.value.trim())}
-                    placeholder="Escanea o escribe el codigo"
-                  />
-                  <button
-                    type="button"
-                    className="btn-camera"
-                    onClick={toggleEscaneoDesdeBoton}
-                    aria-label="Abrir cámara y escanear"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M9 4.5h6l1.2 2H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h2.8L9 4.5zm3 4.5a4 4 0 1 0 .001 8.001A4 4 0 0 0 12 9zm0 2a2 2 0 1 1-.001 4.001A2 2 0 0 1 12 11z" />
-                    </svg>
-                  </button>
-              </div>
-
-              </div>
-
-              <div className="form-card">
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Cantidad *</label>
-                    <input
-                      type="number"
-                      min="1"
-                      required
-                      value={cantidad}
-                      onChange={(e) => setCantidad(e.target.value)}
-                    />
+          {fase === 'filtro' ? (
+            <>
+              <div className="inventario-grid inventario-grid--single">
+                <div className="inventario-panel">
+                  <div className="form-card">
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Motivo *</label>
+                        <select value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+                          <option value="">Selecciona un motivo</option>
+                          {modo === 'ingreso' ? (
+                            <>
+                              <option value="COMPRA">COMPRA</option>
+                              <option value="DEVOLUCION">DEVOLUCION</option>
+                            </>
+                          ) : (
+                            <>
+                              <option value="VENTA">VENTA</option>
+                              <option value="DEVOLUCION">DEVOLUCION</option>
+                              <option value="CAMBIO DE CODIGO">CAMBIO DE CODIGO</option>
+                            </>
+                          )}
+                        </select>
+                      </div>
+                      {(motivo === 'COMPRA' || motivo === 'DEVOLUCION') && (
+                        <div className="form-group">
+                          <label>Numero de guia *</label>
+                          <input
+                            type="text"
+                            placeholder="Ej. 000-12345"
+                            value={numeroGuia}
+                            onChange={(e) => setNumeroGuia(e.target.value)}
+                          />
+                        </div>
+                      )}
+                      {motivo === 'VENTA' && (
+                        <div className="form-group">
+                          <label>DNI cliente *</label>
+                          <input
+                            type="text"
+                            placeholder="DNI del cliente"
+                            value={dniCliente}
+                            onChange={(e) => setDniCliente(e.target.value)}
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="form-group">
-                    <label>Motivo</label>
-                    <select value={motivo} onChange={(e) => setMotivo(e.target.value)}>
-                      <option value="">Selecciona un motivo</option>
-                      <option value="VENTA">VENTA</option>
-                      <option value="COMPRA">COMPRA</option>
-                      <option value="CAMBIO DE CODIGO">CAMBIO DE CODIGO</option>
-                      <option value="DEVOLUCIONES">DEVOLUCIONES</option>
-                    </select>
+                  <div className="action-card">
+                    <button type="button" className="btn-primary" onClick={handleContinuar}>
+                      Continuar
+                    </button>
                   </div>
                 </div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Numero de guia (opcional)</label>
+              </div>
+              <div className="summary-section">
+                <div className="info-card summary-card summary-card--compact">
+                  <h3>Resumen</h3>
+                  <p>
+                    Accion: <strong>{modo === 'ingreso' ? 'Ingreso' : 'Salida'}</strong>
+                  </p>
+                  <p>
+                    Motivo: <strong>{motivo || '-'}</strong>
+                  </p>
+                  <p>
+                    Guia/DNI: <strong>{numeroGuia || dniCliente || '-'}</strong>
+                  </p>
+                  <p className="muted">Confirma el motivo antes de escanear.</p>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="inventario-grid">
+              <div className="inventario-panel">
+                <div className="barcode-card">
+                  <label htmlFor="codigo">CODIGO</label>
+                  <div className="code-input-row">
                     <input
+                      id="codigo"
                       type="text"
-                      placeholder="Ej. 000-12345"
-                      value={numeroGuia}
-                      onChange={(e) => setNumeroGuia(e.target.value)}
+                      value={codigoInput}
+                      onChange={(e) => setCodigoInput(e.target.value.trim())}
+                      placeholder="Escanea o escribe el codigo"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          agregarCodigo(codigoInput);
+                        }
+                      }}
                     />
                   </div>
+                  <div className="code-actions">
+                    <button
+                      type="button"
+                      className="btn-camera btn-camera--icon"
+                      onClick={toggleEscaneoDesdeBoton}
+                      aria-label="Abrir camara y escanear"
+                    >
+                      <span className="btn-camera__emoji" aria-hidden="true">📷</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </div>
 
-            <div className="inventario-panel">
-              <div className="info-card product-card">
-                <h3>Detalle del producto</h3>
-                <div className="producto-datos">
-                  {productoActual ? (
-                    <>
-                      <p>
-                        <strong>Producto:</strong> {productoActual.marca || 'Sin marca'}
-                      </p>
-                      <p>
-                        <strong>Descripcion:</strong>{' '}
-                        {productoActual.descripcion || 'Sin descripcion'}
-                      </p>
-                      <p>
-                        <strong>Ubicacion:</strong> {formatearUbicacion(productoActual)}
-                      </p>
-                      <p>
-                        <strong>Stock actual:</strong> {productoActual.stock}
-                      </p>
-                    </>
-                  ) : qrData ? (
-                    <>
-                      <p>
-                        <strong>Producto:</strong> {qrData.marca}
-                      </p>
-                      <p>
-                        <strong>Descripcion:</strong> {qrData.descripcion}
-                      </p>
-                      <p>
-                        <strong>Ubicacion:</strong> {qrData.ubicacion}
-                      </p>
-                      <p className="producto-vacio">
-                        Producto no encontrado: se crear? si es ingreso
-                      </p>
-                    </>
+                <div className="form-card">
+                  <h3>Productos escaneados</h3>
+                  {itemsBatch.length === 0 ? (
+                    <p className="muted">Aun no hay productos en la lista.</p>
                   ) : (
-                    <p className="producto-vacio">
-                      Producto no encontrado: se crear? si es ingreso
-                    </p>
+                    <div className="batch-list">
+                      {itemsBatch.map((item) => (
+                        <div key={item.codigo} className="batch-item">
+                          <div className="batch-item__info">
+                            <div className="batch-item__code">{item.codigo}</div>
+                            <div className="batch-item__meta">
+                              {(item.info?.marca || item.info?.tipo) && (
+                                <span>{item.info?.marca || 'Sin marca'}{item.info?.tipo ? ` · ${item.info.tipo}` : ''}</span>
+                              )}
+                              {item.info?.descripcion && (
+                                <span className="batch-item__desc">{item.info.descripcion}</span>
+                              )}
+                              {item.info?.ubicacion && (
+                                <span>Ubicacion: {item.info.ubicacion}</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="batch-item__actions">
+                            <input
+                              type="number"
+                              min="1"
+                              value={item.cantidad}
+                              onChange={(e) => actualizarCantidad(item.codigo, e.target.value)}
+                            />
+                            <button
+                              type="button"
+                              className="btn-link"
+                              onClick={() => removerItem(item.codigo)}
+                            >
+                              Quitar
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
 
-              <div className="summary-row">
-                <div className="info-card summary-card">
-                  <h3>Resumen</h3>
-                  <p>
-                    Código: <strong>{codigo || '-'}</strong>
-                  </p>
-                  <p>
-                    Acción: <strong>{modo === 'ingreso' ? 'Ingreso' : 'Salida'}</strong>
-                  </p>
-                  <p>
-                    Motivo: <strong>{motivo || (numeroGuia ? 'Guia registrada' : '-')}</strong>
-                  </p>
-                  <p>
-                    Guia: <strong>{numeroGuia || '-'}</strong>
-                  </p>
-                  <p>
-                    Stock actual:{' '}
-                    <strong>{productoActual ? productoActual.stock : 'No registrado'}</strong>
-                  </p>
+              <div className="inventario-panel">
+                <div className="info-card product-card">
+                  <h3>Detalle del producto</h3>
+                  <div className="producto-datos">
+                    {ultimoScan?.producto ? (
+                      <>
+                        <p>
+                          <strong>Producto:</strong> {ultimoScan.producto.marca || 'Sin marca'}
+                        </p>
+                        <p className="producto-datos__desc">
+                          <strong>Descripcion:</strong>{' '}
+                          {ultimoScan.producto.descripcion || 'Sin descripcion'}
+                        </p>
+                        <p>
+                          <strong>Ubicacion:</strong> {formatearUbicacion(ultimoScan.producto)}
+                        </p>
+                        <p>
+                          <strong>Stock actual:</strong> {ultimoScan.producto.stock}
+                        </p>
+                      </>
+                    ) : ultimoScan?.qrData ? (
+                      <>
+                        <p>
+                          <strong>Producto:</strong> {ultimoScan.qrData.marca}
+                        </p>
+                        <p className="producto-datos__desc">
+                          <strong>Descripcion:</strong> {ultimoScan.qrData.descripcion}
+                        </p>
+                        <p>
+                          <strong>Ubicacion:</strong> {ultimoScan.qrData.ubicacion}
+                        </p>
+                        <p className="producto-vacio">Producto no encontrado: se creara si es ingreso</p>
+                      </>
+                    ) : ultimoScan?.codigo ? (
+                      <p className="producto-vacio">Producto no encontrado: {ultimoScan.codigo}</p>
+                    ) : (
+                      <p className="producto-vacio">Escanea un producto para ver detalle</p>
+                    )}
+                  </div>
                 </div>
 
-                <div className="action-card">
-                  <button type="submit" className="btn-primary">
-                    Registrar {modo === 'ingreso' ? 'Ingreso' : 'Salida'}
-                  </button></div>
               </div>
-            </div>
-          </div>
+              </div>
+              <div className="summary-section">
+              <div className="info-card summary-card summary-card--compact">
+                <h3>Resumen</h3>
+                <p>
+                  Items: <strong>{itemsBatch.length}</strong>
+                </p>
+                <p>
+                  Accion: <strong>{modo === 'ingreso' ? 'Ingreso' : 'Salida'}</strong>
+                </p>
+                <p>
+                  Motivo: <strong>{motivo || '-'}</strong>
+                </p>
+                <p>
+                  Guia/DNI: <strong>{numeroGuia || dniCliente || '-'}</strong>
+                </p>
+              </div>
+              <div className="action-card action-card--compact">
+                <button type="submit" className="btn-primary">
+                  Registrar {modo === 'ingreso' ? 'Ingreso' : 'Salida'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setFase('filtro')}
+                >
+                  Volver
+                </button>
+              </div>
+              </div>
+            </>
+          )}
         </form>
+
       )}
 
       {cameraActive && (

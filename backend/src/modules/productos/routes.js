@@ -9,6 +9,7 @@ router.get('/', autorizar('productos.ver'), controller.getMaquinas);
 router.get('/codigo/:codigo', autorizar('productos.ver'), controller.getMaquinaPorCodigo);
 router.get('/plantilla', autorizar('productos.ver'), controller.descargarPlantilla);
 router.get('/exportar', autorizar('productos.ver'), controller.exportarExcel);
+router.get('/exportar-stock', autorizar('productos.ver'), controller.exportarStockMinimo);
 router.post('/importar', autorizar('productos.editar'), multerUpload.single('archivo'), controller.importarExcel);
 router.post('/', autorizar('productos.editar'), multerUpload.single('ficha_tecnica'), controller.crearMaquina);
 router.put('/:id', autorizar('productos.editar'), multerUpload.single('ficha_tecnica'), controller.actualizarMaquina);

@@ -27,6 +27,18 @@ CREATE TABLE IF NOT EXISTS tipos_maquinas (
 );
 `;
 
+// Crear tabla de marcas
+const crearMarcas = `
+CREATE TABLE IF NOT EXISTS marcas (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  codigo VARCHAR(20) NOT NULL UNIQUE,
+  nombre VARCHAR(100) NOT NULL UNIQUE,
+  descripcion TEXT,
+  fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+`;
+
 // Crear tabla de máquinas
 const crearMaquinas = `
 CREATE TABLE IF NOT EXISTS maquinas (
@@ -200,6 +212,7 @@ CREATE TABLE IF NOT EXISTS inventario_detalle (
 );
 `;
 
+
 // Tabla roles
 const crearRoles = `
 CREATE TABLE IF NOT EXISTS roles (
@@ -253,6 +266,60 @@ CREATE TABLE IF NOT EXISTS clientes (
 );
 `;
 
+// Tabla ventas
+const crearVentas = `
+CREATE TABLE IF NOT EXISTS ventas (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  usuario_id INT NOT NULL,
+  documento_tipo ENUM('dni', 'ruc') DEFAULT 'dni',
+  documento VARCHAR(20),
+  cliente_nombre VARCHAR(150),
+  cliente_telefono VARCHAR(30),
+  agencia ENUM('SHALOM','MARVISUR','OLVA','OTROS','TIENDA') DEFAULT 'SHALOM',
+  agencia_otro VARCHAR(120),
+  destino VARCHAR(120),
+  fecha_venta DATE,
+  estado_envio ENUM('PENDIENTE','ENVIADO','CANCELADO','VISITA') DEFAULT 'PENDIENTE',
+  estado_pedido ENUM('PICKING','PEDIDO_LISTO') DEFAULT 'PICKING',
+  fecha_despacho DATE NULL,
+  fecha_cancelacion DATE NULL,
+  adelanto DECIMAL(10, 2) NOT NULL DEFAULT 0,
+  p_venta DECIMAL(10, 2) NOT NULL DEFAULT 0,
+  rastreo_estado VARCHAR(30) DEFAULT 'EN TRANSITO',
+  ticket VARCHAR(60),
+  guia VARCHAR(60),
+  retiro VARCHAR(60),
+  notas TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE RESTRICT,
+  INDEX idx_venta_usuario (usuario_id),
+  INDEX idx_venta_fecha (fecha_venta),
+  INDEX idx_venta_estado (estado_envio)
+);
+`;
+
+// Tabla detalle ventas
+const crearVentasDetalle = `
+CREATE TABLE IF NOT EXISTS ventas_detalle (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  venta_id INT NOT NULL,
+  tipo ENUM('producto','requerimiento','regalo','regalo_requerimiento') NOT NULL,
+  codigo VARCHAR(50),
+  descripcion TEXT,
+  marca VARCHAR(100),
+  cantidad INT NOT NULL DEFAULT 1,
+  cantidad_picked INT NOT NULL DEFAULT 0,
+  precio_venta DECIMAL(10, 2) NOT NULL DEFAULT 0,
+  precio_compra DECIMAL(10, 2) NOT NULL DEFAULT 0,
+  proveedor VARCHAR(120),
+  stock INT NULL,
+  FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
+  INDEX idx_venta_detalle (venta_id),
+  INDEX idx_venta_tipo (tipo)
+);
+`;
+
 async function inicializarBaseDatos() {
   try {
     const connection = await pool.getConnection();
@@ -289,6 +356,59 @@ async function inicializarBaseDatos() {
     console.log('Creando tabla tipos_maquinas...');
     await connection.execute(crearTiposMaquinas);
     console.log('✓ Tabla tipos_maquinas creada exitosamente');
+
+    console.log('Creando tabla marcas...');
+    await connection.execute(crearMarcas);
+    console.log('✓ Tabla marcas creada exitosamente');
+
+    // Insertar marcas iniciales si la tabla está vacía
+    try {
+      const [marcaCountRows] = await connection.execute('SELECT COUNT(*) as total FROM marcas');
+      const marcaCount = marcaCountRows?.[0]?.total || 0;
+      if (marcaCount === 0) {
+        console.log('Insertando marcas iniciales...');
+        const marcasIniciales = [
+          { nombre: 'Agrotech', codigo: 'M0001' },
+          { nombre: 'AMCO', codigo: 'M0002' },
+          { nombre: 'APO', codigo: 'M0003' },
+          { nombre: 'BERKLIN', codigo: 'M0004' },
+          { nombre: 'BIGRED', codigo: 'M0005' },
+          { nombre: 'Bonelly', codigo: 'M0006' },
+          { nombre: 'Campbell', codigo: 'M0007' },
+          { nombre: 'Cattini', codigo: 'M0008' },
+          { nombre: 'DCA', codigo: 'M0009' },
+          { nombre: 'DeWALT', codigo: 'M0010' },
+          { nombre: 'DongCheng', codigo: 'M0011' },
+          { nombre: 'Farmjet', codigo: 'M0012' },
+          { nombre: 'Ferton', codigo: 'M0013' },
+          { nombre: 'Hyundai', codigo: 'M0014' },
+          { nombre: 'Kaili', codigo: 'M0015' },
+          { nombre: 'Khomander', codigo: 'M0016' },
+          { nombre: 'Klarwerk', codigo: 'M0017' },
+          { nombre: 'KRATOS', codigo: 'M0018' },
+          { nombre: 'MPR MOTORS', codigo: 'M0019' },
+          { nombre: 'PRETUL', codigo: 'M0020' },
+          { nombre: 'Rexon', codigo: 'M0021' },
+          { nombre: 'REYCAR', codigo: 'M0022' },
+          { nombre: 'Rotake', codigo: 'M0023' },
+          { nombre: 'SUMMARY', codigo: 'M0024' },
+          { nombre: 'Tramontina', codigo: 'M0025' },
+          { nombre: 'TRUPER', codigo: 'M0026' },
+          { nombre: 'UYUSTOOLS', codigo: 'M0027' },
+          { nombre: 'VIPER', codigo: 'M0028' },
+          { nombre: 'WARC', codigo: 'M0029' }
+        ];
+        for (const marca of marcasIniciales) {
+          await connection.execute(
+            'INSERT INTO marcas (codigo, nombre, descripcion) VALUES (?, ?, ?)',
+            [marca.codigo, marca.nombre, null]
+          );
+        }
+        console.log('✓ Marcas iniciales insertadas');
+      }
+    } catch (error) {
+      console.log('Aviso insertando marcas iniciales:', error.message);
+    }
     
     console.log('Creando tabla maquinas...');
     await connection.execute(crearMaquinas);
@@ -338,6 +458,82 @@ async function inicializarBaseDatos() {
     await connection.execute(crearClientes);
     console.log('✓ Tabla clientes creada exitosamente');
 
+    console.log('Creando tabla ventas...');
+    await connection.execute(crearVentas);
+    console.log('✓ Tabla ventas creada exitosamente');
+
+    console.log('Creando tabla ventas_detalle...');
+    await connection.execute(crearVentasDetalle);
+
+    // Asegurar columna cantidad_picked en ventas_detalle
+    try {
+      await connection.execute(
+        'ALTER TABLE ventas_detalle ADD COLUMN cantidad_picked INT NOT NULL DEFAULT 0 AFTER cantidad'
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    console.log('✓ Tabla ventas_detalle creada exitosamente');
+
+    // Asegurar columnas en ventas si ya existia con esquema anterior
+    const columnasVentas = [
+      "ADD COLUMN documento_tipo ENUM('dni','ruc') DEFAULT 'dni' AFTER usuario_id",
+      'ADD COLUMN documento VARCHAR(20) NULL AFTER documento_tipo',
+      'ADD COLUMN cliente_nombre VARCHAR(150) NULL AFTER documento',
+      'ADD COLUMN cliente_telefono VARCHAR(30) NULL AFTER cliente_nombre',
+      "ADD COLUMN agencia ENUM('SHALOM','MARVISUR','OLVA','OTROS','TIENDA') DEFAULT 'SHALOM' AFTER cliente_telefono",
+      'ADD COLUMN agencia_otro VARCHAR(120) NULL AFTER agencia',
+      'ADD COLUMN destino VARCHAR(120) NULL AFTER agencia_otro',
+      'ADD COLUMN fecha_venta DATE NULL AFTER destino',
+      "ADD COLUMN estado_envio ENUM('PENDIENTE','ENVIADO','CANCELADO','VISITA') DEFAULT 'PENDIENTE' AFTER fecha_venta",
+      "ADD COLUMN estado_pedido ENUM('PICKING','PEDIDO_LISTO') DEFAULT 'PICKING' AFTER estado_envio",
+      'ADD COLUMN fecha_despacho DATE NULL AFTER estado_envio',
+      'ADD COLUMN fecha_cancelacion DATE NULL AFTER fecha_despacho',
+      'ADD COLUMN adelanto DECIMAL(10,2) NOT NULL DEFAULT 0 AFTER fecha_cancelacion',
+      'ADD COLUMN p_venta DECIMAL(10,2) NOT NULL DEFAULT 0 AFTER adelanto',
+      "ADD COLUMN rastreo_estado VARCHAR(30) DEFAULT 'EN TRANSITO' AFTER p_venta",
+      'ADD COLUMN ticket VARCHAR(60) NULL AFTER rastreo_estado',
+      'ADD COLUMN guia VARCHAR(60) NULL AFTER ticket',
+      'ADD COLUMN retiro VARCHAR(60) NULL AFTER guia',
+      'ADD COLUMN notas TEXT NULL AFTER retiro',
+      'ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER notas',
+      'ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at'
+    ];
+    for (const alter of columnasVentas) {
+      try {
+        await connection.execute(`ALTER TABLE ventas ${alter}`);
+      } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') {
+          throw error;
+        }
+      }
+    }
+
+    // Marcar como pedido listo las ventas sin productos en tienda
+    try {
+      await connection.execute(
+        `UPDATE ventas v
+         SET estado_pedido = 'PEDIDO_LISTO'
+         WHERE NOT EXISTS (
+           SELECT 1 FROM ventas_detalle d
+           WHERE d.venta_id = v.id AND d.tipo = 'producto'
+         )`
+      );
+    } catch (error) {
+      console.log('Aviso actualizando estado_pedido:', error.message);
+    }
+
+    // Si existia una columna "tipo" antigua en ventas, permitir NULL para evitar errores al insertar
+    try {
+      await connection.execute("ALTER TABLE ventas MODIFY COLUMN tipo VARCHAR(50) NULL");
+    } catch (error) {
+      if (error.code !== 'ER_BAD_FIELD_ERROR') {
+        throw error;
+      }
+    }
+
     console.log('Creando tabla inventarios...');
     await connection.execute(crearInventarios);
     console.log('✓ Tabla inventarios creada exitosamente');
@@ -361,6 +557,7 @@ async function inicializarBaseDatos() {
         throw error;
       }
     }
+
 
     // Asegurar columna usuario_id en clientes si ya existía sin esa columna
     try {
@@ -407,6 +604,8 @@ async function inicializarBaseDatos() {
       { clave: 'productos.precio_compra.ver', descripcion: 'Ver precio de compra', grupo: 'Inventario' },
       { clave: 'tipos_maquinas.ver', descripcion: 'Ver tipos de maquinas', grupo: 'Inventario' },
       { clave: 'tipos_maquinas.editar', descripcion: 'Editar tipos de maquinas', grupo: 'Inventario' },
+      { clave: 'marcas.ver', descripcion: 'Ver marcas', grupo: 'Inventario' },
+      { clave: 'marcas.editar', descripcion: 'Editar marcas', grupo: 'Inventario' },
       { clave: 'movimientos.ver', descripcion: 'Ver movimientos', grupo: 'Inventario' },
       { clave: 'movimientos.registrar', descripcion: 'Registrar movimientos', grupo: 'Inventario' },
       { clave: 'historial.ver', descripcion: 'Ver historial general', grupo: 'Inventario' },
@@ -422,7 +621,12 @@ async function inicializarBaseDatos() {
       { clave: 'clientes.editar', descripcion: 'Crear/Editar clientes', grupo: 'Clientes' },
       { clave: 'usuarios.ver', descripcion: 'Ver usuarios', grupo: 'Cuentas' },
       { clave: 'usuarios.editar', descripcion: 'Editar usuarios', grupo: 'Cuentas' },
-      { clave: 'permisos.editar', descripcion: 'Editar permisos por rol', grupo: 'Cuentas' }
+      { clave: 'permisos.editar', descripcion: 'Editar permisos por rol', grupo: 'Cuentas' },
+      { clave: 'ventas.ver', descripcion: 'Ver ventas', grupo: 'Ventas' },
+      { clave: 'ventas.editar', descripcion: 'Crear/Editar ventas', grupo: 'Ventas' },
+      { clave: 'ventas.eliminar', descripcion: 'Eliminar ventas', grupo: 'Ventas' },
+      { clave: 'picking.ver', descripcion: 'Ver picking de ventas', grupo: 'Ventas' },
+      { clave: 'picking.editar', descripcion: 'Registrar picking de ventas', grupo: 'Ventas' }
     ];
 
     for (const permiso of permisosBase) {
