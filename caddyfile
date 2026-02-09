@@ -1,7 +1,7 @@
-192.168.18.131:443 {
+192.168.18.73:443 {
   tls internal
   encode zstd gzip
-  root * "C:/Users/user/Documents/marco/NODE/PROYECTO KRATOS/frontend/build"
+  root * "G:/PROYECTO KRATOS/frontend/build"
 
   @static path /static/* /assets/*
   header @static Cache-Control "public, max-age=31536000, immutable"
@@ -11,7 +11,7 @@
   }
 
   handle /static/* {
-    root * "C:/Users/user/Documents/marco/NODE/PROYECTO KRATOS/frontend/build"
+    root * "G:/PROYECTO KRATOS/frontend/build"
     file_server browse
   }
 

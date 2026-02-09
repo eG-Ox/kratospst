@@ -1,6 +1,7 @@
 const pool = require('../../core/config/database');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { isEmail, isNonEmptyString, normalizeString } = require('../../shared/utils/validation');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tu_secreto_aqui';
 
@@ -16,6 +17,9 @@ exports.login = async (req, res) => {
 
   if (!identificador || !contraseña) {
     return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
+  }
+  if (identificador.includes('@') && !isEmail(identificador)) {
+    return res.status(400).json({ error: 'Email invalido' });
   }
 
   try {
@@ -86,7 +90,10 @@ exports.registro = async (req, res) => {
   const rolesValidos = ['admin', 'ventas', 'logistica'];
 
   if (!nombre || !email || !contraseña) {
-    return res.status(400).json({ error: 'Nombre, email y contraseña requeridos' });
+    return res.status(400).json({ error: 'Nombre, usuario y contraseña requeridos' });
+  }
+  if (!isNonEmptyString(contraseña) || contraseña.length < 8) {
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
   }
   if (rol && !rolesValidos.includes(rol)) {
     return res.status(400).json({ error: 'Rol no valido' });
@@ -99,7 +106,7 @@ exports.registro = async (req, res) => {
     const connection = await pool.getConnection();
     const [result] = await connection.execute(
       'INSERT INTO usuarios (nombre, email, telefono, contraseña, rol) VALUES (?, ?, ?, ?, ?)',
-      [nombre, email, telefono || null, contraseñaHasheada, rol]
+      [normalizeString(nombre), normalizeString(email), normalizeString(telefono) || null, contraseñaHasheada, rol]
     );
     connection.release();
 
@@ -117,7 +124,7 @@ exports.registro = async (req, res) => {
   } catch (error) {
     console.error('Error en registro:', error);
     if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ error: 'El email ya está registrado' });
+      return res.status(400).json({ error: 'El usuario ya está registrado' });
     }
     res.status(500).json({ error: 'Error al registrar usuario' });
   }
@@ -148,4 +155,3 @@ exports.obtenerUsuarioActual = async (req, res) => {
 exports.logout = (req, res) => {
   res.json({ mensaje: 'Logout exitoso' });
 };
-

@@ -7,19 +7,6 @@ import {
 } from '../../../core/services/apiServices';
 import '../styles/CotizacionesPage.css';
 
-const resolveApiBase = () => {
-  const envBase = process.env.REACT_APP_API_URL;
-  if (envBase && /^https?:\/\//i.test(envBase)) {
-    return envBase;
-  }
-  if (envBase && envBase.startsWith('/')) {
-    return `${window.location.origin}${envBase}`;
-  }
-  return 'http://localhost:5000/api';
-};
-
-const API_BASE = resolveApiBase();
-
 const emptyCliente = {
   tipo_cliente: 'natural',
   dni: '',
@@ -57,11 +44,65 @@ const CotizacionesPage = () => {
   const [items, setItems] = useState([]);
   const location = useLocation();
 
+  const cargarClientes = useCallback(async () => {
+    try {
+      const resp = await clientesService.getAll();
+      setClientes(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando clientes:', err);
+    }
+  }, []);
+
+  const cargarTipos = useCallback(async () => {
+    try {
+      const resp = await cotizacionesService.tiposPorAlmacen({ filtrar_stock: false });
+      setTipos(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando tipos:', err);
+    }
+  }, []);
+
+  const cargarKits = useCallback(async () => {
+    try {
+      const resp = await kitsService.listarActivos();
+      setKits(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando kits:', err);
+    }
+  }, []);
+
+  const cargarMarcas = useCallback(async () => {
+    try {
+      const resp = await cotizacionesService.filtrosCotizacion({ tipo: tipoId });
+      setMarcas(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando marcas:', err);
+    }
+  }, [tipoId]);
+
+  const cargarProductos = useCallback(async () => {
+    try {
+      const resp = await cotizacionesService.productosCotizacion({ tipo: tipoId, marca });
+      setProductos(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando productos:', err);
+    }
+  }, [tipoId, marca]);
+
+  const buscarProductos = useCallback(async (q) => {
+    try {
+      const resp = await cotizacionesService.buscarProductos({ q, limit: 20 });
+      setResultados(resp.data || []);
+    } catch (err) {
+      console.error('Error buscando productos:', err);
+    }
+  }, []);
+
   useEffect(() => {
     cargarClientes();
     cargarTipos();
     cargarKits();
-  }, []);
+  }, [cargarClientes, cargarTipos, cargarKits]);
 
   useEffect(() => {
     if (tipoId) {
@@ -72,7 +113,7 @@ const CotizacionesPage = () => {
       setProductos([]);
       setProductoId('');
     }
-  }, [tipoId]);
+  }, [tipoId, cargarMarcas]);
 
   useEffect(() => {
     if (marca) {
@@ -81,7 +122,7 @@ const CotizacionesPage = () => {
       setProductos([]);
       setProductoId('');
     }
-  }, [marca]);
+  }, [marca, cargarProductos]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -92,16 +133,7 @@ const CotizacionesPage = () => {
       buscarProductos(busqueda.trim());
     }, 350);
     return () => clearTimeout(timeout);
-  }, [busqueda]);
-
-  const cargarClientes = async () => {
-    try {
-      const resp = await clientesService.getAll();
-      setClientes(resp.data || []);
-    } catch (err) {
-      console.error('Error cargando clientes:', err);
-    }
-  };
+  }, [busqueda, buscarProductos]);
 
   const clientesFiltrados = useMemo(() => {
     const term = clienteSearch.trim().toLowerCase();
@@ -120,50 +152,6 @@ const CotizacionesPage = () => {
 
   const modoEdicion = Boolean(cotizacionEditId);
 
-  const cargarTipos = async () => {
-    try {
-      const resp = await cotizacionesService.tiposPorAlmacen({ filtrar_stock: false });
-      setTipos(resp.data || []);
-    } catch (err) {
-      console.error('Error cargando tipos:', err);
-    }
-  };
-
-  const cargarMarcas = async () => {
-    try {
-      const resp = await cotizacionesService.filtrosCotizacion({ tipo: tipoId });
-      setMarcas(resp.data || []);
-    } catch (err) {
-      console.error('Error cargando marcas:', err);
-    }
-  };
-
-  const cargarProductos = async () => {
-    try {
-      const resp = await cotizacionesService.productosCotizacion({ tipo: tipoId, marca });
-      setProductos(resp.data || []);
-    } catch (err) {
-      console.error('Error cargando productos:', err);
-    }
-  };
-
-  const buscarProductos = async (q) => {
-    try {
-      const resp = await cotizacionesService.buscarProductos({ q, limit: 20 });
-      setResultados(resp.data || []);
-    } catch (err) {
-      console.error('Error buscando productos:', err);
-    }
-  };
-
-  const cargarKits = async () => {
-    try {
-      const resp = await kitsService.listarActivos();
-      setKits(resp.data || []);
-    } catch (err) {
-      console.error('Error cargando kits:', err);
-    }
-  };
 
   const agregarProductoDesdeLista = async (id) => {
     try {
@@ -292,13 +280,17 @@ const CotizacionesPage = () => {
     return { subtotal, descuento, total };
   }, [items]);
 
-  const abrirPdfCotizacion = (id) => {
+  const abrirPdfCotizacion = async (id) => {
     if (!id) return;
-    const token = localStorage.getItem('token');
-    const url = token
-      ? `${API_BASE}/cotizaciones/pdf/${id}?token=${encodeURIComponent(token)}`
-      : `${API_BASE}/cotizaciones/pdf/${id}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+    try {
+      const resp = await cotizacionesService.pdf(id);
+      const url = window.URL.createObjectURL(new Blob([resp.data], { type: 'application/pdf' }));
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setTimeout(() => window.URL.revokeObjectURL(url), 2000);
+    } catch (err) {
+      console.error('Error abriendo PDF:', err);
+      setError('No se pudo abrir el PDF');
+    }
   };
 
   const resetCotizacion = () => {

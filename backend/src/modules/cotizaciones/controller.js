@@ -1,4 +1,5 @@
 const pool = require('../../core/config/database');
+const { isNonNegative } = require('../../shared/utils/validation');
 const { registrarHistorial } = require('../../shared/utils/historial');
 
 const escapeHtml = (value) => {
@@ -442,6 +443,21 @@ const normalizarProductos = (body) => {
   }));
 };
 
+
+const validarItemsCotizacion = (items) => {
+  for (const item of items || []) {
+    const cantidad = Number(item.cantidad || 0);
+    const precioUnitario = Number(item.precio_unitario || 0);
+    const precioRegular = Number(item.precio_regular || 0);
+    if (!Number.isFinite(cantidad) || cantidad <= 0) {
+      return 'Cantidad invalida en cotizacion';
+    }
+    if (!isNonNegative(precioUnitario) || !isNonNegative(precioRegular)) {
+      return 'Precio invalido en cotizacion';
+    }
+  }
+  return null;
+};
 const calcularTotales = (items) => {
   let subtotal = 0;
   let descuento = 0;

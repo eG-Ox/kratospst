@@ -1,5 +1,5 @@
 const pool = require('../../core/config/database');
-const XLSX = require('xlsx');
+const { ExcelJS, addSheetFromObjects, workbookToBuffer } = require('../../shared/utils/excel');
 const { registrarHistorial } = require('../../shared/utils/historial');
 
 const UBICACION_VALIDAS = new Set(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']);
@@ -508,10 +508,9 @@ exports.exportarInventario = async (req, res) => {
       diferencia: Number(row.diferencia || 0)
     }));
 
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventario');
-    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    const workbook = new ExcelJS.Workbook();
+    addSheetFromObjects(workbook, 'Inventario', data);
+    const buffer = await workbookToBuffer(workbook);
 
     res.setHeader(
       'Content-Type',

@@ -24,6 +24,7 @@ import PickingPage from './modules/picking/pages/PickingPage';
 // Componentes compartidos
 import Navbar from './shared/components/Navbar';
 import ProtectedRoute from './shared/components/ProtectedRoute';
+import { authService } from './core/services/apiServices';
 
 // Estilos
 import './shared/styles/variables.css';
@@ -35,6 +36,16 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [usuario, setUsuario] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [authMessage] = useState(() => {
+    const mensajes = [
+      'Verificando credenciales...',
+      'Buscando tu sesion en el almacen...',
+      'Acomodando el inventario digital...',
+      'Revisando permisos de bodega...',
+      'Poniendo casco y guantes virtuales...'
+    ];
+    return mensajes[Math.floor(Math.random() * mensajes.length)];
+  });
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -44,6 +55,23 @@ function App() {
         const usuarioParsed = JSON.parse(usuarioGuardado);
         setIsAuthenticated(true);
         setUsuario(usuarioParsed);
+        authService.obtenerUsuarioActual()
+          .then((resp) => {
+            if (resp?.data) {
+              setUsuario(resp.data);
+              localStorage.setItem('usuario', JSON.stringify(resp.data));
+            }
+          })
+          .catch((err) => {
+            if (err?.response?.status === 401) {
+              localStorage.removeItem('token');
+              localStorage.removeItem('usuario');
+              setIsAuthenticated(false);
+              setUsuario(null);
+            }
+          })
+          .finally(() => setAuthChecked(true));
+        return;
       } catch (error) {
         localStorage.removeItem('usuario');
       }
@@ -72,6 +100,18 @@ function App() {
     localStorage.removeItem('token');
     localStorage.removeItem('usuario');
   };
+
+  if (!authChecked) {
+    return (
+      <div className="auth-overlay">
+        <div className="auth-card">
+          <div className="auth-spinner" />
+          <h2>Un momento...</h2>
+          <p>{authMessage}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Router>

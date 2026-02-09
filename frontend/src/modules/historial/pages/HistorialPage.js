@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { historialService } from '../../../core/services/apiServices';
 import '../styles/HistorialPage.css';
 
@@ -16,11 +16,7 @@ const HistorialPage = () => {
   const [expandido, setExpandido] = useState(null);
   const [exportando, setExportando] = useState(false);
 
-  useEffect(() => {
-    cargarHistorial();
-  }, []);
-
-  const cargarHistorial = async () => {
+  const cargarHistorial = useCallback(async () => {
     try {
       setLoading(true);
       const resp = await historialService.listar(filtros);
@@ -32,7 +28,11 @@ const HistorialPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filtros]);
+
+  useEffect(() => {
+    cargarHistorial();
+  }, [cargarHistorial]);
 
   const handleBuscar = (e) => {
     e.preventDefault();

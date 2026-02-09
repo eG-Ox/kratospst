@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ventasService } from '../../../core/services/apiServices';
 import '../styles/VentasDetallePage.css';
 
@@ -8,7 +8,7 @@ const VentasDetallePage = () => {
   const [busqueda, setBusqueda] = useState('');
   const [tipo, setTipo] = useState('');
 
-  const cargarDetalle = async () => {
+  const cargarDetalle = useCallback(async () => {
     try {
       const params = {};
       if (ventaId) params.venta_id = ventaId;
@@ -19,11 +19,11 @@ const VentasDetallePage = () => {
     } catch (err) {
       console.error('Error cargando detalle:', err);
     }
-  };
+  }, [busqueda, tipo, ventaId]);
 
   useEffect(() => {
     cargarDetalle();
-  }, []);
+  }, [cargarDetalle]);
 
   const filas = useMemo(() => detalle || [], [detalle]);
 

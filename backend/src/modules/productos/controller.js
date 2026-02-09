@@ -1,8 +1,9 @@
 const pool = require('../../core/config/database');
 const path = require('path');
 const fs = require('fs');
-const XLSX = require('xlsx');
+const { ExcelJS, addSheetFromObjects, workbookToBuffer, readFirstSheetToJson } = require('../../shared/utils/excel');
 const { registrarHistorial } = require('../../shared/utils/historial');
+const { isNonEmptyString, isNonNegative, toNumber } = require('../../shared/utils/validation');
 const { tienePermiso } = require('../../core/middleware/auth');
 
 const normalizarHeader = (header) =>
@@ -175,6 +176,22 @@ exports.crearMaquina = async (req, res) => {
       error: 'Campos requeridos: código, tipo de máquina, marca, precio de compra y precio de venta' 
     });
   }
+  const precioCompraNum = toNumber(precio_compra);
+  const precioVentaNum = toNumber(precio_venta);
+  const precioMinimoNum = toNumber(precio_minimo) ?? 0;
+  const stockNum = toNumber(stock) ?? 0;
+  if (!isNonNegative(precioCompraNum) || !isNonNegative(precioVentaNum)) {
+    return res.status(400).json({ error: 'Precio de compra/venta invalido' });
+  }
+  if (!isNonNegative(stockNum)) {
+    return res.status(400).json({ error: 'Stock invalido' });
+  }
+  if (precioCompraNum > precioVentaNum) {
+    return res.status(400).json({ error: 'Precio de compra no puede ser mayor que precio de venta' });
+  }
+  if (precioMinimoNum > precioVentaNum) {
+    return res.status(400).json({ error: 'Precio minimo no puede ser mayor que precio de venta' });
+  }
 
   try {
     const ubicacionParse = normalizarUbicacion({
@@ -290,6 +307,26 @@ exports.actualizarMaquina = async (req, res) => {
     precio_minimo,
     ficha_web
   } = req.body;
+
+  if (!codigo || !tipo_maquina_id || !marca) {
+    return res.status(400).json({ error: 'Campos requeridos: código, tipo de máquina, marca' });
+  }
+  const precioCompraNum = toNumber(precio_compra);
+  const precioVentaNum = toNumber(precio_venta);
+  const precioMinimoNum = toNumber(precio_minimo) ?? 0;
+  const stockNum = toNumber(stock) ?? 0;
+  if (!isNonNegative(precioCompraNum) || !isNonNegative(precioVentaNum)) {
+    return res.status(400).json({ error: 'Precio de compra/venta invalido' });
+  }
+  if (!isNonNegative(stockNum)) {
+    return res.status(400).json({ error: 'Stock invalido' });
+  }
+  if (precioCompraNum > precioVentaNum) {
+    return res.status(400).json({ error: 'Precio de compra no puede ser mayor que precio de venta' });
+  }
+  if (precioMinimoNum > precioVentaNum) {
+    return res.status(400).json({ error: 'Precio minimo no puede ser mayor que precio de venta' });
+  }
 
   try {
     const connection = await pool.getConnection();
@@ -426,8 +463,8 @@ exports.descargarPlantilla = async (req, res) => {
         precio_minimo: 120
       }
     ];
-    const worksheet = XLSX.utils.json_to_sheet(data, {
-      header: [
+    const workbook = new ExcelJS.Workbook();
+    const headers = [
         'codigo',
         'tipo_maquina',
         'marca',
@@ -437,11 +474,9 @@ exports.descargarPlantilla = async (req, res) => {
         'precio_compra',
         'precio_venta',
         'precio_minimo'
-      ]
-    });
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Plantilla');
-    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+      ];
+    addSheetFromObjects(workbook, 'Plantilla', data, headers);
+    const buffer = await workbookToBuffer(workbook);
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -481,10 +516,9 @@ exports.exportarExcel = async (req, res) => {
       precio_venta: row.precio_venta,
       precio_minimo: row.precio_minimo
     }));
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Productos');
-    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    const workbook = new ExcelJS.Workbook();
+    addSheetFromObjects(workbook, 'Productos', data);
+    const buffer = await workbookToBuffer(workbook);
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -522,10 +556,9 @@ exports.exportarStockMinimo = async (req, res) => {
       stock: row.stock,
       precio_venta: row.precio_venta
     }));
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Stock_minimo');
-    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    const workbook = new ExcelJS.Workbook();
+    addSheetFromObjects(workbook, 'Stock_minimo', data);
+    const buffer = await workbookToBuffer(workbook);
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -545,10 +578,10 @@ exports.importarExcel = async (req, res) => {
 
   let connection;
   try {
-    const workbook = XLSX.readFile(req.file.path);
+    const workbook = readFile(req.file.path);
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    const rawRows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+    const rawRows = utils.sheet_to_json(worksheet, { defval: '' });
 
     connection = await pool.getConnection();
     const [tipos] = await connection.execute('SELECT id, nombre FROM tipos_maquinas');

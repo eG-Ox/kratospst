@@ -1,11 +1,17 @@
 const pool = require('../../core/config/database');
-const XLSX = require('xlsx');
+const { ExcelJS, addSheetFromObjects, workbookToBuffer } = require('../../shared/utils/excel');
+const { isNonEmptyString, isNonNegative, isPositiveInt, validateDocumento, toNumber } = require('../../shared/utils/validation');
 
 const formatDate = (value) => {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString().slice(0, 10);
+};
+
+const parsePositiveInt = (value, fallback) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
 const mapVentaRow = (row) => ({
@@ -74,6 +80,132 @@ const parseArray = (value) => {
     }
   }
   return [];
+};
+
+
+const validarDetalleItems = (items, label) => {
+  for (const item of items || []) {
+    const cantidad = Number(item.cantidad || 0);
+    if (!Number.isFinite(cantidad) || cantidad <= 0) {
+      return `${label}: cantidad invalida`;
+    }
+    const precioCompra = toNumber(item.precioCompra ?? item.precio_compra ?? 0) ?? 0;
+    const precioVenta = toNumber(item.precioVenta ?? item.precio_venta ?? 0) ?? 0;
+    if (!isNonNegative(precioCompra) || !isNonNegative(precioVenta)) {
+      return `${label}: precios invalidos`;
+    }
+    if (item.codigo && !isNonEmptyString(String(item.codigo))) {
+      return `${label}: codigo invalido`;
+    }
+    if (item.descripcion && !isNonEmptyString(String(item.descripcion))) {
+      return `${label}: descripcion invalida`;
+    }
+  }
+  return null;
+};
+const normalizarTexto = (value) => String(value || '').trim();
+
+const obtenerTipoRequerimientoId = async (connection) => {
+  const nombre = 'REQUERIMIENTO';
+  const [rows] = await connection.execute(
+    'SELECT id FROM tipos_maquinas WHERE nombre = ? LIMIT 1',
+    [nombre]
+  );
+  if (rows.length) {
+    return rows[0].id;
+  }
+  try {
+    const [result] = await connection.execute(
+      'INSERT INTO tipos_maquinas (nombre, descripcion) VALUES (?, ?)',
+      [nombre, 'Generado automaticamente para requerimientos de venta']
+    );
+    return result.insertId;
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') {
+      const [retry] = await connection.execute(
+        'SELECT id FROM tipos_maquinas WHERE nombre = ? LIMIT 1',
+        [nombre]
+      );
+      if (retry.length) {
+        return retry[0].id;
+      }
+    }
+    throw error;
+  }
+};
+
+const generarCodigoRequerimiento = async (connection) => {
+  const [rows] = await connection.execute(
+    "SELECT MAX(CAST(SUBSTRING(codigo, 4) AS UNSIGNED)) AS max_codigo FROM maquinas WHERE codigo REGEXP '^REQ[0-9]+'"
+  );
+  const next = (rows?.[0]?.max_codigo || 0) + 1;
+  return `REQ${String(next).padStart(4, '0')}`;
+};
+
+const buscarProductoPorCodigo = async (connection, codigo) => {
+  const [rows] = await connection.execute(
+    'SELECT id, codigo, marca FROM maquinas WHERE codigo = ? LIMIT 1',
+    [codigo]
+  );
+  return rows[0] || null;
+};
+
+const crearProductoDesdeRequerimiento = async (connection, item) => {
+  const tipoId = await obtenerTipoRequerimientoId(connection);
+  const codigo = await generarCodigoRequerimiento(connection);
+  const descripcion = normalizarTexto(item.descripcion) || 'Requerimiento';
+  const marca = normalizarTexto(item.marca) || 'REQUERIMIENTO';
+  const precioCompra = Number(item.precioCompra || item.precio_compra || 0);
+  const precioVenta = Number(item.precioVenta || item.precio_venta || 0);
+  const precioMinimo = Number(item.precioMinimo || item.precio_minimo || precioVenta || 0);
+
+  const [result] = await connection.execute(
+    `INSERT INTO maquinas
+      (codigo, tipo_maquina_id, marca, descripcion, ubicacion_letra, ubicacion_numero, stock, precio_compra, precio_venta, precio_minimo)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      codigo,
+      tipoId,
+      marca,
+      descripcion,
+      null,
+      null,
+      0,
+      precioCompra,
+      precioVenta,
+      precioMinimo
+    ]
+  );
+
+  return { id: result.insertId, codigo, marca };
+};
+
+const asegurarProductoRequerimiento = async (connection, item) => {
+  const codigo = normalizarTexto(item.codigo);
+  if (item.producto_id) {
+    return item;
+  }
+  if (codigo) {
+    const existente = await buscarProductoPorCodigo(connection, codigo);
+    if (existente) {
+      return { ...item, codigo: existente.codigo, marca: existente.marca || item.marca };
+    }
+  }
+  const creado = await crearProductoDesdeRequerimiento(connection, item);
+  return { ...item, codigo: creado.codigo, marca: creado.marca };
+};
+
+const prepararRequerimientos = async (connection, items) => {
+  const result = [];
+  for (const item of items || []) {
+    if (!normalizarTexto(item.descripcion)) {
+      result.push(item);
+      continue;
+    }
+    const actualizado = await asegurarProductoRequerimiento(connection, item);
+    result.push(actualizado);
+  }
+  return result;
 };
 
 exports.listarVentas = async (req, res) => {
@@ -200,74 +332,100 @@ exports.crearVenta = async (req, res) => {
     const regalosList = parseArray(regalos);
     const regalosReqList = parseArray(regaloRequerimientos);
 
+    if (!validateDocumento(documentoTipo, documento)) {
+      return res.status(400).json({ error: 'Documento invalido' });
+    }
+    if (fechaVenta && Number.isNaN(Date.parse(fechaVenta))) {
+      return res.status(400).json({ error: 'Fecha de venta invalida' });
+    }
+    if (productosList.length + requerimientosList.length + regalosList.length + regalosReqList.length === 0) {
+      return res.status(400).json({ error: 'Debe agregar productos o requerimientos a la venta' });
+    }
+    const errProd = validarDetalleItems(productosList, 'Productos');
+    const errReq = validarDetalleItems(requerimientosList, 'Requerimientos');
+    const errReg = validarDetalleItems(regalosList, 'Regalos');
+    const errRegReq = validarDetalleItems(regalosReqList, 'Regalos requerimiento');
+    const err = errProd || errReq || errReg || errRegReq;
+    if (err) {
+      return res.status(400).json({ error: err });
+    }
+
     const estadoPedido = productosList.length > 0 ? 'PICKING' : 'PEDIDO_LISTO';
     const connection = await pool.getConnection();
     await connection.beginTransaction();
-
-    const [result] = await connection.execute(
-      `INSERT INTO ventas (
-        usuario_id, documento_tipo, documento, cliente_nombre, cliente_telefono,
-        agencia, agencia_otro, destino, fecha_venta, estado_envio, estado_pedido,
-        fecha_despacho, fecha_cancelacion, adelanto, p_venta,
-        rastreo_estado, ticket, guia, retiro, notas
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        usuarioId,
-        documentoTipo,
-        documento,
-        clienteNombre,
-        clienteTelefono,
-        agencia,
-        agenciaOtro,
-        destino,
-        fechaVenta,
-        estadoEnvio,
-        estadoPedido,
-        fechaDespacho || null,
-        fechaCancelacion || null,
-        Number(adelanto || 0),
-        Number(pVenta || 0),
-        rastreoEstado,
-        ticket,
-        guia,
-        retiro,
-        notas
-      ]
-    );
-
-    const ventaId = result.insertId;
-    const detalleRows = [
-      ...buildDetalleRows(ventaId, productosList, 'producto'),
-      ...buildDetalleRows(ventaId, requerimientosList, 'requerimiento'),
-      ...buildDetalleRows(ventaId, regalosList, 'regalo'),
-      ...buildDetalleRows(ventaId, regalosReqList, 'regalo_requerimiento')
-    ];
-
-    if (detalleRows.length) {
-      const values = detalleRows.map((row) => [
-        row.venta_id,
-        row.tipo,
-        row.codigo,
-        row.descripcion,
-        row.marca,
-        row.cantidad,
-        row.cantidad_picked || 0,
-        row.precio_venta,
-        row.precio_compra,
-        row.proveedor,
-        row.stock
-      ]);
-      await connection.query(
-        `INSERT INTO ventas_detalle
-        (venta_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked, precio_venta, precio_compra, proveedor, stock)
-        VALUES ?`,
-        [values]
+    try {
+      const [result] = await connection.execute(
+        `INSERT INTO ventas
+          (usuario_id, documento_tipo, documento, cliente_nombre, cliente_telefono, agencia, agencia_otro, destino,
+           fecha_venta, estado_envio, estado_pedido, fecha_despacho, fecha_cancelacion, adelanto, p_venta,
+           rastreo_estado, ticket, guia, retiro, notas)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          usuarioId,
+          documentoTipo,
+          documento,
+          clienteNombre,
+          clienteTelefono,
+          agencia,
+          agenciaOtro,
+          destino,
+          fechaVenta,
+          estadoEnvio,
+          estadoPedido,
+          fechaDespacho || null,
+          fechaCancelacion || null,
+          Number(adelanto || 0),
+          Number(pVenta || 0),
+          rastreoEstado,
+          ticket,
+          guia,
+          retiro,
+          notas
+        ]
       );
-    }
 
-    await connection.commit();
-    connection.release();
-    res.json({ id: ventaId });
+      const ventaId = result.insertId;
+      const requerimientosPreparados = await prepararRequerimientos(connection, requerimientosList);
+      const regalosPreparados = await prepararRequerimientos(connection, regalosList);
+      const regalosReqPreparados = await prepararRequerimientos(connection, regalosReqList);
+
+      const detalleRows = [
+        ...buildDetalleRows(ventaId, productosList, 'producto'),
+        ...buildDetalleRows(ventaId, requerimientosPreparados, 'requerimiento'),
+        ...buildDetalleRows(ventaId, regalosPreparados, 'regalo'),
+        ...buildDetalleRows(ventaId, regalosReqPreparados, 'regalo_requerimiento')
+      ];
+
+      if (detalleRows.length) {
+        const values = detalleRows.map((row) => [
+          row.venta_id,
+          row.tipo,
+          row.codigo,
+          row.descripcion,
+          row.marca,
+          row.cantidad,
+          row.cantidad_picked || 0,
+          row.precio_venta,
+          row.precio_compra,
+          row.proveedor,
+          row.stock
+        ]);
+        await connection.query(
+          `INSERT INTO ventas_detalle
+          (venta_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked, precio_venta, precio_compra, proveedor, stock)
+          VALUES ?`,
+          [values]
+        );
+      }
+
+      await connection.commit();
+      res.json({ ok: true, id: ventaId });
+    } catch (innerError) {
+      await connection.rollback();
+      throw innerError;
+    } finally {
+      connection.release();
+    }
   } catch (error) {
     console.error('Error creando venta:', error);
     res.status(500).json({ error: 'Error al crear venta' });
@@ -305,75 +463,102 @@ exports.editarVenta = async (req, res) => {
     const regalosList = parseArray(regalos);
     const regalosReqList = parseArray(regaloRequerimientos);
 
+    if (!validateDocumento(documentoTipo, documento)) {
+      return res.status(400).json({ error: 'Documento invalido' });
+    }
+    if (fechaVenta && Number.isNaN(Date.parse(fechaVenta))) {
+      return res.status(400).json({ error: 'Fecha de venta invalida' });
+    }
+    if (productosList.length + requerimientosList.length + regalosList.length + regalosReqList.length === 0) {
+      return res.status(400).json({ error: 'Debe agregar productos o requerimientos a la venta' });
+    }
+    const errProd = validarDetalleItems(productosList, 'Productos');
+    const errReq = validarDetalleItems(requerimientosList, 'Requerimientos');
+    const errReg = validarDetalleItems(regalosList, 'Regalos');
+    const errRegReq = validarDetalleItems(regalosReqList, 'Regalos requerimiento');
+    const err = errProd || errReq || errReg || errRegReq;
+    if (err) {
+      return res.status(400).json({ error: err });
+    }
+
     const estadoPedido = productosList.length > 0 ? 'PICKING' : 'PEDIDO_LISTO';
     const connection = await pool.getConnection();
     await connection.beginTransaction();
-
-    await connection.execute(
-      `UPDATE ventas SET
-        documento_tipo = ?, documento = ?, cliente_nombre = ?, cliente_telefono = ?,
-        agencia = ?, agencia_otro = ?, destino = ?, fecha_venta = ?, estado_envio = ?,
-        estado_pedido = ?, fecha_despacho = ?, fecha_cancelacion = ?, adelanto = ?, p_venta = ?,
-        rastreo_estado = ?, ticket = ?, guia = ?, retiro = ?, notas = ?
-       WHERE id = ?`,
-      [
-        documentoTipo,
-        documento,
-        clienteNombre,
-        clienteTelefono,
-        agencia,
-        agenciaOtro,
-        destino,
-        fechaVenta,
-        estadoEnvio,
-        estadoPedido,
-        fechaDespacho || null,
-        fechaCancelacion || null,
-        Number(adelanto || 0),
-        Number(pVenta || 0),
-        rastreoEstado,
-        ticket,
-        guia,
-        retiro,
-        notas,
-        req.params.id
-      ]
-    );
-
-    await connection.execute('DELETE FROM ventas_detalle WHERE venta_id = ?', [req.params.id]);
-
-    const detalleRows = [
-      ...buildDetalleRows(req.params.id, productosList, 'producto'),
-      ...buildDetalleRows(req.params.id, requerimientosList, 'requerimiento'),
-      ...buildDetalleRows(req.params.id, regalosList, 'regalo'),
-      ...buildDetalleRows(req.params.id, regalosReqList, 'regalo_requerimiento')
-    ];
-
-    if (detalleRows.length) {
-      const values = detalleRows.map((row) => [
-        row.venta_id,
-        row.tipo,
-        row.codigo,
-        row.descripcion,
-        row.marca,
-        row.cantidad,
-        row.cantidad_picked || 0,
-        row.precio_venta,
-        row.precio_compra,
-        row.proveedor,
-        row.stock
-      ]);
-      await connection.query(
-        `INSERT INTO ventas_detalle
-        (venta_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked, precio_venta, precio_compra, proveedor, stock)
-        VALUES ?`,
-        [values]
+    try {
+      await connection.execute(
+        `UPDATE ventas SET
+          documento_tipo = ?, documento = ?, cliente_nombre = ?, cliente_telefono = ?,
+          agencia = ?, agencia_otro = ?, destino = ?, fecha_venta = ?, estado_envio = ?,
+          estado_pedido = ?, fecha_despacho = ?, fecha_cancelacion = ?, adelanto = ?, p_venta = ?,
+          rastreo_estado = ?, ticket = ?, guia = ?, retiro = ?, notas = ?
+         WHERE id = ?`,
+        [
+          documentoTipo,
+          documento,
+          clienteNombre,
+          clienteTelefono,
+          agencia,
+          agenciaOtro,
+          destino,
+          fechaVenta,
+          estadoEnvio,
+          estadoPedido,
+          fechaDespacho || null,
+          fechaCancelacion || null,
+          Number(adelanto || 0),
+          Number(pVenta || 0),
+          rastreoEstado,
+          ticket,
+          guia,
+          retiro,
+          notas,
+          req.params.id
+        ]
       );
-    }
 
-    await connection.commit();
-    connection.release();
-    res.json({ ok: true });
+      const requerimientosPreparados = await prepararRequerimientos(connection, requerimientosList);
+      const regalosPreparados = await prepararRequerimientos(connection, regalosList);
+      const regalosReqPreparados = await prepararRequerimientos(connection, regalosReqList);
+
+      await connection.execute('DELETE FROM ventas_detalle WHERE venta_id = ?', [req.params.id]);
+
+      const detalleRows = [
+        ...buildDetalleRows(req.params.id, productosList, 'producto'),
+        ...buildDetalleRows(req.params.id, requerimientosPreparados, 'requerimiento'),
+        ...buildDetalleRows(req.params.id, regalosPreparados, 'regalo'),
+        ...buildDetalleRows(req.params.id, regalosReqPreparados, 'regalo_requerimiento')
+      ];
+
+      if (detalleRows.length) {
+        const values = detalleRows.map((row) => [
+          row.venta_id,
+          row.tipo,
+          row.codigo,
+          row.descripcion,
+          row.marca,
+          row.cantidad,
+          row.cantidad_picked || 0,
+          row.precio_venta,
+          row.precio_compra,
+          row.proveedor,
+          row.stock
+        ]);
+        await connection.query(
+          `INSERT INTO ventas_detalle
+          (venta_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked, precio_venta, precio_compra, proveedor, stock)
+          VALUES ?`,
+          [values]
+        );
+      }
+
+      await connection.commit();
+      res.json({ ok: true });
+    } catch (innerError) {
+      await connection.rollback();
+      throw innerError;
+    } finally {
+      connection.release();
+    }
   } catch (error) {
     console.error('Error editando venta:', error);
     res.status(500).json({ error: 'Error al editar venta' });
@@ -610,14 +795,15 @@ exports.exportarVentas = async (req, res) => {
       query += ' AND v.fecha_venta <= ?';
       params.push(fecha_fin);
     }
-    query += ' ORDER BY v.created_at DESC';
+    const limiteValue = parsePositiveInt(limite, 5000);
+    const safeLimit = Math.min(limiteValue, 20000);
+    query += ` ORDER BY v.created_at DESC LIMIT ${safeLimit}`;
     const [ventasRows] = await connection.execute(query, params);
     if (ventasRows.length === 0) {
       connection.release();
-      const workbook = XLSX.utils.book_new();
-      const sheet = XLSX.utils.json_to_sheet([]);
-      XLSX.utils.book_append_sheet(workbook, sheet, 'Ventas');
-      const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+      const workbook = new ExcelJS.Workbook();
+      addSheetFromObjects(workbook, 'Ventas', []);
+      const buffer = await workbookToBuffer(workbook);
       res.setHeader(
         'Content-Type',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -666,10 +852,10 @@ exports.exportarVentas = async (req, res) => {
       proveedor: row.proveedor || ''
     }));
 
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(ventasData), 'Ventas');
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detalleData), 'Detalle');
-    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    const workbook = new ExcelJS.Workbook();
+    addSheetFromObjects(workbook, 'Ventas', ventasData);
+    addSheetFromObjects(workbook, 'Detalle', detalleData);
+    const buffer = await workbookToBuffer(workbook);
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

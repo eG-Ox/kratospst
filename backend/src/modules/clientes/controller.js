@@ -1,10 +1,17 @@
 const https = require('https');
 const pool = require('../../core/config/database');
 const { registrarHistorial } = require('../../shared/utils/historial');
+const { isEmail, normalizeString } = require('../../shared/utils/validation');
 
 const DNI_REGEX = /^\d{8}$/;
 const RUC_REGEX = /^\d{11}$/;
 const CE_REGEX = /^\d{9}$/;
+const PHONE_REGEX = /^[0-9+\s-]{6,20}$/;
+
+const parsePositiveInt = (value, fallback) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
 
 const fetchJson = (url) =>
   new Promise((resolve, reject) => {
@@ -71,7 +78,11 @@ exports.getClientes = async (req, res) => {
       params.push(term, term, term);
     }
 
-    query += ' ORDER BY fecha_creacion DESC';
+    const limiteValue = parsePositiveInt(req.query.limite, 5000);
+    const paginaValue = parsePositiveInt(req.query.pagina, 1);
+    const safeLimit = Math.min(limiteValue, 20000);
+    const offset = (paginaValue - 1) * safeLimit;
+    query += ` ORDER BY fecha_creacion DESC LIMIT ${offset}, ${safeLimit}`;
     const [rows] = await connection.execute(query, params);
     connection.release();
 
@@ -147,6 +158,13 @@ exports.crearCliente = async (req, res) => {
     }
   }
 
+
+  if (correo && !isEmail(String(correo))) {
+    return res.status(400).json({ error: 'Correo invalido' });
+  }
+  if (telefono && !PHONE_REGEX.test(String(telefono))) {
+    return res.status(400).json({ error: 'Telefono invalido' });
+  }
   try {
     const connection = await pool.getConnection();
     const [result] = await connection.execute(
@@ -156,14 +174,14 @@ exports.crearCliente = async (req, res) => {
       [
         req.usuario?.id || null,
         tipo_cliente,
-        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? dni : null,
-        tipo_cliente === 'juridico' ? ruc : null,
-        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? nombre : null,
-        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? apellido : null,
-        tipo_cliente === 'juridico' ? razon_social : null,
-        direccion || null,
-        telefono || null,
-        correo || null
+        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? normalizeString(dni) : null,
+        tipo_cliente === 'juridico' ? normalizeString(ruc) : null,
+        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? normalizeString(nombre) : null,
+        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? normalizeString(apellido) : null,
+        tipo_cliente === 'juridico' ? normalizeString(razon_social) : null,
+        normalizeString(direccion) || null,
+        normalizeString(telefono) || null,
+        normalizeString(correo) || null
       ]
     );
     await registrarHistorial(connection, {
@@ -277,14 +295,14 @@ exports.actualizarCliente = async (req, res) => {
        WHERE id = ?`,
       [
         tipo_cliente,
-        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? dni : null,
-        tipo_cliente === 'juridico' ? ruc : null,
-        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? nombre : null,
-        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? apellido : null,
-        tipo_cliente === 'juridico' ? razon_social : null,
-        direccion || null,
-        telefono || null,
-        correo || null,
+        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? normalizeString(dni) : null,
+        tipo_cliente === 'juridico' ? normalizeString(ruc) : null,
+        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? normalizeString(nombre) : null,
+        tipo_cliente === 'natural' || tipo_cliente === 'ce' ? normalizeString(apellido) : null,
+        tipo_cliente === 'juridico' ? normalizeString(razon_social) : null,
+        normalizeString(direccion) || null,
+        normalizeString(telefono) || null,
+        normalizeString(correo) || null,
         req.params.id
       ]
     );

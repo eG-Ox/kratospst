@@ -3,19 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { clientesService, cotizacionesService } from '../../../core/services/apiServices';
 import '../styles/HistorialCotizacionesPage.css';
 
-const resolveApiBase = () => {
-  const envBase = process.env.REACT_APP_API_URL;
-  if (envBase && /^https?:\/\//i.test(envBase)) {
-    return envBase;
-  }
-  if (envBase && envBase.startsWith('/')) {
-    return `${window.location.origin}${envBase}`;
-  }
-  return 'http://localhost:5000/api';
-};
-
-const API_BASE = resolveApiBase();
-
 const HistorialCotizacionesPage = () => {
   const [historial, setHistorial] = useState([]);
   const [clientes, setClientes] = useState([]);
@@ -92,13 +79,17 @@ const HistorialCotizacionesPage = () => {
     });
   }, [historial, search]);
 
-  const abrirPdfCotizacion = (id) => {
+  const abrirPdfCotizacion = async (id) => {
     if (!id) return;
-    const token = localStorage.getItem('token');
-    const url = token
-      ? `${API_BASE}/cotizaciones/pdf/${id}?token=${encodeURIComponent(token)}`
-      : `${API_BASE}/cotizaciones/pdf/${id}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+    try {
+      const resp = await cotizacionesService.pdf(id);
+      const url = window.URL.createObjectURL(new Blob([resp.data], { type: 'application/pdf' }));
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setTimeout(() => window.URL.revokeObjectURL(url), 2000);
+    } catch (err) {
+      console.error('Error abriendo PDF:', err);
+      setError('No se pudo abrir el PDF');
+    }
   };
 
   const editarCotizacion = (id) => {

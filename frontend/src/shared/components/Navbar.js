@@ -63,10 +63,11 @@ const Navbar = ({ usuario, onLogout }) => {
     <>
       <nav className="navbar">
         <button
-          className="menu-toggle"
+          className={`menu-toggle ${menuAbierto ? 'is-open' : ''}`}
           type="button"
           onClick={() => setMenuAbierto(true)}
           aria-label="Abrir menu"
+          aria-expanded={menuAbierto}
         >
           <span />
           <span />
@@ -92,8 +93,8 @@ const Navbar = ({ usuario, onLogout }) => {
       <div className={`side-menu ${menuAbierto ? 'open' : ''}`} onClick={(event) => event.stopPropagation()}>
         <div className="side-menu__header">
           <span>Menú</span>
-          <button type="button" className="btn-icon" onClick={() => setMenuAbierto(false)}>
-            X
+          <button type="button" className="btn-icon" onClick={() => setMenuAbierto(false)} aria-label="Cerrar menu">
+            +
           </button>
         </div>
         <div className="side-menu__links">

@@ -229,27 +229,6 @@ const ProductosPage = () => {
     }
   };
 
-  const handleEditarTipo = (tipo) => {
-    setTipoForm({
-      nombre: tipo.nombre || '',
-      descripcion: tipo.descripcion || ''
-    });
-    setEditandoTipo(tipo);
-    setMostrarModalTipo(true);
-  };
-
-  const handleEliminarTipo = async (id) => {
-    if (window.confirm('¿Estás seguro de que deseas eliminar este tipo de máquina?')) {
-      try {
-        await tiposMaquinasService.delete(id);
-        await cargarDatos();
-      } catch (error) {
-        console.error('Error eliminando tipo de máquina:', error);
-        setError('Error al eliminar tipo de máquina');
-      }
-    }
-  };
-
   const abrirModalProducto = () => {
     resetFormulario();
     setMostrarModalProducto(true);

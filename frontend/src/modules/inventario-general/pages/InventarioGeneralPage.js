@@ -1,10 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import {
   inventarioGeneralService,
   productosService
 } from '../../../core/services/apiServices';
-import { parseQRPayload } from '../../../shared/utils/qr';
 import '../styles/InventarioGeneralPage.css';
 
 const InventarioGeneralPage = () => {
@@ -16,7 +15,6 @@ const InventarioGeneralPage = () => {
   const [historial, setHistorial] = useState([]);
   const [tab, setTab] = useState('conteo');
   const [codigo, setCodigo] = useState('');
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [cameraActive, setCameraActive] = useState(false);
@@ -59,27 +57,24 @@ const InventarioGeneralPage = () => {
     [historial]
   );
 
-  const cargarProductos = async () => {
+  const cargarProductos = useCallback(async () => {
     try {
-      setLoading(true);
       const resp = await productosService.getAll();
       setProductos(resp.data || []);
     } catch (err) {
       console.error('Error cargando productos:', err);
       setError('Error al cargar productos');
-    } finally {
-      setLoading(false);
     }
-  };
+  }, []);
 
-  const cargarHistorial = async () => {
+  const cargarHistorial = useCallback(async () => {
     try {
       const resp = await inventarioGeneralService.listar();
       setHistorial(resp.data || []);
     } catch (err) {
       console.error('Error cargando historial:', err);
     }
-  };
+  }, []);
 
   const abrirInicioModal = async () => {
     await cargarHistorial();
@@ -336,57 +331,60 @@ const InventarioGeneralPage = () => {
     setCameraActive(true);
   };
 
-  const iniciarStream = async () => {
-    if (!cameraActive) return;
-    try {
-      if (!window.isSecureContext) {
-        setError('Para usar la camara en celular necesitas HTTPS.');
-        setCameraActive(false);
-        return;
-      }
-      if (!videoRef.current) {
-        setTimeout(iniciarStream, 120);
-        return;
-      }
-      if (!zxingRef.current) {
-        zxingRef.current = new BrowserMultiFormatReader();
-      }
-      if (!streamRef.current) {
-        streamRef.current = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: 'environment',
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            focusMode: 'continuous'
-          },
-          audio: false
-        });
-        try {
-          const [track] = streamRef.current.getVideoTracks();
-          const caps = track?.getCapabilities?.();
-          if (caps?.torch) {
-            await track.applyConstraints({ advanced: [{ torch: true }] });
-          }
-        } catch (err) {
-          // torch/advanced constraints no disponibles
-        }
-      }
-      if (videoRef.current && streamRef.current) {
-        videoRef.current.srcObject = streamRef.current;
-        const playPromise = videoRef.current.play();
-        if (playPromise && typeof playPromise.catch === 'function') {
-          playPromise.catch(() => {});
-        }
-        setTimeout(() => iniciarEscaneo(), 250);
-      }
-    } catch (err) {
-      console.error('Error camara:', err);
-      setError('No se pudo acceder a la camara');
-      setCameraActive(false);
+  const parsearQR = useCallback((textoQR) => {
+    const raw = String(textoQR || '').trim();
+    if (!raw) {
+      setError('QR invalido');
+      return null;
     }
-  };
+    const tokens = raw
+      .replace(/\r/g, '')
+      .split(/[\n,;]+/g)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const codigo = tokens[0] || raw;
+    return { codigo, partial: true };
+  }, []);
 
-  const iniciarEscaneo = () => {
+  const parsearZonaQR = useCallback((textoQR) => {
+    const raw = String(textoQR || '').trim().toUpperCase();
+    if (!raw) {
+      return { error: 'Zona vacia' };
+    }
+    const cleaned = raw.startsWith('ZONA:') ? raw.replace('ZONA:', '').trim() : raw;
+    const match = cleaned.match(/^([A-H])\s*(\d+)$/);
+    if (!match) {
+      return { error: 'Zona invalida. Usa ZONA:A1 o A1' };
+    }
+    const numero = Number(match[2]);
+    if (!Number.isInteger(numero) || (numero !== 1 && numero !== 2)) {
+      return { error: 'Subzona invalida. Solo se permite 1 o 2' };
+    }
+    return { letra: match[1], numero };
+  }, []);
+
+  const detenerStream = useCallback(() => {
+    scanActivoRef.current = false;
+    setScanActivo(false);
+    if (zxingControlRef.current && typeof zxingControlRef.current.stop === 'function') {
+      zxingControlRef.current.stop();
+    }
+    zxingControlRef.current = null;
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
+
+  const detenerCamara = useCallback(() => {
+    detenerStream();
+    setCameraActive(false);
+  }, [detenerStream]);
+
+  const iniciarEscaneo = useCallback(() => {
     if (scanActivoRef.current || !videoRef.current) {
       return;
     }
@@ -437,28 +435,57 @@ const InventarioGeneralPage = () => {
       }
     );
     zxingControlRef.current = control;
-  };
+  }, [agregarCodigo, detenerCamara, parsearQR, parsearZonaQR, scanMode]);
 
-  const detenerStream = () => {
-    scanActivoRef.current = false;
-    setScanActivo(false);
-    if (zxingControlRef.current && typeof zxingControlRef.current.stop === 'function') {
-      zxingControlRef.current.stop();
+  const iniciarStream = useCallback(async () => {
+    if (!cameraActive) return;
+    try {
+      if (!window.isSecureContext) {
+        setError('Para usar la camara en celular necesitas HTTPS.');
+        setCameraActive(false);
+        return;
+      }
+      if (!videoRef.current) {
+        setTimeout(iniciarStream, 120);
+        return;
+      }
+      if (!zxingRef.current) {
+        zxingRef.current = new BrowserMultiFormatReader();
+      }
+      if (!streamRef.current) {
+        streamRef.current = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            focusMode: 'continuous'
+          },
+          audio: false
+        });
+        try {
+          const [track] = streamRef.current.getVideoTracks();
+          const caps = track?.getCapabilities?.();
+          if (caps?.torch) {
+            await track.applyConstraints({ advanced: [{ torch: true }] });
+          }
+        } catch (err) {
+          // torch/advanced constraints no disponibles
+        }
+      }
+      if (videoRef.current && streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+        const playPromise = videoRef.current.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(() => {});
+        }
+        setTimeout(() => iniciarEscaneo(), 250);
+      }
+    } catch (err) {
+      console.error('Error camara:', err);
+      setError('No se pudo acceder a la camara');
+      setCameraActive(false);
     }
-    zxingControlRef.current = null;
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-  };
-
-  const detenerCamara = () => {
-    detenerStream();
-    setCameraActive(false);
-  };
+  }, [cameraActive, iniciarEscaneo]);
 
   useEffect(() => {
     cargarProductos();
@@ -466,7 +493,7 @@ const InventarioGeneralPage = () => {
     return () => {
       detenerStream();
     };
-  }, []);
+  }, [cargarProductos, cargarHistorial, detenerStream]);
 
   useEffect(() => {
     if (cameraActive) {
@@ -474,12 +501,7 @@ const InventarioGeneralPage = () => {
     } else {
       detenerStream();
     }
-  }, [cameraActive]);
-
-  const productoActual = useMemo(
-    () => productos.find((prod) => prod.codigo === codigo),
-    [productos, codigo]
-  );
+  }, [cameraActive, iniciarStream, detenerStream]);
 
   const formatearUbicacion = (producto) => {
     if (!producto) return '-';
@@ -488,37 +510,6 @@ const InventarioGeneralPage = () => {
     return letra || numero ? `${letra}${numero}` : '-';
   };
 
-  const parsearQR = (textoQR) => {
-    const raw = String(textoQR || '').trim();
-    if (!raw) {
-      setError('QR invalido');
-      return null;
-    }
-    const tokens = raw
-      .replace(/\r/g, '')
-      .split(/[\n,;]+/g)
-      .map((item) => item.trim())
-      .filter(Boolean);
-    const codigo = tokens[0] || raw;
-    return { codigo, partial: true };
-  };
-
-  const parsearZonaQR = (textoQR) => {
-    const raw = String(textoQR || '').trim().toUpperCase();
-    if (!raw) {
-      return { error: 'Zona vacia' };
-    }
-    const cleaned = raw.startsWith('ZONA:') ? raw.replace('ZONA:', '').trim() : raw;
-    const match = cleaned.match(/^([A-H])\s*(\d+)$/);
-    if (!match) {
-      return { error: 'Zona invalida. Usa ZONA:A1 o A1' };
-    }
-    const numero = Number(match[2]);
-    if (!Number.isInteger(numero) || (numero !== 1 && numero !== 2)) {
-      return { error: 'Subzona invalida. Solo se permite 1 o 2' };
-    }
-    return { letra: match[1], numero };
-  };
 
   useEffect(() => {
     const handler = (value) => {
@@ -568,7 +559,7 @@ const InventarioGeneralPage = () => {
         delete window.handleNativeQr;
       }
     };
-  }, [scanMode, parsearQR, parsearZonaQR, agregarCodigo]);
+    }, [scanMode, parsearQR, parsearZonaQR, agregarCodigo, productos, detenerCamara]);
 
   const puedeAplicar = estadoInventario === 'cerrado';
   const fechaInventario = inventarioInfo?.created_at

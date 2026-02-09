@@ -16,7 +16,6 @@ const GestorInventarioPage = () => {
   const [marcas, setMarcas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modo, setModo] = useState('ingreso');
-  const [codigo, setCodigo] = useState('');
   const [codigoInput, setCodigoInput] = useState('');
   const [fase, setFase] = useState('filtro');
   const [itemsBatch, setItemsBatch] = useState([]);
@@ -25,6 +24,7 @@ const GestorInventarioPage = () => {
   const [dniCliente, setDniCliente] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [lectorSoportado, setLectorSoportado] = useState(true);
   const [ultimoScan, setUltimoScan] = useState(null);
@@ -45,11 +45,7 @@ const GestorInventarioPage = () => {
   const ultimoTextoAtRef = useRef(0);
   const scanActivoRef = useRef(false);
 
-  useEffect(() => {
-    cargarDatos();
-  }, []);
-
-  const cargarDatos = async () => {
+  const cargarDatos = useCallback(async () => {
     try {
       setLoading(true);
       const [respProductos, respTipos, respMarcas] = await Promise.all([
@@ -66,7 +62,11 @@ const GestorInventarioPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    cargarDatos();
+  }, [cargarDatos]);
 
   const normalizarMarcaCodigo = (value) => String(value || '').trim().toUpperCase();
 
@@ -85,6 +85,11 @@ const GestorInventarioPage = () => {
     const code = normalizarMarcaCodigo(value);
     return marcasMap[code] || value || '';
   };
+
+  const totalUnidades = useMemo(
+    () => itemsBatch.reduce((sum, item) => sum + (Number(item.cantidad) || 0), 0),
+    [itemsBatch]
+  );
 
   const formatearUbicacion = (producto) => {
     if (!producto) return '-';
@@ -117,11 +122,26 @@ const GestorInventarioPage = () => {
     };
   };
 
+  const normalizarDocumento = (value) => String(value || '').replace(/\D/g, '');
+
+  const obtenerTipoDocumento = (value) => {
+    const cleaned = normalizarDocumento(value);
+    if (cleaned.length === 8) return 'dni';
+    if (cleaned.length === 11) return 'ruc';
+    return 'desconocido';
+  };
+
   const construirMotivo = () => {
     const base = (motivo || '').trim();
     if (!base) return '';
     if (base === 'VENTA') {
-      return dniCliente ? `${base} | DNI: ${dniCliente}` : base;
+      const documento = normalizarDocumento(dniCliente);
+      const tipoDoc = obtenerTipoDocumento(documento);
+      if (!documento) return base;
+      if (tipoDoc === 'ruc') {
+        return `${base} | RUC: ${documento}`;
+      }
+      return `${base} | DNI: ${documento}`;
     }
     if (numeroGuia) {
       return `${base} | Guia: ${numeroGuia}`;
@@ -129,28 +149,53 @@ const GestorInventarioPage = () => {
     return base;
   };
 
-  const asegurarClientePorDni = async () => {
-    const dni = String(dniCliente || '').trim();
-    if (!dni) {
-      setError('DNI requerido para VENTA');
+  const asegurarClientePorDocumento = async () => {
+    const documento = normalizarDocumento(dniCliente);
+    if (!documento) {
+      setError('DNI o RUC requerido para VENTA');
       return false;
     }
-    const existing = await clientesService.getAll({ documento: dni });
-    if (Array.isArray(existing.data) && existing.data.length) {
+    const tipoDoc = obtenerTipoDocumento(documento);
+    if (tipoDoc === 'desconocido') {
+      setError('Documento invalido: ingresa 8 (DNI) o 11 (RUC) digitos');
+      return false;
+    }
+    try {
+      const existing = await clientesService.getAll({ documento });
+      if (Array.isArray(existing.data) && existing.data.length) {
+        return true;
+      }
+      if (tipoDoc === 'dni') {
+        const consulta = await clientesService.consultaDni(documento);
+        if (!consulta.data?.success) {
+          setError(consulta.data?.error || 'No se pudo validar DNI');
+          return false;
+        }
+        await clientesService.create({
+          tipo_cliente: 'natural',
+          dni: documento,
+          nombre: consulta.data.nombre,
+          apellido: consulta.data.apellido
+        });
+        return true;
+      }
+      const consulta = await clientesService.consultaRuc(documento);
+      if (!consulta.data?.success) {
+        setError(consulta.data?.error || 'No se pudo validar RUC');
+        return false;
+      }
+      await clientesService.create({
+        tipo_cliente: 'juridico',
+        ruc: documento,
+        razon_social: consulta.data.razon_social,
+        direccion: consulta.data.direccion
+      });
       return true;
-    }
-    const consulta = await clientesService.consultaDni(dni);
-    if (!consulta.data?.success) {
-      setError(consulta.data?.error || 'No se pudo validar DNI');
+    } catch (err) {
+      console.error('Error validando documento:', err);
+      setError('No se pudo validar documento');
       return false;
     }
-    await clientesService.create({
-      tipo_cliente: 'natural',
-      dni,
-      nombre: consulta.data.nombre,
-      apellido: consulta.data.apellido
-    });
-    return true;
   };
 
   const construirInfoItem = (producto, parsed) => {
@@ -167,7 +212,8 @@ const GestorInventarioPage = () => {
         marca: producto.marca || '',
         descripcion: producto.descripcion || '',
         tipo: producto.tipo_nombre || '',
-        ubicacion: formatearUbicacion(producto)
+        ubicacion: formatearUbicacion(producto),
+        stock: producto.stock
       };
     }
     return { marca: '', descripcion: '', tipo: '', ubicacion: '' };
@@ -211,7 +257,6 @@ const GestorInventarioPage = () => {
         }
       ];
     });
-    setCodigo(code);
     setCodigoInput('');
     setUltimoScan({
       codigo: code,
@@ -228,7 +273,7 @@ const GestorInventarioPage = () => {
     ultimoTextoAtRef.current = 0;
     try {
       if (!window.isSecureContext) {
-        setError('Para usar la cámara en celular necesitas HTTPS. Abre el sitio en https:// o usa un túnel HTTPS.');
+        setError('Para usar la camara en celular necesitas HTTPS. Abre el sitio en https:// o usa un tunel HTTPS.');
         return;
       }
 
@@ -239,10 +284,24 @@ const GestorInventarioPage = () => {
       }
       setLectorSoportado(true);
 
+      const constraints = {
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
       setCameraActive(true);
     } catch (err) {
-      console.error('Error accediendo a cámara:', err);
-      setError('No se pudo acceder a la cámara');
+      console.error('Error accediendo a camara:', err);
+      setError('No se pudo acceder a la camara');
       setCameraActive(false);
     }
   };
@@ -306,35 +365,7 @@ const GestorInventarioPage = () => {
     setCameraActive(false);
   }, [detenerEscaneo]);
 
-  const procesarCodigoDetectado = (valor) => {
-    const ahora = Date.now();
-    if (valor === ultimoTextoRef.current && ahora - ultimoTextoAtRef.current < 2500) {
-      return;
-    }
-    ultimoTextoRef.current = valor;
-    ultimoTextoAtRef.current = ahora;
-    if (ahora - ultimoDetectadoRef.current > 1200) {
-      ultimoDetectadoRef.current = ahora;
-      agregarCodigo(valor);
-      reproducirBeep();
-    }
-  };
-
-  useEffect(() => {
-    const handler = (value) => {
-      if (!value) return;
-      procesarCodigoDetectado(String(value));
-    };
-    window.handleNativeQr = handler;
-    return () => {
-      if (window.handleNativeQr === handler) {
-        delete window.handleNativeQr;
-      }
-    };
-  }, [modo]);
-
-
-  const reproducirBeep = () => {
+  const reproducirBeep = useCallback(() => {
     try {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const oscillator = audioCtx.createOscillator();
@@ -352,7 +383,34 @@ const GestorInventarioPage = () => {
     } catch (err) {
       // sin audio disponible
     }
-  };
+  }, []);
+
+  const procesarCodigoDetectado = useCallback((valor) => {
+    const ahora = Date.now();
+    if (valor === ultimoTextoRef.current && ahora - ultimoTextoAtRef.current < 2500) {
+      return;
+    }
+    ultimoTextoRef.current = valor;
+    ultimoTextoAtRef.current = ahora;
+    if (ahora - ultimoDetectadoRef.current > 1200) {
+      ultimoDetectadoRef.current = ahora;
+      agregarCodigo(valor);
+      reproducirBeep();
+    }
+  }, [agregarCodigo, reproducirBeep]);
+
+  useEffect(() => {
+    const handler = (value) => {
+      if (!value) return;
+      procesarCodigoDetectado(String(value));
+    };
+    window.handleNativeQr = handler;
+    return () => {
+      if (window.handleNativeQr === handler) {
+        delete window.handleNativeQr;
+      }
+    };
+  }, [procesarCodigoDetectado]);
 
   const iniciarEscaneo = useCallback(() => {
     if (scanActivoRef.current) {
@@ -361,20 +419,15 @@ const GestorInventarioPage = () => {
     if (!videoRef.current) {
       return;
     }
+    if (!streamRef.current) {
+      return;
+    }
     setScanActivoSeguro(true);
 
     if (zxingRef.current && videoRef.current) {
       try {
-        const constraints = {
-          video: {
-            facingMode: 'environment',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: false
-        };
-        const control = zxingRef.current.decodeFromConstraints(
-          constraints,
+        const control = zxingRef.current.decodeFromStream(
+          streamRef.current,
           videoRef.current,
           (result, error) => {
             if (result && scanActivoRef.current) {
@@ -398,7 +451,7 @@ const GestorInventarioPage = () => {
         console.error('Error iniciando ZXing:', err);
       }
     }
-  }, [setScanActivoSeguro]);
+  }, [procesarCodigoDetectado, setScanActivoSeguro]);
 
   useEffect(() => {
     return () => detenerCamara();
@@ -406,7 +459,6 @@ const GestorInventarioPage = () => {
 
   useEffect(() => {
     setItemsBatch([]);
-    setCodigo('');
     setCodigoInput('');
     setMotivo('');
     setNumeroGuia('');
@@ -478,6 +530,7 @@ const GestorInventarioPage = () => {
 
   const handleContinuar = async () => {
     setError('');
+    if (isSubmitting) return;
     if (!motivo) {
       setError('Selecciona un motivo');
       return;
@@ -487,7 +540,7 @@ const GestorInventarioPage = () => {
       return;
     }
     if (motivo === 'VENTA') {
-      const ok = await asegurarClientePorDni();
+      const ok = await asegurarClientePorDocumento();
       if (!ok) return;
     }
     setFase('scan');
@@ -530,6 +583,7 @@ const GestorInventarioPage = () => {
 
   const handleRegistrar = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setError('');
     setSuccess('');
 
@@ -538,7 +592,23 @@ const GestorInventarioPage = () => {
       return;
     }
 
+    if (modo === 'salida') {
+      for (const item of itemsBatch) {
+        const encontrado = productos.find((prod) => prod.codigo === item.codigo);
+        if (!encontrado) {
+          setError(`Producto no encontrado para salida: ${item.codigo}`);
+          return;
+        }
+        const stockActual = Number(encontrado.stock || 0);
+        if (stockActual < Number(item.cantidad || 0)) {
+          setError(`Stock insuficiente para ${item.codigo}. Stock actual: ${stockActual}`);
+          return;
+        }
+      }
+    }
+
     try {
+      setIsSubmitting(true);
       const motivoFinal = construirMotivo();
       if (!motivoFinal) {
         setError('Selecciona un motivo');
@@ -569,7 +639,6 @@ const GestorInventarioPage = () => {
 
       setSuccess(`Movimientos registrados: ${itemsBatch.length}`);
       setItemsBatch([]);
-      setCodigo('');
       setCodigoInput('');
       setMotivo('');
       setNumeroGuia('');
@@ -581,11 +650,18 @@ const GestorInventarioPage = () => {
     } catch (err) {
       console.error('Error registrando movimiento:', err);
       setError(err.response?.data?.error || 'Error al registrar movimiento');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
+  const isAndroidWebView =
+    typeof window !== 'undefined' &&
+    window.Android &&
+    typeof window.Android.openQrScanner === 'function';
+
   return (
-    <div className="movimientos-container">
+    <div className={`movimientos-container ${isAndroidWebView ? 'gestor-apk' : ''}`}>
       <div className="movimientos-header movimientos-header--compact">
         <h1>Gestor de Inventario</h1>
         <p>Escanea códigos y registra ingresos o salidas</p>
@@ -596,6 +672,7 @@ const GestorInventarioPage = () => {
           type="button"
           className={`btn-toggle ${modo === 'ingreso' ? 'active' : ''}`}
           onClick={() => setModo('ingreso')}
+          disabled={isSubmitting}
         >
           Ingreso
         </button>
@@ -603,9 +680,11 @@ const GestorInventarioPage = () => {
           type="button"
           className={`btn-toggle ${modo === 'salida' ? 'active' : ''}`}
           onClick={() => setModo('salida')}
+          disabled={isSubmitting}
         >
           Salida
-        </button></div>
+        </button>
+      </div>
 
       {error && <div className="error-message">{error}</div>}
       {success && <div className="success-message">{success}</div>}
@@ -623,7 +702,7 @@ const GestorInventarioPage = () => {
                     <div className="form-row">
                       <div className="form-group">
                         <label>Motivo *</label>
-                        <select value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+                        <select value={motivo} onChange={(e) => setMotivo(e.target.value)} disabled={isSubmitting}>
                           <option value="">Selecciona un motivo</option>
                           {modo === 'ingreso' ? (
                             <>
@@ -647,24 +726,26 @@ const GestorInventarioPage = () => {
                             placeholder="Ej. 000-12345"
                             value={numeroGuia}
                             onChange={(e) => setNumeroGuia(e.target.value)}
+                            disabled={isSubmitting}
                           />
                         </div>
                       )}
                       {motivo === 'VENTA' && (
                         <div className="form-group">
-                          <label>DNI cliente *</label>
+                          <label>DNI o RUC *</label>
                           <input
                             type="text"
-                            placeholder="DNI del cliente"
+                            placeholder="Ingresa DNI (8) o RUC (11)"
                             value={dniCliente}
-                            onChange={(e) => setDniCliente(e.target.value)}
+                            onChange={(e) => setDniCliente(e.target.value.replace(/\D/g, ''))}
+                            disabled={isSubmitting}
                           />
                         </div>
                       )}
                     </div>
                   </div>
                   <div className="action-card">
-                    <button type="button" className="btn-primary" onClick={handleContinuar}>
+                    <button type="button" className="btn-primary" onClick={handleContinuar} disabled={isSubmitting}>
                       Continuar
                     </button>
                   </div>
@@ -680,7 +761,7 @@ const GestorInventarioPage = () => {
                     Motivo: <strong>{motivo || '-'}</strong>
                   </p>
                   <p>
-                    Guia/DNI: <strong>{numeroGuia || dniCliente || '-'}</strong>
+                    Guia/DNI/RUC: <strong>{numeroGuia || dniCliente || '-'}</strong>
                   </p>
                   <p className="muted">Confirma el motivo antes de escanear.</p>
                 </div>
@@ -699,6 +780,7 @@ const GestorInventarioPage = () => {
                       value={codigoInput}
                       onChange={(e) => setCodigoInput(e.target.value.trim())}
                       placeholder="Escanea o escribe el codigo"
+                      disabled={isSubmitting}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
@@ -713,6 +795,7 @@ const GestorInventarioPage = () => {
                       className="btn-camera btn-camera--icon"
                       onClick={toggleEscaneoDesdeBoton}
                       aria-label="Abrir camara y escanear"
+                      disabled={isSubmitting}
                     >
                       <span className="btn-camera__emoji" aria-hidden="true">📷</span>
                     </button>
@@ -733,6 +816,9 @@ const GestorInventarioPage = () => {
                               {(item.info?.marca || item.info?.tipo) && (
                                 <span>{item.info?.marca || 'Sin marca'}{item.info?.tipo ? ` · ${item.info.tipo}` : ''}</span>
                               )}
+                              {modo === 'salida' && Number.isFinite(item.info?.stock) && (
+                                <span>Stock actual: {item.info.stock}</span>
+                              )}
                               {item.info?.descripcion && (
                                 <span className="batch-item__desc">{item.info.descripcion}</span>
                               )}
@@ -747,11 +833,13 @@ const GestorInventarioPage = () => {
                               min="1"
                               value={item.cantidad}
                               onChange={(e) => actualizarCantidad(item.codigo, e.target.value)}
+                              disabled={isSubmitting}
                             />
                             <button
                               type="button"
                               className="btn-link"
                               onClick={() => removerItem(item.codigo)}
+                              disabled={isSubmitting}
                             >
                               Quitar
                             </button>
@@ -813,23 +901,27 @@ const GestorInventarioPage = () => {
                   Items: <strong>{itemsBatch.length}</strong>
                 </p>
                 <p>
+                  Unidades: <strong>{totalUnidades}</strong>
+                </p>
+                <p>
                   Accion: <strong>{modo === 'ingreso' ? 'Ingreso' : 'Salida'}</strong>
                 </p>
                 <p>
                   Motivo: <strong>{motivo || '-'}</strong>
                 </p>
                 <p>
-                  Guia/DNI: <strong>{numeroGuia || dniCliente || '-'}</strong>
+                  Guia/DNI/RUC: <strong>{numeroGuia || dniCliente || '-'}</strong>
                 </p>
               </div>
               <div className="action-card action-card--compact">
-                <button type="submit" className="btn-primary">
-                  Registrar {modo === 'ingreso' ? 'Ingreso' : 'Salida'}
+                <button type="submit" className="btn-primary" disabled={isSubmitting}>
+                  {isSubmitting ? 'Registrando...' : `Registrar ${modo === 'ingreso' ? 'Ingreso' : 'Salida'}`}
                 </button>
                 <button
                   type="button"
                   className="btn-secondary"
                   onClick={() => setFase('filtro')}
+                  disabled={isSubmitting}
                 >
                   Volver
                 </button>

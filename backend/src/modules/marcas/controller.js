@@ -4,6 +4,14 @@ const { registrarHistorial } = require('../../shared/utils/historial');
 const normalizarCodigo = (value) => String(value || '').trim().toUpperCase();
 const normalizarNombre = (value) => String(value || '').trim();
 
+const generarCodigoMarca = async (connection) => {
+  const [rows] = await connection.execute(
+    "SELECT MAX(CAST(SUBSTRING(codigo, 2) AS UNSIGNED)) AS max_codigo FROM marcas WHERE codigo REGEXP '^M[0-9]+'"
+  );
+  const next = (rows?.[0]?.max_codigo || 0) + 1;
+  return `M${String(next).padStart(4, '0')}`;
+};
+
 exports.listarMarcas = async (req, res) => {
   try {
     const connection = await pool.getConnection();
@@ -37,19 +45,19 @@ exports.obtenerMarca = async (req, res) => {
 };
 
 exports.crearMarca = async (req, res) => {
-  const codigo = normalizarCodigo(req.body?.codigo);
+  let codigo = normalizarCodigo(req.body?.codigo);
   const nombre = normalizarNombre(req.body?.nombre);
   const descripcion = normalizarNombre(req.body?.descripcion || '');
 
-  if (!codigo) {
-    return res.status(400).json({ error: 'El codigo es requerido' });
-  }
   if (!nombre) {
     return res.status(400).json({ error: 'El nombre es requerido' });
   }
 
   try {
     const connection = await pool.getConnection();
+    if (!codigo) {
+      codigo = await generarCodigoMarca(connection);
+    }
     const [result] = await connection.execute(
       'INSERT INTO marcas (codigo, nombre, descripcion) VALUES (?, ?, ?)',
       [codigo, nombre, descripcion || null]

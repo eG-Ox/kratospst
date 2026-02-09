@@ -97,8 +97,8 @@ const TiposMaquinasPage = () => {
   const handleGuardarMarca = async (e) => {
     e.preventDefault();
 
-    if (!marcaForm.codigo || !marcaForm.nombre) {
-      setError('Codigo y nombre de marca son requeridos');
+    if (!marcaForm.nombre) {
+      setError('El nombre de marca es requerido');
       return;
     }
 
@@ -106,7 +106,11 @@ const TiposMaquinasPage = () => {
       if (editandoMarca) {
         await marcasService.update(editandoMarca.id, marcaForm);
       } else {
-        await marcasService.create(marcaForm);
+        const payload = {
+          nombre: marcaForm.nombre,
+          descripcion: marcaForm.descripcion
+        };
+        await marcasService.create(payload);
       }
       resetMarcaForm();
       setMostrarModalMarca(false);
@@ -389,15 +393,12 @@ const TiposMaquinasPage = () => {
             </div>
             <form onSubmit={handleGuardarMarca}>
               <div className="modal-body">
-                <div className="form-group">
-                  <label>Codigo *</label>
-                  <input
-                    type="text"
-                    required
-                    value={marcaForm.codigo}
-                    onChange={(e) => setMarcaForm({ ...marcaForm, codigo: e.target.value })}
-                  />
-                </div>
+                {editandoMarca && (
+                  <div className="form-group">
+                    <label>Codigo</label>
+                    <input type="text" value={marcaForm.codigo} readOnly />
+                  </div>
+                )}
                 <div className="form-group">
                   <label>Nombre *</label>
                   <input

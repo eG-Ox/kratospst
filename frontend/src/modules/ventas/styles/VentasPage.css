@@ -335,7 +335,7 @@
 
 .picking-sheet {
   display: grid;
-  gap: 18px;
+  gap: 12px;
 }
 
 .picking-header {
@@ -357,7 +357,7 @@
 }
 
 .picking-item {
-  padding-bottom: 12px;
+  padding-bottom: 8px;
 }
 
 .picking-meta {
@@ -365,15 +365,31 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px 16px;
   margin-bottom: 12px;
+  font-size: 12px;
 }
 
 .picking-block h4 {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+  font-size: 13px;
 }
 
 .picking-separator {
-  margin-top: 16px;
-  border-bottom: 2px dashed var(--border-strong);
+  margin-top: 12px;
+  text-align: center;
+  color: var(--gray-color);
+  letter-spacing: 0.12em;
+  border-bottom: none;
+  font-size: 12px;
+}
+
+.picking-sheet .ventas-table.compact {
+  font-size: 11px;
+  min-width: 100%;
+}
+
+.picking-sheet .ventas-table.compact th,
+.picking-sheet .ventas-table.compact td {
+  padding: 6px 8px;
 }
 
 .rotulo-modal {

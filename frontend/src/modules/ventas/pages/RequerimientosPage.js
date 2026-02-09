@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ventasService } from '../../../core/services/apiServices';
 import '../styles/RequerimientosPage.css';
 
@@ -7,7 +7,7 @@ const RequerimientosPage = () => {
   const [busqueda, setBusqueda] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const cargarPendientes = async () => {
+  const cargarPendientes = useCallback(async () => {
     try {
       setLoading(true);
       const resp = await ventasService.requerimientosPendientes({
@@ -19,11 +19,11 @@ const RequerimientosPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [busqueda]);
 
   useEffect(() => {
     cargarPendientes();
-  }, []);
+  }, [cargarPendientes]);
 
   const actualizarFila = async (id, changes) => {
     try {

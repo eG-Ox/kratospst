@@ -90,6 +90,49 @@ const PickingPage = () => {
     setCameraActive(false);
   }, [detenerEscaneo]);
 
+  const confirmarSalida = useCallback(async (item) => {
+    try {
+      setError('');
+      setMensaje('');
+      await ventasService.confirmarPicking({
+        detalleId: item.detalleId,
+        cantidad: 1
+      });
+      setMensaje('Salida registrada. Pedido actualizado.');
+      setItemSeleccionado(null);
+      setVentasPendientes((prev) =>
+        prev.map((venta) => {
+          const items = (venta.items || []).map((current) => {
+            if (current.detalleId !== item.detalleId) return current;
+            const nuevaCantidadPicked = Math.min(
+              Number(current.cantidad || 0),
+              Number(current.cantidadPicked || 0) + 1
+            );
+            const pendiente = Math.max(Number(current.cantidad || 0) - nuevaCantidadPicked, 0);
+            return {
+              ...current,
+              cantidadPicked: nuevaCantidadPicked,
+              pendiente
+            };
+          });
+          const pendientesRestantes = items.filter((it) => it.pendiente > 0);
+          const actualizado = {
+            ...venta,
+            items,
+            estadoPedido: pendientesRestantes.length === 0 ? 'PEDIDO_LISTO' : venta.estadoPedido
+          };
+          if (ventaSeleccionada?.ventaId === venta.ventaId) {
+            setVentaSeleccionada(actualizado);
+          }
+          return actualizado;
+        })
+      );
+    } catch (err) {
+      console.error('Error confirmando picking:', err);
+      setError(err.response?.data?.error || 'No se pudo confirmar la salida.');
+    }
+  }, [ventaSeleccionada]);
+
   const procesarCodigoDetectado = useCallback(
     (valor) => {
       const ahora = Date.now();
@@ -134,7 +177,7 @@ const PickingPage = () => {
         detenerCamara();
       }
     },
-    [cargarPendientes, detenerCamara, itemSeleccionado, reproducirBeep]
+    [cargarPendientes, confirmarSalida, detenerCamara, itemSeleccionado, reproducirBeep]
   );
 
   const activarCamara = useCallback(async () => {
@@ -227,49 +270,6 @@ const PickingPage = () => {
   const seleccionarVenta = (venta) => {
     setVentaSeleccionada(venta);
     setItemSeleccionado(null);
-  };
-
-  const confirmarSalida = async (item) => {
-    try {
-      setError('');
-      setMensaje('');
-      await ventasService.confirmarPicking({
-        detalleId: item.detalleId,
-        cantidad: 1
-      });
-      setMensaje('Salida registrada. Pedido actualizado.');
-      setItemSeleccionado(null);
-      setVentasPendientes((prev) =>
-        prev.map((venta) => {
-          const items = (venta.items || []).map((current) => {
-            if (current.detalleId !== item.detalleId) return current;
-            const nuevaCantidadPicked = Math.min(
-              Number(current.cantidad || 0),
-              Number(current.cantidadPicked || 0) + 1
-            );
-            const pendiente = Math.max(Number(current.cantidad || 0) - nuevaCantidadPicked, 0);
-            return {
-              ...current,
-              cantidadPicked: nuevaCantidadPicked,
-              pendiente
-            };
-          });
-          const pendientesRestantes = items.filter((it) => it.pendiente > 0);
-          const actualizado = {
-            ...venta,
-            items,
-            estadoPedido: pendientesRestantes.length === 0 ? 'PEDIDO_LISTO' : venta.estadoPedido
-          };
-          if (ventaSeleccionada?.ventaId === venta.ventaId) {
-            setVentaSeleccionada(actualizado);
-          }
-          return actualizado;
-        })
-      );
-    } catch (err) {
-      console.error('Error confirmando picking:', err);
-      setError(err.response?.data?.error || 'No se pudo confirmar la salida.');
-    }
   };
 
   const cerrarPedido = async () => {

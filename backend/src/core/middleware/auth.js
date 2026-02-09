@@ -4,7 +4,6 @@ const pool = require('../config/database');
 const obtenerToken = (req) => {
   const headerToken = req.headers.authorization?.split(' ')[1];
   if (headerToken) return headerToken;
-  if (req.query && req.query.token) return req.query.token;
   return null;
 };
 
@@ -57,10 +56,10 @@ const soloAdmin = (req, res, next) => {
 
 const tienePermiso = (req, clave) => {
   if (!req.permisosCargados) {
-    return true;
+    return false;
   }
   if (!req.permisos) {
-    return true;
+    return false;
   }
   return req.permisos.has(clave);
 };

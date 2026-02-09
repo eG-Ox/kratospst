@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { authService, usuariosService } from '../../../core/services/apiServices';
 import '../styles/UsuariosPage.css';
 
@@ -11,7 +11,6 @@ const UsuariosPage = () => {
   const [formData, setFormData] = useState({
     nombre: '',
     email: '',
-    telefono: '',
     rol: 'ventas',
     activo: true
   });
@@ -25,15 +24,7 @@ const UsuariosPage = () => {
   const usuarioActual = JSON.parse(localStorage.getItem('usuario') || '{}');
   const esAdmin = usuarioActual?.rol === 'admin';
 
-  useEffect(() => {
-    if (esAdmin) {
-      cargarUsuarios();
-    } else {
-      cargarPerfil();
-    }
-  }, []);
-
-  const cargarUsuarios = async () => {
+  const cargarUsuarios = useCallback(async () => {
     try {
       setLoading(true);
       const resp = await usuariosService.listar();
@@ -45,16 +36,15 @@ const UsuariosPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const cargarPerfil = async () => {
+  const cargarPerfil = useCallback(async () => {
     try {
       setLoading(true);
       const resp = await usuariosService.obtenerPerfil();
       setFormData({
         nombre: resp.data.nombre || '',
         email: resp.data.email || '',
-        telefono: resp.data.telefono || '',
         rol: resp.data.rol || 'ventas',
         activo: true
       });
@@ -65,14 +55,21 @@ const UsuariosPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (esAdmin) {
+      cargarUsuarios();
+    } else {
+      cargarPerfil();
+    }
+  }, [cargarPerfil, cargarUsuarios, esAdmin]);
 
   const handleEditar = (usuario) => {
     setEditando(usuario);
     setFormData({
       nombre: usuario.nombre || '',
       email: usuario.email || '',
-      telefono: usuario.telefono || '',
       rol: usuario.rol || 'ventas',
       activo: !!usuario.activo
     });
@@ -89,8 +86,7 @@ const UsuariosPage = () => {
       } else {
         await usuariosService.actualizarPerfil({
           nombre: formData.nombre,
-          email: formData.email,
-          telefono: formData.telefono
+          email: formData.email
         });
         await cargarPerfil();
       }
@@ -146,10 +142,8 @@ const UsuariosPage = () => {
             <thead>
               <tr>
                 <th>Nombre</th>
-                <th>Email</th>
-                <th>Telefono</th>
+                <th>Usuario</th>
                 <th>Rol</th>
-                <th>Activo</th>
                 <th className="icon-col" title="Acciones">
                   <span className="icon-label" aria-label="Acciones">...</span>
                 </th>
@@ -160,9 +154,7 @@ const UsuariosPage = () => {
                 <tr key={usuario.id}>
                   <td>{usuario.nombre}</td>
                   <td>{usuario.email}</td>
-                  <td>{usuario.telefono || '-'}</td>
                   <td>{usuario.rol}</td>
-                  <td>{usuario.activo ? 'Si' : 'No'}</td>
                   <td>
                     <button
                       className="icon-btn icon-btn--edit"
@@ -192,19 +184,11 @@ const UsuariosPage = () => {
             />
           </div>
           <div className="form-group">
-            <label>Email</label>
-            <input
-              type="email"
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-            />
-          </div>
-          <div className="form-group">
-            <label>Telefono</label>
+            <label>Usuario</label>
             <input
               type="text"
-              value={formData.telefono}
-              onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
             />
           </div>
           <button type="submit" className="btn-success">
@@ -233,19 +217,11 @@ const UsuariosPage = () => {
                   />
                 </div>
                 <div className="form-group">
-                  <label>Email</label>
-                  <input
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Telefono</label>
+                  <label>Usuario</label>
                   <input
                     type="text"
-                    value={formData.telefono}
-                    onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   />
                 </div>
                 <div className="form-group">
@@ -257,18 +233,6 @@ const UsuariosPage = () => {
                     <option value="admin">admin</option>
                     <option value="ventas">ventas</option>
                     <option value="logistica">logistica</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Activo</label>
-                  <select
-                    value={formData.activo ? '1' : '0'}
-                    onChange={(e) =>
-                      setFormData({ ...formData, activo: e.target.value === '1' })
-                    }
-                  >
-                    <option value="1">Si</option>
-                    <option value="0">No</option>
                   </select>
                 </div>
               </div>
@@ -329,7 +293,7 @@ const UsuariosPage = () => {
                   />
                 </div>
                 <div className="form-group">
-                  <label>ContraseÃ±a</label>
+                  <label>Contrasena</label>
                   <input
                     type="password"
                     name="nuevo-contrasena"

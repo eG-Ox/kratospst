@@ -1,11 +1,24 @@
 const pool = require('../../core/config/database');
 const { registrarHistorial } = require('../../shared/utils/historial');
+const { isNonEmptyString, normalizeString } = require('../../shared/utils/validation');
+
+const parsePositiveInt = (value, fallback) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
 
 exports.listarUsuarios = async (req, res) => {
   try {
     const connection = await pool.getConnection();
+    const limiteValue = parsePositiveInt(req.query.limite, 5000);
+    const paginaValue = parsePositiveInt(req.query.pagina, 1);
+    const safeLimit = Math.min(limiteValue, 20000);
+    const offset = (paginaValue - 1) * safeLimit;
     const [rows] = await connection.execute(
-      'SELECT id, nombre, email, telefono, rol, activo FROM usuarios ORDER BY id DESC'
+      `SELECT id, nombre, email, telefono, rol, activo
+       FROM usuarios
+       ORDER BY id DESC
+       LIMIT ${offset}, ${safeLimit}`
     );
     connection.release();
     res.json(rows);
@@ -32,11 +45,16 @@ exports.actualizarUsuario = async (req, res) => {
       return res.status(400).json({ error: 'Rol no valido' });
     }
 
+    if (!isNonEmptyString(nombre) || !isNonEmptyString(email)) {
+      connection.release();
+      return res.status(400).json({ error: 'Nombre y usuario son requeridos' });
+    }
+
     await connection.execute(
       `UPDATE usuarios
        SET nombre = ?, email = ?, telefono = ?, rol = ?, activo = ?
       WHERE id = ?`,
-      [nombre, email, telefono || null, rol, activo ? 1 : 0, id]
+      [normalizeString(nombre), normalizeString(email), normalizeString(telefono) || null, rol, activo ? 1 : 0, id]
     );
     await registrarHistorial(connection, {
       entidad: 'usuarios',
@@ -60,7 +78,7 @@ exports.actualizarUsuario = async (req, res) => {
   } catch (error) {
     console.error('Error actualizando usuario:', error);
     if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ error: 'El email ya está registrado' });
+      return res.status(400).json({ error: 'El usuario ya está registrado' });
     }
     res.status(500).json({ error: 'Error al actualizar usuario' });
   }
@@ -86,6 +104,9 @@ exports.obtenerPerfil = async (req, res) => {
 
 exports.actualizarPerfil = async (req, res) => {
   const { nombre, email, telefono } = req.body;
+  if (!isNonEmptyString(nombre) || !isNonEmptyString(email)) {
+    return res.status(400).json({ error: 'Nombre y usuario son requeridos' });
+  }
   try {
     const connection = await pool.getConnection();
     const [prev] = await connection.execute('SELECT * FROM usuarios WHERE id = ?', [req.usuario.id]);
@@ -93,7 +114,7 @@ exports.actualizarPerfil = async (req, res) => {
       `UPDATE usuarios
        SET nombre = ?, email = ?, telefono = ?
        WHERE id = ?`,
-      [nombre, email, telefono || null, req.usuario.id]
+      [normalizeString(nombre), normalizeString(email), normalizeString(telefono) || null, req.usuario.id]
     );
     await registrarHistorial(connection, {
       entidad: 'usuarios',
@@ -114,7 +135,7 @@ exports.actualizarPerfil = async (req, res) => {
   } catch (error) {
     console.error('Error actualizando perfil:', error);
     if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ error: 'El email ya está registrado' });
+      return res.status(400).json({ error: 'El usuario ya está registrado' });
     }
     res.status(500).json({ error: 'Error al actualizar perfil' });
   }

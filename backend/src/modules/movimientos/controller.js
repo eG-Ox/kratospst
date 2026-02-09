@@ -1,5 +1,6 @@
 const pool = require('../../core/config/database');
 const { registrarHistorial } = require('../../shared/utils/historial');
+const { isPositiveInt, isNonEmptyString } = require('../../shared/utils/validation');
 
 // Registrar ingreso o salida
 exports.registrarMovimiento = async (req, res) => {
@@ -13,17 +14,26 @@ exports.registrarMovimiento = async (req, res) => {
   if (!['ingreso', 'salida'].includes(tipo)) {
     return res.status(400).json({ error: 'Tipo debe ser ingreso o salida' });
   }
+  if (!isPositiveInt(cantidad)) {
+    return res.status(400).json({ error: 'Cantidad invalida' });
+  }
+  if (tipo === 'salida' && !isNonEmptyString(motivo)) {
+    return res.status(400).json({ error: 'Motivo requerido para salida' });
+  }
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
 
     // Verificar que la máquina existe y obtener stock actual
     const [maquinas] = await connection.execute(
-      'SELECT stock FROM maquinas WHERE id = ?',
+      'SELECT stock FROM maquinas WHERE id = ? FOR UPDATE',
       [maquina_id]
     );
 
     if (maquinas.length === 0) {
+      await connection.rollback();
       connection.release();
       return res.status(404).json({ error: 'Máquina no encontrada' });
     }
@@ -32,6 +42,7 @@ exports.registrarMovimiento = async (req, res) => {
 
     // Validar que no haya salida sin stock
     if (tipo === 'salida' && stockActual < cantidad) {
+      await connection.rollback();
       connection.release();
       return res.status(400).json({ error: 'Stock insuficiente para la salida' });
     }
@@ -63,6 +74,7 @@ exports.registrarMovimiento = async (req, res) => {
       antes: { stock: stockActual },
       despues: { stock: nuevoStock, cantidad, motivo: motivo || null }
     });
+    await connection.commit();
     connection.release();
 
     res.status(201).json({
@@ -76,6 +88,12 @@ exports.registrarMovimiento = async (req, res) => {
     });
   } catch (error) {
     console.error('Error registrando movimiento:', error);
+    if (connection) {
+      try {
+        await connection.rollback();
+        connection.release();
+      } catch (_) {}
+    }
     res.status(500).json({ error: 'Error al registrar movimiento' });
   }
 };
@@ -143,8 +161,10 @@ exports.obtenerMovimientosPorMaquina = async (req, res) => {
   const { maquina_id } = req.params;
   const { limite = 20, pagina = 1 } = req.query;
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
     
     const limiteValue = parsePositiveInt(limite, 20);
     const paginaValue = parsePositiveInt(pagina, 1);
@@ -170,8 +190,10 @@ exports.obtenerMovimientosPorMaquina = async (req, res) => {
 
 // Obtener estadísticas
 exports.obtenerEstadisticas = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
 
     // Total de máquinas
     const [totalMaquinas] = await connection.execute(

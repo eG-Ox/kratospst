@@ -23,8 +23,7 @@ const VentasPage = () => {
   const [avisoStock, setAvisoStock] = useState('');
   const [editId, setEditId] = useState(null);
   const [detalleVenta, setDetalleVenta] = useState(null);
-  const [mostrarPicking, setMostrarPicking] = useState(false);
-  const [fechaPicking, setFechaPicking] = useState(getToday());
+  const fechaHoja = getToday();
   const [tabProductos, setTabProductos] = useState('productos');
 
   const [formData, setFormData] = useState({
@@ -54,13 +53,19 @@ const VentasPage = () => {
   const [resultadosProducto, setResultadosProducto] = useState([]);
   const [busquedaRegalo, setBusquedaRegalo] = useState('');
   const [resultadosRegalo, setResultadosRegalo] = useState([]);
+  const [busquedaReq, setBusquedaReq] = useState('');
+  const [resultadosReq, setResultadosReq] = useState([]);
+  const [busquedaReqRegalo, setBusquedaReqRegalo] = useState('');
+  const [resultadosReqRegalo, setResultadosReqRegalo] = useState([]);
   const [productos, setProductos] = useState([]);
   const [requerimientos, setRequerimientos] = useState([]);
   const [regalos, setRegalos] = useState([]);
   const [regaloRequerimientos, setRegaloRequerimientos] = useState([]);
 
   const [requerimientoData, setRequerimientoData] = useState({
+    codigo: '',
     descripcion: '',
+    marca: '',
     proveedor: '',
     cantidad: 1,
     precioCompra: '',
@@ -68,7 +73,9 @@ const VentasPage = () => {
   });
 
   const [regaloRequerimiento, setRegaloRequerimiento] = useState({
+    codigo: '',
     descripcion: '',
+    marca: '',
     proveedor: '',
     cantidad: 1,
     precioCompra: ''
@@ -143,6 +150,28 @@ const VentasPage = () => {
     }, 350);
     return () => clearTimeout(timeout);
   }, [busquedaRegalo]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (busquedaReq.trim().length < 1) {
+        setResultadosReq([]);
+        return;
+      }
+      buscarProductos(busquedaReq.trim(), setResultadosReq);
+    }, 350);
+    return () => clearTimeout(timeout);
+  }, [busquedaReq]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (busquedaReqRegalo.trim().length < 1) {
+        setResultadosReqRegalo([]);
+        return;
+      }
+      buscarProductos(busquedaReqRegalo.trim(), setResultadosReqRegalo);
+    }, 350);
+    return () => clearTimeout(timeout);
+  }, [busquedaReqRegalo]);
 
   useEffect(() => {
     const timeout = setTimeout(async () => {
@@ -354,9 +383,9 @@ const VentasPage = () => {
         id: genId(),
         tipo: 'compra',
         producto_id: null,
-        codigo: 'REQ',
+        codigo: requerimientoData.codigo || '',
         descripcion: requerimientoData.descripcion.trim(),
-        marca: '',
+        marca: requerimientoData.marca || '',
         stock: null,
         cantidad: Number(requerimientoData.cantidad || 1),
         precioVenta: Number(requerimientoData.precioVenta || 0),
@@ -365,12 +394,16 @@ const VentasPage = () => {
       }
     ]);
     setRequerimientoData({
+      codigo: '',
       descripcion: '',
+      marca: '',
       proveedor: '',
       cantidad: 1,
       precioCompra: '',
       precioVenta: ''
     });
+    setBusquedaReq('');
+    setResultadosReq([]);
   };
 
   const agregarRegaloRequerimiento = () => {
@@ -381,9 +414,9 @@ const VentasPage = () => {
         id: genId(),
         tipo: 'compra',
         producto_id: null,
-        codigo: 'REQ',
+        codigo: regaloRequerimiento.codigo || '',
         descripcion: regaloRequerimiento.descripcion.trim(),
-        marca: '',
+        marca: regaloRequerimiento.marca || '',
         stock: null,
         cantidad: Number(regaloRequerimiento.cantidad || 1),
         precioCompra: Number(regaloRequerimiento.precioCompra || 0),
@@ -391,11 +424,15 @@ const VentasPage = () => {
       }
     ]);
     setRegaloRequerimiento({
+      codigo: '',
       descripcion: '',
+      marca: '',
       proveedor: '',
       cantidad: 1,
       precioCompra: ''
     });
+    setBusquedaReqRegalo('');
+    setResultadosReqRegalo([]);
   };
 
   const actualizarItem = (setLista, id, changes) => {
@@ -585,6 +622,209 @@ const VentasPage = () => {
     win.document.close();
   };
 
+  const escapeHtml = (value) =>
+    String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+
+  const renderItemsTable = (items, headers) => {
+    if (!items || items.length === 0) return '';
+    const head = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('');
+    const body = items
+      .map((item) => {
+        return `<tr>${item.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`;
+      })
+      .join('');
+    return `
+      <table class="tabla">
+        <thead><tr>${head}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    `;
+  };
+
+  const abrirHojaRequerimiento = () => {
+    const pendientes = pendientesDia;
+    const historialRequerimientos = new Map();
+
+    const normalizarClaveReq = (item) => {
+      const base = `${item?.codigo || ''} ${item?.descripcion || ''}`.trim();
+      return base.toUpperCase();
+    };
+
+    const ventasOrdenadas = [...(ventas || [])].sort(
+      (a, b) => Number(b.id || 0) - Number(a.id || 0)
+    );
+
+    ventasOrdenadas.forEach((venta) => {
+      const items = [
+        ...(venta.requerimientos || []),
+        ...(venta.regaloRequerimientos || [])
+      ];
+      items.forEach((item) => {
+        const proveedor = String(item?.proveedor || '').trim();
+        const precioCompra = Number(item?.precioCompra || 0);
+        if (!proveedor && !precioCompra) return;
+        const key = normalizarClaveReq(item);
+        if (!key) return;
+        if (!historialRequerimientos.has(key)) {
+          historialRequerimientos.set(key, {
+            proveedor,
+            precioCompra: precioCompra > 0 ? precioCompra : ''
+          });
+        }
+      });
+    });
+
+    const htmlPedidos = pendientes
+      .map((venta) => {
+        const vendedor = usuariosVentas.find(
+          (user) => String(user.id) === String(venta.vendedorId)
+        );
+        const productosStock = venta.productos || [];
+        const requerimientosCompra = venta.requerimientos || [];
+        const regalosStock = venta.regalos || [];
+        const regalosCompra = venta.regaloRequerimientos || [];
+
+        const tablaStock = renderItemsTable(
+          productosStock.map((item) => [
+            `${item.codigo || ''} ${item.descripcion || ''}`.trim(),
+            item.cantidad || 0,
+            `S/ ${Number(item.precioVenta || 0).toFixed(2)}`
+          ]),
+          ['Producto', 'Cantidad', 'Precio venta']
+        );
+
+        const tablaCompra = renderItemsTable(
+          requerimientosCompra.map((item) => {
+            const key = normalizarClaveReq(item);
+            const hist = historialRequerimientos.get(key) || {};
+            const proveedor = hist.proveedor || '';
+            const compra = hist.precioCompra ? `S/ ${Number(hist.precioCompra || 0).toFixed(2)}` : '';
+            return [
+            `${item.codigo || ''} ${item.descripcion || ''}`.trim(),
+            item.cantidad || 0,
+            proveedor,
+            compra
+          ];
+          }),
+          ['Producto', 'Cantidad', 'Proveedor', 'Compra']
+        );
+
+        const tablaRegalosStock = renderItemsTable(
+          regalosStock.map((item) => [
+            `${item.codigo || ''} ${item.descripcion || ''}`.trim(),
+            item.cantidad || 0,
+            `S/ ${Number(item.precioCompra || 0).toFixed(2)}`
+          ]),
+          ['Regalo', 'Cantidad', 'Compra']
+        );
+
+        const tablaRegalosCompra = renderItemsTable(
+          regalosCompra.map((item) => {
+            const key = normalizarClaveReq(item);
+            const hist = historialRequerimientos.get(key) || {};
+            const proveedor = hist.proveedor || '';
+            const compra = hist.precioCompra ? `S/ ${Number(hist.precioCompra || 0).toFixed(2)}` : '';
+            return [
+            `${item.codigo || ''} ${item.descripcion || ''}`.trim(),
+            item.cantidad || 0,
+            proveedor,
+            compra
+          ];
+          }),
+          ['Regalo', 'Cantidad', 'Proveedor', 'Compra']
+        );
+
+        return `
+          <section class="sheet">
+            <div class="sheet-header">
+              <img src="/static/img/KRATOS_LOGO.PNG" alt="Kratos" class="logo" />
+              <div>
+                <h2>Hoja de requerimiento</h2>
+                <div class="subtitle">Fecha: ${escapeHtml(fechaHoja)}</div>
+              </div>
+            </div>
+            <div class="meta">
+              <div><strong>Venta ID:</strong> ${escapeHtml(venta.id)}</div>
+              <div><strong>Cliente:</strong> ${escapeHtml(venta.clienteNombre || '-')}</div>
+              <div><strong>Documento:</strong> ${escapeHtml(venta.documento || '-')}</div>
+              <div><strong>Telefono:</strong> ${escapeHtml(venta.clienteTelefono || '-')}</div>
+              <div><strong>Fecha venta:</strong> ${escapeHtml(venta.fechaVenta || '-')}</div>
+              <div><strong>Agencia:</strong> ${escapeHtml(venta.agencia || '-')}</div>
+              <div><strong>Destino:</strong> ${escapeHtml(venta.destino || '-')}</div>
+              <div><strong>Vendedor:</strong> ${escapeHtml(vendedor?.nombre || venta.vendedorId || '-')}</div>
+            </div>
+
+            ${tablaStock ? `<h3>Productos en stock (tienda)</h3>${tablaStock}` : ''}
+            ${tablaCompra ? `<h3>Productos a comprar</h3>${tablaCompra}` : ''}
+            ${tablaRegalosStock ? `<h3>Regalos en stock (tienda)</h3>${tablaRegalosStock}` : ''}
+            ${tablaRegalosCompra ? `<h3>Regalos a comprar</h3>${tablaRegalosCompra}` : ''}
+
+            <div class="separator">______________________________________________</div>
+          </section>
+        `;
+      })
+      .join('');
+
+    const html = `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Hoja de requerimiento</title>
+          <style>
+            @page { size: A4; margin: 12mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; font-family: 'IBM Plex Sans', sans-serif; color: #0f172a; }
+            .page {
+              max-width: 820px;
+              margin: 0 auto;
+              padding: 0 10px 20px;
+            }
+            .print-btn { position: fixed; top: 12px; right: 12px; padding: 8px 14px; border-radius: 999px; border: 1px solid #cbd5f5; background: #fff; cursor: pointer; }
+            .sheet {
+              padding-bottom: 6mm;
+              page-break-inside: avoid;
+              break-inside: avoid;
+            }
+            .sheet + .sheet { border-top: 1px dashed #cbd5f5; margin-top: 6mm; padding-top: 4mm; }
+            .sheet-header { display: flex; align-items: center; gap: 12px; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 8px; }
+            .logo { width: 64px; height: auto; }
+            .subtitle { color: #64748b; font-size: 12px; }
+            .meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 10px; font-size: 11px; margin-bottom: 6px; }
+            h2 { margin: 0; font-size: 16px; }
+            h3 { margin: 8px 0 4px; font-size: 12px; }
+            .tabla { width: 100%; border-collapse: collapse; font-size: 10.5px; table-layout: fixed; }
+            .tabla th, .tabla td { border: 1px solid #e2e8f0; padding: 4px 5px; text-align: left; vertical-align: top; }
+            .tabla th:nth-child(3), .tabla td:nth-child(3) { width: 140px; }
+            .tabla th:nth-child(4), .tabla td:nth-child(4) { width: 90px; }
+            .separator { margin-top: 10px; text-align: center; color: #94a3b8; letter-spacing: 0.12em; font-size: 12px; }
+            @media print { .print-btn { display: none; } }
+          </style>
+        </head>
+        <body>
+          <button class="print-btn" onclick="window.print()">Imprimir</button>
+          <div class="page">
+            ${htmlPedidos || '<div style="padding:16px">No hay ventas pendientes.</div>'}
+          </div>
+        </body>
+      </html>
+    `;
+
+    const win = window.open('', '_blank');
+    if (!win) {
+      alert('Bloqueador de popups: permite abrir la pestaña para imprimir la hoja.');
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+  };
+
   const abrirEdicion = (venta) => {
     if (!venta) return;
     setEditId(venta.id);
@@ -666,14 +906,9 @@ const VentasPage = () => {
   const pendientesDia = useMemo(() => {
     return (ventas || []).filter((venta) => {
       const estado = venta.estadoEnvio || 'PENDIENTE';
-      const fecha = venta.fechaVenta
-        || (venta.createdAt ? new Date(venta.createdAt).toISOString().slice(0, 10) : '');
-      if (!fechaPicking) {
-        return estado === 'PENDIENTE';
-      }
-      return estado === 'PENDIENTE' && fecha === fechaPicking;
+      return estado === 'PENDIENTE';
     });
-  }, [ventas, fechaPicking]);
+  }, [ventas]);
 
   const avanzar = () => {
     if (step < 3) {
@@ -699,10 +934,10 @@ const VentasPage = () => {
           <button
             type="button"
             className="icon-btn icon-btn--view"
-            onClick={() => setMostrarPicking(true)}
-            title="Hoja de requerimiento"
-            aria-label="Hoja de requerimiento"
-          >
+                          onClick={abrirHojaRequerimiento}
+                          title="Hoja de requerimiento"
+                          aria-label="Hoja de requerimiento"
+                        >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm8 1.5V9h4.5L14 4.5zM8 12h8v2H8v-2zm0 4h8v2H8v-2z" />
             </svg>
@@ -828,7 +1063,10 @@ const VentasPage = () => {
                           .join(' // ') || '-'}
                       </td>
                       <td>
-                        {(venta.regalos || [])
+                        {[
+                          ...(venta.regalos || []),
+                          ...(venta.regaloRequerimientos || [])
+                        ]
                           .map((prod) => `${prod.codigo} ${prod.descripcion} x${prod.cantidad}`)
                           .join(' // ') || '-'}
                       </td>
@@ -972,147 +1210,6 @@ const VentasPage = () => {
           </div>
         </div>
       )}
-
-      {mostrarPicking && (
-        <div className="modal-overlay">
-          <div className="modal-content ventas-modal">
-            <div className="modal-header">
-              <h2>Hoja de requerimiento</h2>
-              <button type="button" className="btn-icon" onClick={() => setMostrarPicking(false)}>
-                X
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Fecha</label>
-                  <input
-                    type="date"
-                    value={fechaPicking}
-                    onChange={(e) => setFechaPicking(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="picking-sheet">
-                <div className="picking-header">
-                  <img src="/static/img/KRATOS_LOGO.PNG" alt="Kratos" className="picking-logo" />
-                  <div>
-                    <h3>Hoja de requerimiento</h3>
-                    <div className="picking-subtitle">Fecha: {fechaPicking}</div>
-                  </div>
-                </div>
-
-                {pendientesDia.length === 0 && (
-                  <div className="empty-message">No hay ventas pendientes para esta fecha.</div>
-                )}
-
-                {pendientesDia.map((venta) => {
-                  const vendedor = usuariosVentas.find(
-                    (user) => String(user.id) === String(venta.vendedorId)
-                  );
-                  return (
-                    <div key={venta.id} className="picking-item">
-                      <div className="picking-meta">
-                        <div><strong>Venta ID:</strong> {venta.id}</div>
-                        <div><strong>Cliente:</strong> {venta.clienteNombre || '-'}</div>
-                        <div><strong>Documento:</strong> {venta.documento || '-'}</div>
-                        <div><strong>Fecha venta:</strong> {venta.fechaVenta || '-'}</div>
-                        <div><strong>Vendedor:</strong> {vendedor?.nombre || venta.vendedorId}</div>
-                      </div>
-
-                      <div className="picking-block">
-                        <h4>Productos en stock (tienda)</h4>
-                        {(venta.productos || []).length === 0 ? (
-                          <div className="empty-message">Sin productos en tienda.</div>
-                        ) : (
-                          <table className="ventas-table compact">
-                            <thead>
-                              <tr>
-                                <th>Producto</th>
-                                <th>Cantidad</th>
-                                <th>Precio venta</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(venta.productos || []).map((item) => (
-                                <tr key={item.id}>
-                                  <td>{item.codigo} {item.descripcion}</td>
-                                  <td>{item.cantidad}</td>
-                                  <td>S/ {Number(item.precioVenta || 0).toFixed(2)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                      </div>
-
-                      <div className="picking-block">
-                        <h4>Productos a comprar</h4>
-                        {(venta.requerimientos || []).length === 0 ? (
-                          <div className="empty-message">Sin productos a comprar.</div>
-                        ) : (
-                          <table className="ventas-table compact">
-                            <thead>
-                              <tr>
-                                <th>Producto</th>
-                                <th>Cantidad</th>
-                                <th>Proveedor</th>
-                                <th>Compra</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(venta.requerimientos || []).map((item) => (
-                                <tr key={item.id}>
-                                  <td>{item.codigo} {item.descripcion}</td>
-                                  <td>{item.cantidad}</td>
-                                  <td>{item.proveedor || item.marca || '-'}</td>
-                                  <td>S/ {Number(item.precioCompra || 0).toFixed(2)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                      </div>
-
-                      <div className="picking-block">
-                        <h4>Regalos a comprar</h4>
-                        {(venta.regaloRequerimientos || []).length === 0 ? (
-                          <div className="empty-message">Sin regalos a comprar.</div>
-                        ) : (
-                          <table className="ventas-table compact">
-                            <thead>
-                              <tr>
-                                <th>Producto</th>
-                                <th>Cantidad</th>
-                                <th>Proveedor</th>
-                                <th>Compra</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(venta.regaloRequerimientos || []).map((item) => (
-                                <tr key={item.id}>
-                                  <td>{item.codigo} {item.descripcion}</td>
-                                  <td>{item.cantidad}</td>
-                                  <td>{item.proveedor || item.marca || '-'}</td>
-                                  <td>S/ {Number(item.precioCompra || 0).toFixed(2)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                      </div>
-
-                      <div className="picking-separator" />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
 
       {modalOpen && (
         <div className="modal-overlay">
@@ -1425,19 +1522,54 @@ const VentasPage = () => {
                   )}
 
                   {tabProductos === 'requerimientos' && (
-                    <div className="ventas-card">
-                      <h3>Requerimiento</h3>
-                      <div className="requerimiento-box">
-                        <div className="form-group">
-                          <label>Producto</label>
-                          <input
-                            type="text"
-                            value={requerimientoData.descripcion}
-                            onChange={(e) =>
-                              setRequerimientoData((prev) => ({ ...prev, descripcion: e.target.value }))
-                            }
-                          />
-                        </div>
+                      <div className="ventas-card">
+                        <h3>Requerimiento</h3>
+                        <div className="requerimiento-box">
+                          <div className="form-group">
+                            <label>Buscar producto</label>
+                            <input
+                              type="text"
+                              placeholder="Buscar por codigo, descripcion o marca"
+                              value={busquedaReq}
+                              onChange={(e) => setBusquedaReq(e.target.value)}
+                            />
+                            <div className="resultados">
+                              {resultadosReq.map((producto) => (
+                                <button
+                                  type="button"
+                                  className="resultado-item"
+                                  key={`req-${producto.id}-${producto.codigo}`}
+                                  onClick={() => {
+                                    setRequerimientoData((prev) => ({
+                                      ...prev,
+                                      codigo: producto.codigo || '',
+                                      descripcion: producto.descripcion || prev.descripcion,
+                                      marca: producto.marca || '',
+                                      precioCompra: prev.precioCompra || producto.precio_compra || '',
+                                      precioVenta: prev.precioVenta || producto.precio_venta || ''
+                                    }));
+                                    setBusquedaReq('');
+                                    setResultadosReq([]);
+                                  }}
+                                >
+                                  {producto.codigo} - {producto.descripcion} ({producto.marca})
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="form-group">
+                            <label>Producto</label>
+                            <input
+                              type="text"
+                              value={requerimientoData.descripcion}
+                              onChange={(e) =>
+                                setRequerimientoData((prev) => ({ ...prev, descripcion: e.target.value }))
+                              }
+                            />
+                            {requerimientoData.codigo && (
+                              <span className="helper-text">Codigo: {requerimientoData.codigo}</span>
+                            )}
+                          </div>
                         {sugerenciaReq && (
                           <div className="helper-text">
                             Sugerencia: {sugerenciaReq.descripcion || sugerenciaReq.codigo} /
@@ -1660,19 +1792,53 @@ const VentasPage = () => {
                       </div>
                     </div>
 
-                    <div className="ventas-card">
-                      <h3>Requerimiento regalos</h3>
-                      <div className="requerimiento-box">
-                        <div className="form-group">
-                          <label>Producto</label>
-                          <input
-                            type="text"
-                            value={regaloRequerimiento.descripcion}
-                            onChange={(e) =>
-                              setRegaloRequerimiento((prev) => ({ ...prev, descripcion: e.target.value }))
-                            }
-                          />
-                        </div>
+                      <div className="ventas-card">
+                        <h3>Requerimiento regalos</h3>
+                        <div className="requerimiento-box">
+                          <div className="form-group">
+                            <label>Buscar producto</label>
+                            <input
+                              type="text"
+                              placeholder="Buscar por codigo, descripcion o marca"
+                              value={busquedaReqRegalo}
+                              onChange={(e) => setBusquedaReqRegalo(e.target.value)}
+                            />
+                            <div className="resultados">
+                              {resultadosReqRegalo.map((producto) => (
+                                <button
+                                  type="button"
+                                  className="resultado-item"
+                                  key={`req-reg-${producto.id}-${producto.codigo}`}
+                                  onClick={() => {
+                                    setRegaloRequerimiento((prev) => ({
+                                      ...prev,
+                                      codigo: producto.codigo || '',
+                                      descripcion: producto.descripcion || prev.descripcion,
+                                      marca: producto.marca || '',
+                                      precioCompra: prev.precioCompra || producto.precio_compra || ''
+                                    }));
+                                    setBusquedaReqRegalo('');
+                                    setResultadosReqRegalo([]);
+                                  }}
+                                >
+                                  {producto.codigo} - {producto.descripcion} ({producto.marca})
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="form-group">
+                            <label>Producto</label>
+                            <input
+                              type="text"
+                              value={regaloRequerimiento.descripcion}
+                              onChange={(e) =>
+                                setRegaloRequerimiento((prev) => ({ ...prev, descripcion: e.target.value }))
+                              }
+                            />
+                            {regaloRequerimiento.codigo && (
+                              <span className="helper-text">Codigo: {regaloRequerimiento.codigo}</span>
+                            )}
+                          </div>
                         {sugerenciaRegalo && (
                           <div className="helper-text">
                             Sugerencia: {sugerenciaRegalo.descripcion || sugerenciaRegalo.codigo} /
