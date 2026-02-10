@@ -26,47 +26,42 @@ const permisosBase = [
 
 const rolesBase = ['admin', 'ventas', 'logistica'];
 
+let permisosInitPromise = null;
 const asegurarPermisos = async (connection) => {
-  for (const rol of rolesBase) {
-    try {
-      await connection.execute('INSERT INTO roles (nombre) VALUES (?)', [rol]);
-    } catch (error) {
-      if (error.code !== 'ER_DUP_ENTRY') {
-        throw error;
-      }
-    }
+  if (permisosInitPromise) {
+    return permisosInitPromise;
   }
+  permisosInitPromise = (async () => {
+    for (const rol of rolesBase) {
+      await connection.execute('INSERT IGNORE INTO roles (nombre) VALUES (?)', [rol]);
+    }
 
-  for (const permiso of permisosBase) {
-    try {
+    for (const permiso of permisosBase) {
       await connection.execute(
-        'INSERT INTO permisos (clave, descripcion, grupo) VALUES (?, ?, ?)',
+        'INSERT IGNORE INTO permisos (clave, descripcion, grupo) VALUES (?, ?, ?)',
         [permiso.clave, permiso.descripcion, permiso.grupo]
       );
-    } catch (error) {
-      if (error.code !== 'ER_DUP_ENTRY') {
-        throw error;
-      }
     }
-  }
 
-  const [rolesRows] = await connection.execute('SELECT id, nombre FROM roles');
-  const [permisosRows] = await connection.execute('SELECT id, clave FROM permisos');
+    const [rolesRows] = await connection.execute('SELECT id FROM roles');
+    const [permisosRows] = await connection.execute('SELECT id FROM permisos');
 
-  for (const rol of rolesRows) {
-    for (const permiso of permisosRows) {
-      try {
+    for (const rol of rolesRows) {
+      for (const permiso of permisosRows) {
         await connection.execute(
-          'INSERT INTO rol_permisos (rol_id, permiso_id, permitido) VALUES (?, ?, TRUE)',
+          'INSERT IGNORE INTO rol_permisos (rol_id, permiso_id, permitido) VALUES (?, ?, TRUE)',
           [rol.id, permiso.id]
         );
-      } catch (error) {
-        if (error.code !== 'ER_DUP_ENTRY') {
-          throw error;
-        }
       }
     }
+  })();
+  try {
+    await permisosInitPromise;
+  } catch (error) {
+    permisosInitPromise = null;
+    throw error;
   }
+  return permisosInitPromise;
 };
 
 exports.listarRoles = async (req, res) => {

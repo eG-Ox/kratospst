@@ -9,6 +9,7 @@ router.get('/detalle/listar', autorizar('ventas.ver'), controller.listarDetalleV
 router.get('/requerimientos/historial', autorizar('ventas.ver'), controller.historialRequerimientos);
 router.get('/requerimientos/pendientes', autorizar('ventas.ver'), controller.listarRequerimientosPendientes);
 router.patch('/requerimientos/:id', autorizar('ventas.editar'), controller.actualizarRequerimiento);
+router.post('/requerimientos/crear', autorizar('ventas.editar'), controller.crearRequerimientoProducto);
 router.get('/picking/pendientes', autorizar('picking.ver'), controller.listarPickingPendientes);
 router.post('/picking/confirmar', autorizar('picking.editar'), controller.confirmarPicking);
 router.post('/picking/cerrar', autorizar('picking.editar'), controller.cerrarPedido);

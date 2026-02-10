@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS maquinas (
   precio_minimo DECIMAL(10, 2) NOT NULL,
   ficha_web VARCHAR(255),
   ficha_tecnica_ruta VARCHAR(255),
+  activo BOOLEAN NOT NULL DEFAULT TRUE,
   fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (tipo_maquina_id) REFERENCES tipos_maquinas(id) ON DELETE RESTRICT,
@@ -424,6 +425,13 @@ async function inicializarBaseDatos() {
     }
     try {
       await connection.execute('ALTER TABLE maquinas ADD COLUMN ubicacion_numero INT NULL AFTER ubicacion_letra');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute('ALTER TABLE maquinas ADD COLUMN activo BOOLEAN NOT NULL DEFAULT TRUE');
     } catch (error) {
       if (error.code !== 'ER_DUP_FIELDNAME') {
         throw error;

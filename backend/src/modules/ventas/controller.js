@@ -104,6 +104,10 @@ const validarDetalleItems = (items, label) => {
   return null;
 };
 const normalizarTexto = (value) => String(value || '').trim();
+const normalizarClave = (value) =>
+  normalizarTexto(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
 
 const obtenerTipoRequerimientoId = async (connection) => {
   const nombre = 'REQUERIMIENTO';
@@ -144,15 +148,46 @@ const generarCodigoRequerimiento = async (connection) => {
 
 const buscarProductoPorCodigo = async (connection, codigo) => {
   const [rows] = await connection.execute(
-    'SELECT id, codigo, marca FROM maquinas WHERE codigo = ? LIMIT 1',
+    'SELECT id, codigo, marca, descripcion, activo FROM maquinas WHERE codigo = ? LIMIT 1',
     [codigo]
   );
   return rows[0] || null;
 };
 
+const buscarProductoPorClave = async (connection, clave) => {
+  const normalizada = normalizarClave(clave);
+  if (!normalizada) return null;
+  const [rows] = await connection.execute(
+    `
+      SELECT id, codigo, marca, descripcion, activo
+      FROM maquinas
+      WHERE REPLACE(REPLACE(REPLACE(UPPER(codigo), ' ', ''), '-', ''), '/', '') = ?
+         OR REPLACE(REPLACE(REPLACE(UPPER(descripcion), ' ', ''), '-', ''), '/', '') = ?
+      LIMIT 1
+    `,
+    [normalizada, normalizada]
+  );
+  return rows[0] || null;
+};
+
+const buscarProductoRequerimiento = async (connection, item) => {
+  const codigo = normalizarTexto(item.codigo);
+  const descripcion = normalizarTexto(item.descripcion);
+  if (codigo) {
+    const porCodigo = await buscarProductoPorClave(connection, codigo);
+    if (porCodigo) return porCodigo;
+  }
+  if (descripcion) {
+    const porDescripcion = await buscarProductoPorClave(connection, descripcion);
+    if (porDescripcion) return porDescripcion;
+  }
+  return null;
+};
+
 const crearProductoDesdeRequerimiento = async (connection, item) => {
   const tipoId = await obtenerTipoRequerimientoId(connection);
-  const codigo = await generarCodigoRequerimiento(connection);
+  const codigoPreferido = normalizarTexto(item.codigo);
+  const codigo = codigoPreferido || (await generarCodigoRequerimiento(connection));
   const descripcion = normalizarTexto(item.descripcion) || 'Requerimiento';
   const marca = normalizarTexto(item.marca) || 'REQUERIMIENTO';
   const precioCompra = Number(item.precioCompra || item.precio_compra || 0);
@@ -177,22 +212,48 @@ const crearProductoDesdeRequerimiento = async (connection, item) => {
     ]
   );
 
-  return { id: result.insertId, codigo, marca };
+  return { id: result.insertId, codigo, marca, descripcion };
+};
+
+const buscarDetallePendientePorCodigo = async (connection, codigo, ventaId) => {
+  const normalizada = normalizarClave(codigo);
+  if (!normalizada) return null;
+  let query = `
+    SELECT d.*, v.estado_pedido
+    FROM ventas_detalle d
+    JOIN ventas v ON d.venta_id = v.id
+    WHERE d.tipo = 'producto'
+      AND d.cantidad_picked < d.cantidad
+      AND REPLACE(REPLACE(REPLACE(UPPER(d.codigo), ' ', ''), '-', ''), '/', '') = ?
+  `;
+  const params = [normalizada];
+  if (ventaId) {
+    query += ' AND d.venta_id = ?';
+    params.push(ventaId);
+  }
+  query += ' ORDER BY v.created_at ASC, d.id ASC LIMIT 1 FOR UPDATE';
+  const [rows] = await connection.execute(query, params);
+  return rows[0] || null;
 };
 
 const asegurarProductoRequerimiento = async (connection, item) => {
-  const codigo = normalizarTexto(item.codigo);
   if (item.producto_id) {
     return item;
   }
-  if (codigo) {
-    const existente = await buscarProductoPorCodigo(connection, codigo);
-    if (existente) {
-      return { ...item, codigo: existente.codigo, marca: existente.marca || item.marca };
+  const existente = await buscarProductoRequerimiento(connection, item);
+  if (existente) {
+    if (Number(existente.activo) === 0) {
+      await connection.execute('UPDATE maquinas SET activo = TRUE WHERE id = ?', [existente.id]);
     }
+    return {
+      ...item,
+      codigo: existente.codigo,
+      marca: existente.marca || item.marca,
+      descripcion: existente.descripcion || item.descripcion
+    };
   }
   const creado = await crearProductoDesdeRequerimiento(connection, item);
-  return { ...item, codigo: creado.codigo, marca: creado.marca };
+  return { ...item, codigo: creado.codigo, marca: creado.marca, descripcion: creado.descripcion };
 };
 
 const prepararRequerimientos = async (connection, items) => {
@@ -776,6 +837,72 @@ exports.actualizarRequerimiento = async (req, res) => {
   }
 };
 
+exports.crearRequerimientoProducto = async (req, res) => {
+  const {
+    descripcion,
+    codigo,
+    marca,
+    precioCompra,
+    precioVenta,
+    precioMinimo
+  } = req.body || {};
+  const descripcionTxt = normalizarTexto(descripcion);
+  const codigoTxt = normalizarTexto(codigo);
+  if (!descripcionTxt && !codigoTxt) {
+    return res.status(400).json({ error: 'Debe ingresar descripcion o codigo.' });
+  }
+  try {
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
+    try {
+      const existente = await buscarProductoRequerimiento(connection, {
+        descripcion: descripcionTxt,
+        codigo: codigoTxt
+      });
+      if (existente) {
+        if (Number(existente.activo) === 0) {
+          await connection.execute('UPDATE maquinas SET activo = TRUE WHERE id = ?', [existente.id]);
+        }
+        await connection.commit();
+        return res.json({
+          ok: true,
+          id: existente.id,
+          codigo: existente.codigo,
+          marca: existente.marca,
+          descripcion: existente.descripcion,
+          existente: true
+        });
+      }
+
+      const creado = await crearProductoDesdeRequerimiento(connection, {
+        descripcion: descripcionTxt,
+        codigo: codigoTxt,
+        marca,
+        precioCompra,
+        precioVenta,
+        precioMinimo
+      });
+      await connection.commit();
+      return res.json({
+        ok: true,
+        id: creado.id,
+        codigo: creado.codigo,
+        marca: creado.marca,
+        descripcion: creado.descripcion,
+        existente: false
+      });
+    } catch (innerError) {
+      await connection.rollback();
+      throw innerError;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error('Error creando requerimiento producto:', error);
+    res.status(500).json({ error: 'Error al crear producto de requerimiento' });
+  }
+};
+
 exports.exportarVentas = async (req, res) => {
   const { fecha_inicio, fecha_fin } = req.query;
   try {
@@ -935,10 +1062,10 @@ exports.listarPickingPendientes = async (req, res) => {
 };
 
 exports.confirmarPicking = async (req, res) => {
-  const { detalleId, cantidad } = req.body;
+  const { detalleId, cantidad, codigo, ventaId } = req.body;
   const usuarioId = req.usuario?.id;
-  if (!detalleId || !cantidad) {
-    return res.status(400).json({ error: 'detalleId y cantidad son obligatorios.' });
+  if ((!detalleId && !codigo) || !cantidad) {
+    return res.status(400).json({ error: 'detalleId o codigo son obligatorios.' });
   }
   const cantidadNum = Number(cantidad);
   if (!Number.isFinite(cantidadNum) || cantidadNum <= 0) {
@@ -948,19 +1075,25 @@ exports.confirmarPicking = async (req, res) => {
     const connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    const [detalleRows] = await connection.execute(
-      `SELECT d.*, v.estado_pedido
-       FROM ventas_detalle d
-       JOIN ventas v ON d.venta_id = v.id
-       WHERE d.id = ? FOR UPDATE`,
-      [detalleId]
-    );
-    if (detalleRows.length === 0) {
+    let detalle = null;
+    if (detalleId) {
+      const [detalleRows] = await connection.execute(
+        `SELECT d.*, v.estado_pedido
+         FROM ventas_detalle d
+         JOIN ventas v ON d.venta_id = v.id
+         WHERE d.id = ? FOR UPDATE`,
+        [detalleId]
+      );
+      detalle = detalleRows[0] || null;
+    }
+    if (!detalle && codigo) {
+      detalle = await buscarDetallePendientePorCodigo(connection, codigo, ventaId);
+    }
+    if (!detalle) {
       await connection.rollback();
       connection.release();
       return res.status(404).json({ error: 'Detalle no encontrado.' });
     }
-    const detalle = detalleRows[0];
     if (detalle.tipo !== 'producto') {
       await connection.rollback();
       connection.release();

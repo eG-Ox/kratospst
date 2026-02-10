@@ -10,6 +10,7 @@ exports.getMaquinas = async (req, res) => {
       SELECT m.*, t.nombre as tipo_nombre 
       FROM maquinas m 
       JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id 
+      WHERE m.activo = TRUE
       ORDER BY m.codigo
     `);
     connection.release();
@@ -76,16 +77,57 @@ exports.crearMaquina = async (req, res) => {
       return res.status(400).json({ error: 'El tipo de máquina no existe' });
     }
 
+    const [existente] = await connection.execute(
+      'SELECT * FROM maquinas WHERE codigo = ? LIMIT 1',
+      [codigo]
+    );
+
     let ficha_tecnica_ruta = null;
     if (req.file) {
       ficha_tecnica_ruta = req.file.filename;
     }
 
+    if (existente.length && existente[0].activo === 0) {
+      await connection.execute(
+        `UPDATE maquinas
+         SET tipo_maquina_id = ?, marca = ?, descripcion = ?, stock = ?, precio_compra = ?, precio_venta = ?,
+             precio_minimo = ?, ficha_web = ?, ficha_tecnica_ruta = ?, activo = TRUE
+         WHERE id = ?`,
+        [
+          tipo_maquina_id,
+          marca,
+          descripcion || null,
+          stock || 0,
+          precio_compra,
+          precio_venta,
+          precio_minimo || 0,
+          ficha_web || null,
+          ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
+          existente[0].id
+        ]
+      );
+      connection.release();
+      return res.status(200).json({
+        id: existente[0].id,
+        codigo,
+        tipo_maquina_id,
+        marca,
+        descripcion,
+        stock,
+        precio_compra,
+        precio_venta,
+        precio_minimo,
+        ficha_web,
+        ficha_tecnica_ruta: ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
+        activo: 1
+      });
+    }
+
     const [result] = await connection.execute(
       `INSERT INTO maquinas 
        (codigo, tipo_maquina_id, marca, descripcion, stock, precio_compra, 
-        precio_venta, precio_minimo, ficha_web, ficha_tecnica_ruta) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        precio_venta, precio_minimo, ficha_web, ficha_tecnica_ruta, activo) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
       [
         codigo,
         tipo_maquina_id,
@@ -229,20 +271,14 @@ exports.eliminarMaquina = async (req, res) => {
       return res.status(404).json({ error: 'Máquina no encontrada' });
     }
 
-    // Eliminar máquina
-    const [result] = await connection.execute(
-      'DELETE FROM maquinas WHERE id = ?',
+    // Desactivar máquina
+    await connection.execute(
+      'UPDATE maquinas SET activo = FALSE WHERE id = ?',
       [req.params.id]
     );
     connection.release();
 
-    // Eliminar archivo si existe
-    if (maquina[0].ficha_tecnica_ruta) {
-      const rutaArchivo = path.join(__dirname, '../uploads', maquina[0].ficha_tecnica_ruta);
-      fs.unlink(rutaArchivo, () => {});
-    }
-
-    res.json({ mensaje: 'Máquina eliminada exitosamente' });
+    res.json({ mensaje: 'Máquina desactivada exitosamente' });
   } catch (error) {
     console.error('Error eliminando máquina:', error);
     res.status(500).json({ error: 'Error al eliminar máquina' });

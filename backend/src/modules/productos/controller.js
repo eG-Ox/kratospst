@@ -82,6 +82,7 @@ exports.getMaquinas = async (req, res) => {
       SELECT m.*, t.nombre as tipo_nombre 
       FROM maquinas m 
       JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id 
+      WHERE m.activo = TRUE
       ORDER BY m.codigo
     `);
     connection.release();
@@ -130,7 +131,7 @@ exports.getMaquinaPorCodigo = async (req, res) => {
   try {
     const connection = await pool.getConnection();
     const [maquina] = await connection.execute(
-      'SELECT m.*, t.nombre as tipo_nombre FROM maquinas m JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id WHERE m.codigo = ?',
+      'SELECT m.*, t.nombre as tipo_nombre FROM maquinas m JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id WHERE m.codigo = ? AND m.activo = TRUE',
       [codigo]
     );
     connection.release();
@@ -216,16 +217,85 @@ exports.crearMaquina = async (req, res) => {
       return res.status(400).json({ error: 'El tipo de máquina no existe' });
     }
 
+    const [existente] = await connection.execute(
+      'SELECT * FROM maquinas WHERE codigo = ? LIMIT 1',
+      [codigo]
+    );
+
     let ficha_tecnica_ruta = null;
     if (req.file) {
       ficha_tecnica_ruta = req.file.filename;
     }
 
+    if (existente.length && existente[0].activo === 0) {
+      await connection.execute(
+        `UPDATE maquinas
+         SET tipo_maquina_id = ?, marca = ?, descripcion = ?, ubicacion_letra = ?, ubicacion_numero = ?,
+             stock = ?, precio_compra = ?, precio_venta = ?, precio_minimo = ?, ficha_web = ?, ficha_tecnica_ruta = ?,
+             activo = TRUE
+         WHERE id = ?`,
+        [
+          tipo_maquina_id,
+          marca,
+          descripcion || null,
+          ubicacionParse.letra,
+          ubicacionParse.numero,
+          stock || 0,
+          precio_compra,
+          precio_venta,
+          precio_minimo || 0,
+          ficha_web || null,
+          ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
+          existente[0].id
+        ]
+      );
+      await registrarHistorial(connection, {
+        entidad: 'productos',
+        entidad_id: existente[0].id,
+        usuario_id: req.usuario?.id,
+        accion: 'reactivar',
+        descripcion: `Producto reactivado (${codigo})`,
+        antes: existente[0],
+        despues: {
+          ...existente[0],
+          tipo_maquina_id,
+          marca,
+          descripcion: descripcion || null,
+          ubicacion_letra: ubicacionParse.letra,
+          ubicacion_numero: ubicacionParse.numero,
+          stock: stock || 0,
+          precio_compra,
+          precio_venta,
+          precio_minimo: precio_minimo || 0,
+          ficha_web: ficha_web || null,
+          ficha_tecnica_ruta: ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
+          activo: 1
+        }
+      });
+      connection.release();
+      return res.status(200).json({
+        id: existente[0].id,
+        codigo,
+        tipo_maquina_id,
+        marca,
+        descripcion,
+        ubicacion_letra: ubicacionParse.letra,
+        ubicacion_numero: ubicacionParse.numero,
+        stock,
+        precio_compra,
+        precio_venta,
+        precio_minimo,
+        ficha_web,
+        ficha_tecnica_ruta: ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
+        activo: 1
+      });
+    }
+
     const [result] = await connection.execute(
       `INSERT INTO maquinas 
        (codigo, tipo_maquina_id, marca, descripcion, ubicacion_letra, ubicacion_numero, stock, precio_compra, 
-        precio_venta, precio_minimo, ficha_web, ficha_tecnica_ruta) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        precio_venta, precio_minimo, ficha_web, ficha_tecnica_ruta, activo) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
       [
         codigo,
         tipo_maquina_id,
@@ -501,6 +571,7 @@ exports.exportarExcel = async (req, res) => {
         m.stock, m.precio_compra, m.precio_venta, m.precio_minimo
       FROM maquinas m
       JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id
+      WHERE m.activo = TRUE
       ORDER BY m.codigo
     `);
     connection.release();
@@ -542,7 +613,7 @@ exports.exportarStockMinimo = async (req, res) => {
       `
       SELECT m.codigo, m.descripcion, m.marca, m.stock, m.precio_venta
       FROM maquinas m
-      WHERE m.stock <= ?
+      WHERE m.activo = TRUE AND m.stock <= ?
       ORDER BY m.stock ASC, m.codigo
       `,
       [Number.isFinite(limite) ? limite : 2]
@@ -589,9 +660,9 @@ exports.importarExcel = async (req, res) => {
       tipos.map((tipo) => [String(tipo.nombre || '').toLowerCase(), tipo.id])
     );
 
-    const [existentes] = await connection.execute('SELECT id, codigo FROM maquinas');
+    const [existentes] = await connection.execute('SELECT id, codigo, activo FROM maquinas');
     const existentesMap = new Map(
-      existentes.map((item) => [String(item.codigo || '').toLowerCase(), item.id])
+      existentes.map((item) => [String(item.codigo || '').toLowerCase(), item])
     );
 
     const errores = [];
@@ -608,7 +679,30 @@ exports.importarExcel = async (req, res) => {
       if (!codigo) {
         continue;
       }
-      if (existentesMap.has(codigo.toLowerCase())) {
+      const existente = existentesMap.get(codigo.toLowerCase());
+      if (existente) {
+        if (existente.activo === 0) {
+          await connection.execute(
+            `UPDATE maquinas
+             SET tipo_maquina_id = ?, marca = ?, descripcion = ?, ubicacion_letra = ?, ubicacion_numero = ?,
+                 stock = ?, precio_compra = ?, precio_venta = ?, precio_minimo = ?, activo = TRUE
+             WHERE id = ?`,
+            [
+              tipoId,
+              marca,
+              descripcion || null,
+              ubicacionParse.letra,
+              ubicacionParse.numero,
+              stock,
+              precioCompra,
+              precioVenta,
+              precioMinimo,
+              existente.id
+            ]
+          );
+          insertados += 1;
+          continue;
+        }
         duplicados.push(codigo);
         continue;
       }
@@ -658,8 +752,8 @@ exports.importarExcel = async (req, res) => {
       await connection.execute(
         `INSERT INTO maquinas
         (codigo, tipo_maquina_id, marca, descripcion, ubicacion_letra, ubicacion_numero, stock, precio_compra,
-         precio_venta, precio_minimo, ficha_web, ficha_tecnica_ruta)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         precio_venta, precio_minimo, ficha_web, ficha_tecnica_ruta, activo)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
         [
           codigo,
           tipoId,
@@ -719,28 +813,21 @@ exports.eliminarMaquina = async (req, res) => {
     }
 
     // Eliminar máquina
-    const [result] = await connection.execute(
-      'DELETE FROM maquinas WHERE id = ?',
+    await connection.execute(
+      'UPDATE maquinas SET activo = FALSE WHERE id = ?',
       [req.params.id]
     );
     await registrarHistorial(connection, {
       entidad: 'productos',
       entidad_id: req.params.id,
       usuario_id: req.usuario?.id,
-      accion: 'eliminar',
-      descripcion: `Producto eliminado (${req.params.id})`,
+      accion: 'desactivar',
+      descripcion: `Producto desactivado (${req.params.id})`,
       antes: maquina[0] || null,
       despues: null
     });
     connection.release();
-
-    // Eliminar archivo si existe
-    if (maquina[0].ficha_tecnica_ruta) {
-      const rutaArchivo = path.join(__dirname, '../../uploads', maquina[0].ficha_tecnica_ruta);
-      fs.unlink(rutaArchivo, () => {});
-    }
-
-    res.json({ mensaje: 'Máquina eliminada exitosamente' });
+    res.json({ mensaje: 'Máquina desactivada exitosamente' });
   } catch (error) {
     console.error('Error eliminando máquina:', error);
     res.status(500).json({ error: 'Error al eliminar máquina' });
@@ -764,3 +851,5 @@ exports.descargarFichaTecnica = async (req, res) => {
     res.status(500).json({ error: 'Error al descargar ficha técnica' });
   }
 };
+
+

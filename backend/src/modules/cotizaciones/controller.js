@@ -889,7 +889,7 @@ exports.buscarProductos = async (req, res) => {
     const [rows] = await connection.execute(
       `SELECT id, codigo, descripcion, marca, precio_venta, stock
       FROM maquinas
-      WHERE codigo LIKE ? OR descripcion LIKE ? OR marca LIKE ?
+      WHERE activo = TRUE AND (codigo LIKE ? OR descripcion LIKE ? OR marca LIKE ?)
        ORDER BY descripcion
        LIMIT ${safeLimit}`,
       [term, term, term]
@@ -907,7 +907,7 @@ exports.obtenerProducto = async (req, res) => {
     const connection = await pool.getConnection();
     const [rows] = await connection.execute(
       `SELECT id, codigo, descripcion, marca, precio_venta, stock
-       FROM maquinas WHERE id = ?`,
+       FROM maquinas WHERE id = ? AND activo = TRUE`,
       [req.params.id]
     );
     connection.release();
@@ -928,7 +928,7 @@ exports.filtrosCotizacion = async (req, res) => {
 
   try {
     const connection = await pool.getConnection();
-    let query = `SELECT DISTINCT marca FROM maquinas WHERE marca IS NOT NULL AND marca <> ''`;
+    let query = `SELECT DISTINCT marca FROM maquinas WHERE activo = TRUE AND marca IS NOT NULL AND marca <> ''`;
     const params = [];
     if (tipo) {
       query += ' AND tipo_maquina_id = ?';
