@@ -11,7 +11,7 @@ const RotulosPage = () => {
   const [consultando, setConsultando] = useState(false);
 
   const escapeHtml = (value) =>
-    String(value ?? '')
+    String(value || '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')

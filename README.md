@@ -108,7 +108,7 @@ npm run build
 
 3) Ejecutar Caddy:
 ```bash
-caddy run --config "C:\Users\user\Documents\marco\NODE\PROYECTO KRATOS\caddyfile" --adapter caddyfile
+caddy run --config "g:\PROYECTO KRATOS\caddyfile" --adapter caddyfile
 ```
 
 Abrir `https://192.168.18.73`.
@@ -129,6 +129,7 @@ Abrir `https://192.168.18.73`.
 
 ### Productos
 - `GET /api/productos`
+- `GET /api/productos` (opcional: q, tipo, marca, stock=bajo|sin, minimo, page, limit)
 - `GET /api/productos/:id`
 - `POST /api/productos` (multipart/form-data)
 - `PUT /api/productos/:id` (multipart/form-data)

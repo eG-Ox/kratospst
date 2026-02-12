@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { backupsService } from '../../../core/services/apiServices';
+import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/BackupsPage.css';
 
 const BackupsPage = () => {
+  const mountedRef = useMountedRef();
   const [backups, setBackups] = useState([]);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
@@ -15,14 +17,19 @@ const BackupsPage = () => {
     try {
       setCargandoLista(true);
       const resp = await backupsService.listar();
+      if (!mountedRef.current) return;
       setBackups(resp.data || []);
     } catch (err) {
       console.error('Error cargando backups:', err);
-      setStatus('No se pudieron cargar los backups.');
+      if (mountedRef.current) {
+        setStatus('No se pudieron cargar los backups.');
+      }
     } finally {
-      setCargandoLista(false);
+      if (mountedRef.current) {
+        setCargandoLista(false);
+      }
     }
-  }, []);
+  }, [mountedRef]);
 
   useEffect(() => {
     if (esAdmin) {
@@ -35,13 +42,19 @@ const BackupsPage = () => {
     setLoading(true);
     try {
       await backupsService.manual();
-      setStatus('Backup creado correctamente.');
+      if (mountedRef.current) {
+        setStatus('Backup creado correctamente.');
+      }
       await cargarBackups();
     } catch (err) {
       console.error('Error creando backup:', err);
-      setStatus(err.response?.data?.error || 'Error al crear backup.');
+      if (mountedRef.current) {
+        setStatus(err.response?.data?.error || 'Error al crear backup.');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
   };
 

@@ -5,6 +5,7 @@ import {
   cotizacionesService,
   kitsService
 } from '../../../core/services/apiServices';
+import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/CotizacionesPage.css';
 
 const emptyCliente = {
@@ -20,6 +21,7 @@ const emptyCliente = {
 };
 
 const CotizacionesPage = () => {
+  const mountedRef = useMountedRef();
   const [tab, setTab] = useState('simple');
   const [clientes, setClientes] = useState([]);
   const [cotizacionEditId, setCotizacionEditId] = useState(null);
@@ -47,56 +49,62 @@ const CotizacionesPage = () => {
   const cargarClientes = useCallback(async () => {
     try {
       const resp = await clientesService.getAll();
+      if (!mountedRef.current) return;
       setClientes(resp.data || []);
     } catch (err) {
       console.error('Error cargando clientes:', err);
     }
-  }, []);
+  }, [mountedRef]);
 
   const cargarTipos = useCallback(async () => {
     try {
       const resp = await cotizacionesService.tiposPorAlmacen({ filtrar_stock: false });
+      if (!mountedRef.current) return;
       setTipos(resp.data || []);
     } catch (err) {
       console.error('Error cargando tipos:', err);
     }
-  }, []);
+  }, [mountedRef]);
 
   const cargarKits = useCallback(async () => {
     try {
       const resp = await kitsService.listarActivos();
+      if (!mountedRef.current) return;
       setKits(resp.data || []);
     } catch (err) {
       console.error('Error cargando kits:', err);
     }
-  }, []);
+  }, [mountedRef]);
 
   const cargarMarcas = useCallback(async () => {
     try {
       const resp = await cotizacionesService.filtrosCotizacion({ tipo: tipoId });
+      if (!mountedRef.current) return;
       setMarcas(resp.data || []);
     } catch (err) {
       console.error('Error cargando marcas:', err);
     }
-  }, [tipoId]);
+  }, [tipoId, mountedRef]);
 
   const cargarProductos = useCallback(async () => {
     try {
       const resp = await cotizacionesService.productosCotizacion({ tipo: tipoId, marca });
+      if (!mountedRef.current) return;
       setProductos(resp.data || []);
     } catch (err) {
       console.error('Error cargando productos:', err);
     }
-  }, [tipoId, marca]);
+  }, [tipoId, marca, mountedRef]);
 
   const buscarProductos = useCallback(async (q) => {
     try {
       const resp = await cotizacionesService.buscarProductos({ q, limit: 20 });
+      if (!mountedRef.current) return;
       setResultados(resp.data || []);
     } catch (err) {
       console.error('Error buscando productos:', err);
     }
-  }, []);
+  }, [mountedRef]);
 
   useEffect(() => {
     cargarClientes();
@@ -240,6 +248,7 @@ const CotizacionesPage = () => {
     try {
       const resp = await kitsService.obtenerParaVenta(kitId);
       const { productos_con_stock, productos_sin_stock } = resp.data;
+      if (!mountedRef.current) return;
       if (productos_sin_stock?.length) {
         setError('Algunos productos del kit no tienen stock.');
       } else {
@@ -259,7 +268,9 @@ const CotizacionesPage = () => {
       nuevos.forEach((nuevo) => agregarItemCotizacion(nuevo));
     } catch (err) {
       console.error('Error cargando kit:', err);
-      setError('Error al cargar kit');
+      if (mountedRef.current) {
+        setError('Error al cargar kit');
+      }
     }
   };
 
@@ -321,6 +332,7 @@ const CotizacionesPage = () => {
       setError('');
       const resp = await cotizacionesService.obtener(id);
       const { cotizacion, detalles } = resp.data;
+      if (!mountedRef.current) return;
       setClienteId(cotizacion?.cliente_id || '');
       setNotas(cotizacion?.nota || '');
       setItems(
@@ -340,9 +352,11 @@ const CotizacionesPage = () => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       console.error('Error cargando cotizacion:', err);
-      setError('No se pudo cargar la cotizacion');
+      if (mountedRef.current) {
+        setError('No se pudo cargar la cotizacion');
+      }
     }
-  }, []);
+  }, [mountedRef]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -403,6 +417,7 @@ const CotizacionesPage = () => {
       try {
         setConsultando(true);
         const resp = await clientesService.consultaDni(clienteForm.dni);
+        if (!mountedRef.current) return;
         if (resp.data?.success) {
           setClienteForm((prev) => ({
             ...prev,
@@ -415,9 +430,13 @@ const CotizacionesPage = () => {
         }
       } catch (err) {
         console.error('Error consultando DNI:', err);
-        setConsultaMensaje('Error consultando DNI.');
+        if (mountedRef.current) {
+          setConsultaMensaje('Error consultando DNI.');
+        }
       } finally {
-        setConsultando(false);
+        if (mountedRef.current) {
+          setConsultando(false);
+        }
       }
       return;
     }
@@ -429,6 +448,7 @@ const CotizacionesPage = () => {
     try {
       setConsultando(true);
       const resp = await clientesService.consultaRuc(clienteForm.ruc);
+      if (!mountedRef.current) return;
       if (resp.data?.success) {
         setClienteForm((prev) => ({
           ...prev,
@@ -441,22 +461,29 @@ const CotizacionesPage = () => {
       }
     } catch (err) {
       console.error('Error consultando RUC:', err);
-      setConsultaMensaje('Error consultando RUC.');
+      if (mountedRef.current) {
+        setConsultaMensaje('Error consultando RUC.');
+      }
     } finally {
-      setConsultando(false);
+      if (mountedRef.current) {
+        setConsultando(false);
+      }
     }
   };
 
   const crearCliente = async () => {
     try {
       const resp = await clientesService.create(clienteForm);
+      if (!mountedRef.current) return;
       await cargarClientes();
       setClienteId(resp.data?.id || '');
       setMostrarModalCliente(false);
       resetClienteForm();
     } catch (err) {
       console.error('Error creando cliente:', err);
-      setError(err.response?.data?.error || 'Error al crear cliente');
+      if (mountedRef.current) {
+        setError(err.response?.data?.error || 'Error al crear cliente');
+      }
     }
   };
 

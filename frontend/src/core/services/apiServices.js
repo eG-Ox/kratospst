@@ -39,9 +39,9 @@ export const marcasService = {
 
 // Servicios para Máquinas/Productos
 export const productosService = {
-  getAll: () =>
+  getAll: (params = {}) =>
     api.get('/productos', {
-      params: { _ts: Date.now() },
+      params: { _ts: Date.now(), ...params },
       headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
     }),
   getById: (id) => api.get(`/productos/${id}`),
@@ -55,26 +55,36 @@ export const productosService = {
   importarExcel: (data) =>
     api.post('/productos/importar', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
   create: (data) => {
-    const formData = new FormData();
-    Object.keys(data).forEach((key) => {
-      if (data[key] !== null && data[key] !== undefined) {
-        formData.append(key, data[key]);
-      }
-    });
-    return api.post('/productos', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    if (data?.ficha_tecnica instanceof File) {
+      const formData = new FormData();
+      Object.keys(data).forEach((key) => {
+        if (data[key] !== null && data[key] !== undefined) {
+          formData.append(key, data[key]);
+        }
+      });
+      return api.post('/productos', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+    }
+    const payload = { ...data };
+    delete payload.ficha_tecnica;
+    return api.post('/productos', payload);
   },
   update: (id, data) => {
-    const formData = new FormData();
-    Object.keys(data).forEach((key) => {
-      if (data[key] !== null && data[key] !== undefined) {
-        formData.append(key, data[key]);
-      }
-    });
-    return api.put(`/productos/${id}`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    if (data?.ficha_tecnica instanceof File) {
+      const formData = new FormData();
+      Object.keys(data).forEach((key) => {
+        if (data[key] !== null && data[key] !== undefined) {
+          formData.append(key, data[key]);
+        }
+      });
+      return api.put(`/productos/${id}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+    }
+    const payload = { ...data };
+    delete payload.ficha_tecnica;
+    return api.put(`/productos/${id}`, payload);
   },
   delete: (id) => api.delete(`/productos/${id}`),
   getUbicaciones: (id) => api.get(`/productos/${id}/ubicaciones`),

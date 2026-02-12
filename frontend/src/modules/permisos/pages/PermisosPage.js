@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { permisosService } from '../../../core/services/apiServices';
+import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/PermisosPage.css';
 
 const PermisosPage = () => {
+  const mountedRef = useMountedRef();
   const [roles, setRoles] = useState([]);
   const [rolSeleccionado, setRolSeleccionado] = useState('');
   const [permisos, setPermisos] = useState([]);
@@ -10,21 +12,12 @@ const PermisosPage = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    cargarRoles();
-  }, []);
-
-  useEffect(() => {
-    if (rolSeleccionado) {
-      cargarPermisos(rolSeleccionado);
-    }
-  }, [rolSeleccionado]);
-
-  const cargarRoles = async () => {
+  const cargarRoles = useCallback(async () => {
     try {
       setLoading(true);
       const resp = await permisosService.listarRoles();
       const rolesData = resp.data || [];
+      if (!mountedRef.current) return;
       setRoles(rolesData);
       if (rolesData.length) {
         setRolSeleccionado(rolesData[0].nombre);
@@ -32,25 +25,44 @@ const PermisosPage = () => {
       setError('');
     } catch (err) {
       console.error('Error cargando roles:', err);
-      setError('Error al cargar roles');
+      if (mountedRef.current) {
+        setError('Error al cargar roles');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [mountedRef]);
 
-  const cargarPermisos = async (rol) => {
+  const cargarPermisos = useCallback(async (rol) => {
     try {
       setLoading(true);
       const resp = await permisosService.obtenerPorRol(rol);
+      if (!mountedRef.current) return;
       setPermisos(resp.data || []);
       setError('');
     } catch (err) {
       console.error('Error cargando permisos:', err);
-      setError('Error al cargar permisos');
+      if (mountedRef.current) {
+        setError('Error al cargar permisos');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [mountedRef]);
+
+  useEffect(() => {
+    cargarRoles();
+  }, [cargarRoles]);
+
+  useEffect(() => {
+    if (rolSeleccionado) {
+      cargarPermisos(rolSeleccionado);
+    }
+  }, [rolSeleccionado, cargarPermisos]);
 
   const permisosPorGrupo = useMemo(() => {
     const grupos = {};
@@ -83,12 +95,18 @@ const PermisosPage = () => {
           permitido: !!permiso.permitido
         }))
       });
-      setError('');
+      if (mountedRef.current) {
+        setError('');
+      }
     } catch (err) {
       console.error('Error guardando permisos:', err);
-      setError('Error al guardar permisos');
+      if (mountedRef.current) {
+        setError('Error al guardar permisos');
+      }
     } finally {
-      setSaving(false);
+      if (mountedRef.current) {
+        setSaving(false);
+      }
     }
   };
 

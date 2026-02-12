@@ -1,5 +1,91 @@
 const pool = require('../config/database');
 
+const normalizarBusqueda = (value) =>
+  String(value || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9]/g, '');
+
+const actualizarBusquedaMaquinas = async (connection) => {
+  try {
+    const [cols] = await connection.execute("SHOW COLUMNS FROM maquinas LIKE 'codigo_busqueda'");
+    if (!cols.length) {
+      return;
+    }
+  } catch (_) {
+    return;
+  }
+
+  const [lockRows] = await connection.execute('SELECT GET_LOCK(?, 1) AS got', ['kratos_busqueda']);
+  if (!lockRows[0] || lockRows[0].got !== 1) {
+    console.log('Aviso: no se pudo obtener lock kratos_busqueda, se omite backfill.');
+    return;
+  }
+
+  try {
+    await connection.execute('SET SESSION innodb_lock_wait_timeout = 5');
+    const batchSize = 200;
+    let totalActualizados = 0;
+    while (true) {
+      const [rows] = await connection.execute(
+        `SELECT id, codigo, descripcion, codigo_busqueda, descripcion_busqueda
+         FROM maquinas
+         WHERE (codigo_busqueda IS NULL OR codigo_busqueda = '')
+            OR ((descripcion_busqueda IS NULL OR descripcion_busqueda = '') AND descripcion IS NOT NULL AND descripcion <> '')
+         ORDER BY id ASC
+         LIMIT ${batchSize}`
+      );
+      if (!rows.length) {
+        break;
+      }
+      for (const row of rows) {
+        const codigoBusqueda = normalizarBusqueda(row.codigo);
+        const descripcionBusquedaRaw = normalizarBusqueda(row.descripcion);
+        const descripcionBusqueda = descripcionBusquedaRaw || null;
+        try {
+          await connection.execute(
+            'UPDATE maquinas SET codigo_busqueda = ?, descripcion_busqueda = ? WHERE id = ?',
+            [codigoBusqueda, descripcionBusqueda, row.id]
+          );
+          totalActualizados += 1;
+        } catch (error) {
+          if (error.code === 'ER_LOCK_WAIT_TIMEOUT' || error.code === 'ER_LOCK_DEADLOCK') {
+            console.log('Aviso backfill bloqueado en maquinas.id =', row.id);
+            return;
+          }
+          throw error;
+        }
+      }
+      if (totalActualizados && totalActualizados % 200 === 0) {
+        console.log(`Backfill busqueda: ${totalActualizados} actualizados`);
+      }
+    }
+  } finally {
+    try {
+      await connection.execute('SELECT RELEASE_LOCK(?)', ['kratos_busqueda']);
+    } catch (_) {}
+  }
+};
+
+const sincronizarUbicacionesBase = async (connection) => {
+  try {
+    await connection.execute(
+      `INSERT INTO maquinas_ubicaciones (producto_id, ubicacion_letra, ubicacion_numero, stock)
+       SELECT m.id, m.ubicacion_letra, m.ubicacion_numero, m.stock
+       FROM maquinas m
+       WHERE m.activo = TRUE
+         AND m.ubicacion_letra IS NOT NULL
+         AND m.ubicacion_numero IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM maquinas_ubicaciones mu WHERE mu.producto_id = m.id
+         )`
+    );
+  } catch (error) {
+    console.log('Aviso sincronizando ubicaciones base:', error.message);
+  }
+};
+
 // Crear tabla de usuarios
 const crearUsuarios = `
 CREATE TABLE IF NOT EXISTS usuarios (
@@ -47,8 +133,8 @@ CREATE TABLE IF NOT EXISTS maquinas (
   tipo_maquina_id INT NOT NULL,
   marca VARCHAR(100) NOT NULL,
   descripcion TEXT,
-  codigo_normalizado VARCHAR(80) GENERATED ALWAYS AS (REGEXP_REPLACE(UPPER(codigo), '[^A-Z0-9]', '')) STORED,
-  descripcion_normalizada VARCHAR(255) GENERATED ALWAYS AS (REGEXP_REPLACE(UPPER(descripcion), '[^A-Z0-9]', '')) STORED,
+  codigo_busqueda VARCHAR(80),
+  descripcion_busqueda VARCHAR(255),
   ubicacion_letra CHAR(1),
   ubicacion_numero INT,
   stock INT NOT NULL DEFAULT 0,
@@ -62,9 +148,12 @@ CREATE TABLE IF NOT EXISTS maquinas (
   fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (tipo_maquina_id) REFERENCES tipos_maquinas(id) ON DELETE RESTRICT,
   INDEX idx_codigo (codigo),
-  INDEX idx_codigo_normalizado (codigo_normalizado),
-  INDEX idx_desc_normalizada (descripcion_normalizada),
-  INDEX idx_tipo (tipo_maquina_id)
+  INDEX idx_codigo_busqueda (codigo_busqueda),
+  INDEX idx_desc_busqueda (descripcion_busqueda),
+  INDEX idx_tipo (tipo_maquina_id),
+  INDEX idx_marca (marca),
+  INDEX idx_activo (activo),
+  INDEX idx_stock (stock)
 );
 `;
 
@@ -463,38 +552,61 @@ async function inicializarBaseDatos() {
       }
     }
 
-    // Asegurar columnas normalizadas en maquinas
+    // Asegurar columnas de busqueda en maquinas (compatibles con MySQL 5.7)
     try {
-      await connection.execute(
-        "ALTER TABLE maquinas ADD COLUMN codigo_normalizado VARCHAR(80) GENERATED ALWAYS AS (REGEXP_REPLACE(UPPER(codigo), '[^A-Z0-9]', '')) STORED"
-      );
+      await connection.execute('ALTER TABLE maquinas ADD COLUMN codigo_busqueda VARCHAR(80) NULL');
     } catch (error) {
       if (error.code !== 'ER_DUP_FIELDNAME') {
         throw error;
       }
     }
     try {
-      await connection.execute(
-        "ALTER TABLE maquinas ADD COLUMN descripcion_normalizada VARCHAR(255) GENERATED ALWAYS AS (REGEXP_REPLACE(UPPER(descripcion), '[^A-Z0-9]', '')) STORED"
-      );
+      await connection.execute('ALTER TABLE maquinas ADD COLUMN descripcion_busqueda VARCHAR(255) NULL');
     } catch (error) {
       if (error.code !== 'ER_DUP_FIELDNAME') {
         throw error;
       }
     }
     try {
-      await connection.execute('CREATE INDEX idx_codigo_normalizado ON maquinas (codigo_normalizado)');
+      await connection.execute('CREATE INDEX idx_codigo_busqueda ON maquinas (codigo_busqueda)');
     } catch (error) {
       if (error.code !== 'ER_DUP_KEYNAME') {
         throw error;
       }
     }
     try {
-      await connection.execute('CREATE INDEX idx_desc_normalizada ON maquinas (descripcion_normalizada)');
+      await connection.execute('CREATE INDEX idx_desc_busqueda ON maquinas (descripcion_busqueda)');
     } catch (error) {
       if (error.code !== 'ER_DUP_KEYNAME') {
         throw error;
       }
+    }
+    try {
+      await connection.execute('CREATE INDEX idx_marca ON maquinas (marca)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute('CREATE INDEX idx_activo ON maquinas (activo)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute('CREATE INDEX idx_stock ON maquinas (stock)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
+
+    try {
+      await actualizarBusquedaMaquinas(connection);
+    } catch (error) {
+      console.log('Aviso actualizando columnas de busqueda:', error.message);
     }
     
     console.log('Creando tabla ingresos_salidas...');
@@ -632,6 +744,7 @@ async function inicializarBaseDatos() {
     await connection.execute(crearMaquinasUbicaciones);
     console.log('✓ Tabla maquinas_ubicaciones creada exitosamente');
     console.log('✓ Tabla inventario_detalle creada exitosamente');
+    await sincronizarUbicacionesBase(connection);
 
     // Asegurar columnas de ubicacion en inventario_detalle
     try {

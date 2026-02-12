@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { authService, usuariosService } from '../../../core/services/apiServices';
+import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/UsuariosPage.css';
 
 const UsuariosPage = () => {
+  const mountedRef = useMountedRef();
   const [usuarios, setUsuarios] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -28,20 +30,26 @@ const UsuariosPage = () => {
     try {
       setLoading(true);
       const resp = await usuariosService.listar();
+      if (!mountedRef.current) return;
       setUsuarios(resp.data || []);
       setError('');
     } catch (err) {
       console.error('Error cargando usuarios:', err);
-      setError('Error al cargar usuarios');
+      if (mountedRef.current) {
+        setError('Error al cargar usuarios');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, []);
+  }, [mountedRef]);
 
   const cargarPerfil = useCallback(async () => {
     try {
       setLoading(true);
       const resp = await usuariosService.obtenerPerfil();
+      if (!mountedRef.current) return;
       setFormData({
         nombre: resp.data.nombre || '',
         email: resp.data.email || '',
@@ -51,11 +59,15 @@ const UsuariosPage = () => {
       setError('');
     } catch (err) {
       console.error('Error cargando perfil:', err);
-      setError('Error al cargar perfil');
+      if (mountedRef.current) {
+        setError('Error al cargar perfil');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, []);
+  }, [mountedRef]);
 
   useEffect(() => {
     if (esAdmin) {
@@ -81,7 +93,9 @@ const UsuariosPage = () => {
     try {
       if (esAdmin) {
         await usuariosService.actualizar(editando.id, formData);
-        setEditando(null);
+        if (mountedRef.current) {
+          setEditando(null);
+        }
         await cargarUsuarios();
       } else {
         await usuariosService.actualizarPerfil({
@@ -92,7 +106,9 @@ const UsuariosPage = () => {
       }
     } catch (err) {
       console.error('Error guardando usuario:', err);
-      setError(err.response?.data?.error || 'Error al guardar usuario');
+      if (mountedRef.current) {
+        setError(err.response?.data?.error || 'Error al guardar usuario');
+      }
     }
   };
 
@@ -111,11 +127,15 @@ const UsuariosPage = () => {
         contrasena: nuevoUsuario.contrasena,
         rol: nuevoUsuario.rol
       });
-      setCreando(false);
+      if (mountedRef.current) {
+        setCreando(false);
+      }
       await cargarUsuarios();
     } catch (err) {
       console.error('Error creando usuario:', err);
-      setError(err.response?.data?.error || 'Error al crear usuario');
+      if (mountedRef.current) {
+        setError(err.response?.data?.error || 'Error al crear usuario');
+      }
     }
   };
 

@@ -214,13 +214,13 @@ const IngresosPage = ({ usuario }) => {
           setMaquinaSeleccionada(maquina);
         } else {
           const confirmar = window.confirm(
-            `??Crear nuevo producto?
+            `?Crear nuevo producto?
 
-C??digo: ${parsed.codigo}
+C?digo: ${parsed.codigo}
 Marca: ${parsed.marca}
 Tipo: ${parsed.tipo_maquina}
-Descripci??n: ${parsed.descripcion}
-Ubicaci??n: ${parsed.ubicacion}`
+Descripci?n: ${parsed.descripcion}
+Ubicaci?n: ${parsed.ubicacion}`
           );
           if (confirmar) {
             const id = await crearProductoDesdeQR(parsed);
@@ -230,7 +230,7 @@ Ubicaci??n: ${parsed.ubicacion}`
             setSuccess(`Producto creado: ${parsed.codigo}`);
             setTimeout(() => setSuccess(''), 2000);
           } else {
-            setError('Creaci??n de producto cancelada');
+            setError('Creaci?n de producto cancelada');
           }
         }
         return;
@@ -243,11 +243,11 @@ Ubicaci??n: ${parsed.ubicacion}`
         setMaquinaSeleccionada(maquina);
         setError('');
       } else {
-        setError('M??quina no encontrada. Escanea un QR completo para crear producto nuevo.');
+        setError('M?quina no encontrada. Escanea un QR completo para crear producto nuevo.');
       }
     } catch (error) {
       console.error('Error:', error);
-      setError('Error procesando c??digo QR');
+      setError('Error procesando c?digo QR');
     }
   };
 

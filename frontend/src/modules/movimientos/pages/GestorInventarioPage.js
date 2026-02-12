@@ -8,9 +8,19 @@ import {
   tiposMaquinasService
 } from '../../../core/services/apiServices';
 import { parseQRPayload } from '../../../shared/utils/qr';
+import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/MovimientosPage.css';
 
+const normalizarMarcaCodigo = (value) => String(value || '').trim().toUpperCase();
+
+const normalizarCodigo = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+
 const GestorInventarioPage = () => {
+  const mountedRef = useMountedRef();
   const [productos, setProductos] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [marcas, setMarcas] = useState([]);
@@ -53,22 +63,25 @@ const GestorInventarioPage = () => {
         tiposMaquinasService.getAll(),
         marcasService.getAll()
       ]);
+      if (!mountedRef.current) return;
       setProductos(respProductos.data);
       setTipos(respTipos.data);
       setMarcas(respMarcas.data || []);
     } catch (err) {
       console.error('Error cargando datos:', err);
-      setError('Error al cargar productos');
+      if (mountedRef.current) {
+        setError('Error al cargar productos');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, []);
+  }, [mountedRef]);
 
   useEffect(() => {
     cargarDatos();
   }, [cargarDatos]);
-
-  const normalizarMarcaCodigo = (value) => String(value || '').trim().toUpperCase();
 
   const marcasMap = useMemo(() => {
     const map = {};
@@ -81,24 +94,24 @@ const GestorInventarioPage = () => {
     return map;
   }, [marcas]);
 
-  const resolverMarcaCodigo = (value) => {
+  const resolverMarcaCodigo = useCallback((value) => {
     const code = normalizarMarcaCodigo(value);
     return marcasMap[code] || value || '';
-  };
+  }, [marcasMap]);
 
   const totalUnidades = useMemo(
     () => itemsBatch.reduce((sum, item) => sum + (Number(item.cantidad) || 0), 0),
     [itemsBatch]
   );
 
-  const formatearUbicacion = (producto) => {
+  const formatearUbicacion = useCallback((producto) => {
     if (!producto) return '-';
     const letra = producto.ubicacion_letra || '';
     const numero = producto.ubicacion_numero || '';
     return letra || numero ? `${letra}${numero}` : '-';
-  };
+  }, []);
 
-  const parsearQR = (textoQR) => {
+  const parsearQR = useCallback((textoQR) => {
     const parsed = parseQRPayload(textoQR);
     if (!parsed.ok) {
       setError(parsed.error || 'QR invalido');
@@ -120,14 +133,7 @@ const GestorInventarioPage = () => {
       marca: marcaNormalizada,
       marca_codigo: parsed.data?.marca
     };
-  };
-
-
-  const normalizarCodigo = (value) =>
-    String(value || '')
-      .trim()
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, '');
+  }, [modo, resolverMarcaCodigo]);
 
   const productosMap = useMemo(() => {
     const map = new Map();
@@ -140,11 +146,12 @@ const GestorInventarioPage = () => {
     return map;
   }, [productos]);
 
-  const buscarProductoRemoto = async (codigoValue) => {
+  const buscarProductoRemoto = useCallback(async (codigoValue) => {
     try {
       const resp = await productosService.getByCodigo(codigoValue);
       const producto = resp?.data;
       if (producto?.id) {
+        if (!mountedRef.current) return producto;
         setProductos((prev) => {
           const existe = prev.some(
             (item) => normalizarCodigo(item.codigo) === normalizarCodigo(producto.codigo)
@@ -159,15 +166,15 @@ const GestorInventarioPage = () => {
       }
     }
     return null;
-  };
+  }, [mountedRef]);
 
-  const getProductoPorCodigo = async (codigoValue) => {
+  const getProductoPorCodigo = useCallback(async (codigoValue) => {
     const key = normalizarCodigo(codigoValue);
     if (!key) return null;
     const local = productosMap.get(key);
     if (local) return local;
     return await buscarProductoRemoto(codigoValue);
-  };
+  }, [buscarProductoRemoto, productosMap]);
 
   const normalizarDocumento = (value) => String(value || '').replace(/\D/g, '');
 
@@ -215,7 +222,9 @@ const GestorInventarioPage = () => {
       if (tipoDoc === 'dni') {
         const consulta = await clientesService.consultaDni(documento);
         if (!consulta.data?.success) {
-          setError(consulta.data?.error || 'No se pudo validar DNI');
+          if (mountedRef.current) {
+            setError(consulta.data?.error || 'No se pudo validar DNI');
+          }
           return false;
         }
         await clientesService.create({
@@ -228,7 +237,9 @@ const GestorInventarioPage = () => {
       }
       const consulta = await clientesService.consultaRuc(documento);
       if (!consulta.data?.success) {
-        setError(consulta.data?.error || 'No se pudo validar RUC');
+        if (mountedRef.current) {
+          setError(consulta.data?.error || 'No se pudo validar RUC');
+        }
         return false;
       }
       await clientesService.create({
@@ -240,12 +251,14 @@ const GestorInventarioPage = () => {
       return true;
     } catch (err) {
       console.error('Error validando documento:', err);
-      setError('No se pudo validar documento');
+      if (mountedRef.current) {
+        setError('No se pudo validar documento');
+      }
       return false;
     }
   };
 
-  const construirInfoItem = (producto, parsed) => {
+  const construirInfoItem = useCallback((producto, parsed) => {
     if (parsed && !parsed.partial) {
       return {
         marca: parsed.marca || '',
@@ -264,9 +277,9 @@ const GestorInventarioPage = () => {
       };
     }
     return { marca: '', descripcion: '', tipo: '', ubicacion: '' };
-  };
+  }, [formatearUbicacion]);
 
-  const agregarCodigo = async (valor) => {
+  const agregarCodigo = useCallback(async (valor) => {
     const raw = String(valor || '').trim();
     if (!raw) return;
     const parsed = parsearQR(raw);
@@ -311,7 +324,7 @@ const GestorInventarioPage = () => {
       qrData: parsed && !parsed.partial ? parsed : null,
       info: infoItem
     });
-  };
+  }, [construirInfoItem, getProductoPorCodigo, modo, parsearQR]);
 
   const activarCamara = async () => {
     setError('');
@@ -536,7 +549,9 @@ const GestorInventarioPage = () => {
       nombre: 'General',
       descripcion: 'Generado automáticamente'
     });
-    setTipos((prev) => [...prev, response.data]);
+    if (mountedRef.current) {
+      setTipos((prev) => [...prev, response.data]);
+    }
     return response.data.id;
   };
 
@@ -553,7 +568,9 @@ const GestorInventarioPage = () => {
       nombre: nombreNormalizado,
       descripcion: 'Creado desde QR'
     });
-    setTipos((prev) => [...prev, response.data]);
+    if (mountedRef.current) {
+      setTipos((prev) => [...prev, response.data]);
+    }
     return response.data.id;
   };
 
@@ -686,21 +703,31 @@ const GestorInventarioPage = () => {
       }
       await movimientosService.registrarBatch(batchItems);
 
-      setSuccess(`Movimientos registrados: ${itemsBatch.length}`);
-      setItemsBatch([]);
-      setCodigoInput('');
-      setMotivo('');
-      setNumeroGuia('');
-      setDniCliente('');
-      setFase('filtro');
-      await cargarDatos();
-      setUltimoScan(null);
-      setTimeout(() => setSuccess(''), 3000);
+      if (mountedRef.current) {
+        setSuccess(`Movimientos registrados: ${itemsBatch.length}`);
+        setItemsBatch([]);
+        setCodigoInput('');
+        setMotivo('');
+        setNumeroGuia('');
+        setDniCliente('');
+        setFase('filtro');
+        await cargarDatos();
+        setUltimoScan(null);
+        setTimeout(() => {
+          if (mountedRef.current) {
+            setSuccess('');
+          }
+        }, 3000);
+      }
     } catch (err) {
       console.error('Error registrando movimiento:', err);
-      setError(err.response?.data?.error || 'Error al registrar movimiento');
+      if (mountedRef.current) {
+        setError(err.response?.data?.error || 'Error al registrar movimiento');
+      }
     } finally {
-      setIsSubmitting(false);
+      if (mountedRef.current) {
+        setIsSubmitting(false);
+      }
     }
   };
 

@@ -1,6 +1,7 @@
 const pool = require('../../core/config/database');
 const { ExcelJS, addSheetFromObjects, workbookToBuffer } = require('../../shared/utils/excel');
 const { isNonEmptyString, isNonNegative, isPositiveInt, validateDocumento, toNumber } = require('../../shared/utils/validation');
+const { syncUbicacionPrincipal } = require('../../shared/utils/ubicaciones');
 
 const formatDate = (value) => {
   if (!value) return null;
@@ -107,6 +108,8 @@ const normalizarTexto = (value) => String(value || '').trim();
 const normalizarClave = (value) =>
   normalizarTexto(value)
     .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^A-Z0-9]/g, '');
 
 const obtenerTipoRequerimientoId = async (connection) => {
@@ -161,8 +164,8 @@ const buscarProductoPorClave = async (connection, clave) => {
     `
       SELECT id, codigo, marca, descripcion, activo
       FROM maquinas
-      WHERE codigo_normalizado = ?
-         OR descripcion_normalizada = ?
+      WHERE codigo_busqueda = ?
+         OR descripcion_busqueda = ?
       LIMIT 1
     `,
     [normalizada, normalizada]
@@ -193,16 +196,21 @@ const crearProductoDesdeRequerimiento = async (connection, item) => {
   const precioCompra = Number(item.precioCompra || item.precio_compra || 0);
   const precioVenta = Number(item.precioVenta || item.precio_venta || 0);
   const precioMinimo = Number(item.precioMinimo || item.precio_minimo || precioVenta || 0);
+  const codigoBusqueda = normalizarClave(codigo);
+  const descripcionBusqueda = normalizarClave(descripcion);
 
   const [result] = await connection.execute(
     `INSERT INTO maquinas
-      (codigo, tipo_maquina_id, marca, descripcion, ubicacion_letra, ubicacion_numero, stock, precio_compra, precio_venta, precio_minimo)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (codigo, tipo_maquina_id, marca, descripcion, codigo_busqueda, descripcion_busqueda,
+       ubicacion_letra, ubicacion_numero, stock, precio_compra, precio_venta, precio_minimo)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       codigo,
       tipoId,
       marca,
       descripcion,
+      codigoBusqueda,
+      descripcionBusqueda,
       null,
       null,
       0,
@@ -1123,7 +1131,7 @@ exports.confirmarPicking = async (req, res) => {
     }
 
     const [maquinas] = await connection.execute(
-      'SELECT id, stock FROM maquinas WHERE codigo = ? FOR UPDATE',
+      'SELECT id, stock, ubicacion_letra, ubicacion_numero FROM maquinas WHERE codigo = ? FOR UPDATE',
       [detalle.codigo]
     );
     if (maquinas.length === 0) {
@@ -1144,10 +1152,17 @@ exports.confirmarPicking = async (req, res) => {
       [maquina.id, usuarioId, cantidadNum, `Picking venta #${detalle.venta_id}`]
     );
 
+    const nuevoStock = Number(maquina.stock || 0) - cantidadNum;
     await connection.execute('UPDATE maquinas SET stock = stock - ? WHERE id = ?', [
       cantidadNum,
       maquina.id
     ]);
+    await syncUbicacionPrincipal(connection, {
+      id: maquina.id,
+      ubicacion_letra: maquina.ubicacion_letra,
+      ubicacion_numero: maquina.ubicacion_numero,
+      stock: nuevoStock
+    });
 
     const detalleTargetId = detalleId || detalle.id;
     await connection.execute(

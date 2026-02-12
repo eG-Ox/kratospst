@@ -6,6 +6,12 @@ import {
 } from '../../../core/services/apiServices';
 import '../styles/InventarioGeneralPage.css';
 
+const normalizarCodigo = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+
 const InventarioGeneralPage = () => {
   const [inventarioId, setInventarioId] = useState(null);
   const [estadoInventario, setEstadoInventario] = useState('abierto');
@@ -45,12 +51,6 @@ const InventarioGeneralPage = () => {
   const audioCtxRef = useRef(null);
   const refreshTimerRef = useRef(null);
 
-  const normalizarCodigo = (value) =>
-    String(value || '')
-      .trim()
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, '');
-
   const usuarioActual = useMemo(() => {
     try {
       return JSON.parse(localStorage.getItem('usuario') || '{}');
@@ -74,7 +74,7 @@ const InventarioGeneralPage = () => {
     }
   }, []);
 
-  const buscarProductoRemoto = async (codigoValue) => {
+  const buscarProductoRemoto = useCallback(async (codigoValue) => {
     try {
       const resp = await productosService.getByCodigo(codigoValue);
       const producto = resp?.data;
@@ -93,7 +93,7 @@ const InventarioGeneralPage = () => {
       }
     }
     return null;
-  };
+  }, []);
 
   const cargarHistorial = useCallback(async () => {
     try {
@@ -169,7 +169,7 @@ const InventarioGeneralPage = () => {
     }
   };
 
-  const habilitarAudio = async () => {
+  const habilitarAudio = useCallback(async () => {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtx) return;
@@ -185,9 +185,9 @@ const InventarioGeneralPage = () => {
       console.warn('No se pudo habilitar audio:', err);
       return null;
     }
-  };
+  }, [audioCtxRef]);
 
-  const reproducirBeep = async () => {
+  const reproducirBeep = useCallback(async () => {
     try {
       const ctx = await habilitarAudio();
       if (!ctx) return;
@@ -207,14 +207,64 @@ const InventarioGeneralPage = () => {
     } catch (err) {
       console.warn('No se pudo reproducir el beep:', err);
     }
-  };
+  }, [habilitarAudio]);
 
-  const limpiarErrores = () => {
+  const limpiarErrores = useCallback(() => {
     setError('');
     setSuccess('');
-  };
+  }, []);
 
-  const agregarCodigo = async (codigoScan) => {
+  const refrescarDetalles = useCallback(async () => {
+    if (!inventarioId) return;
+    const resp = await inventarioGeneralService.obtener(inventarioId);
+    setDetalles(resp.data.detalles || []);
+    setEstadoInventario(resp.data.inventario.estado);
+    setInventarioInfo(resp.data.inventario);
+  }, [inventarioId]);
+
+  const programarRefresh = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = setTimeout(() => {
+      refreshTimerRef.current = null;
+      refrescarDetalles();
+    }, 400);
+  }, [refrescarDetalles, refreshTimerRef]);
+
+  const parsearQR = useCallback((textoQR) => {
+    const raw = String(textoQR || '').trim();
+    if (!raw) {
+      setError('QR invalido');
+      return null;
+    }
+    const tokens = raw
+      .replace(/\r/g, '')
+      .split(/[\n,;/\s]+/g)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const codigo = tokens[0] || raw;
+    return { codigo, partial: true };
+  }, []);
+
+  const parsearZonaQR = useCallback((textoQR) => {
+    const raw = String(textoQR || '').trim().toUpperCase();
+    if (!raw) {
+      return { error: 'Zona vacia' };
+    }
+    const cleaned = raw.startsWith('ZONA:') ? raw.replace('ZONA:', '').trim() : raw;
+    const match = cleaned.match(/^([A-H])\s*(\d+)$/);
+    if (!match) {
+      return { error: 'Zona invalida. Usa ZONA:A1 o A1' };
+    }
+    const numero = Number(match[2]);
+    if (!Number.isInteger(numero) || (numero !== 1 && numero !== 2)) {
+      return { error: 'Subzona invalida. Solo se permite 1 o 2' };
+    }
+    return { letra: match[1], numero };
+  }, []);
+
+  const agregarCodigo = useCallback(async (codigoScan) => {
     if (!inventarioId) {
       setError('Inicia un inventario primero');
       return;
@@ -269,25 +319,17 @@ const InventarioGeneralPage = () => {
       console.error('Error agregando conteo:', err);
       setError(err.response?.data?.error || 'Error agregando conteo');
     }
-  };
-
-  const refrescarDetalles = async () => {
-    if (!inventarioId) return;
-    const resp = await inventarioGeneralService.obtener(inventarioId);
-    setDetalles(resp.data.detalles || []);
-    setEstadoInventario(resp.data.inventario.estado);
-    setInventarioInfo(resp.data.inventario);
-  };
-
-  const programarRefresh = () => {
-    if (refreshTimerRef.current) {
-      clearTimeout(refreshTimerRef.current);
-    }
-    refreshTimerRef.current = setTimeout(() => {
-      refreshTimerRef.current = null;
-      refrescarDetalles();
-    }, 400);
-  };
+  }, [
+    inventarioId,
+    zonaLetra,
+    zonaNumero,
+    limpiarErrores,
+    parsearQR,
+    productos,
+    buscarProductoRemoto,
+    programarRefresh,
+    reproducirBeep
+  ]);
 
   const ajustarConteo = async (detalleId, conteo) => {
     if (!inventarioId) return;
@@ -375,37 +417,6 @@ const InventarioGeneralPage = () => {
     setCameraActive(true);
   };
 
-  const parsearQR = useCallback((textoQR) => {
-    const raw = String(textoQR || '').trim();
-    if (!raw) {
-      setError('QR invalido');
-      return null;
-    }
-    const tokens = raw
-      .replace(/\r/g, '')
-      .split(/[\n,;\/\s]+/g)
-      .map((item) => item.trim())
-      .filter(Boolean);
-    const codigo = tokens[0] || raw;
-    return { codigo, partial: true };
-  }, []);
-
-  const parsearZonaQR = useCallback((textoQR) => {
-    const raw = String(textoQR || '').trim().toUpperCase();
-    if (!raw) {
-      return { error: 'Zona vacia' };
-    }
-    const cleaned = raw.startsWith('ZONA:') ? raw.replace('ZONA:', '').trim() : raw;
-    const match = cleaned.match(/^([A-H])\s*(\d+)$/);
-    if (!match) {
-      return { error: 'Zona invalida. Usa ZONA:A1 o A1' };
-    }
-    const numero = Number(match[2]);
-    if (!Number.isInteger(numero) || (numero !== 1 && numero !== 2)) {
-      return { error: 'Subzona invalida. Solo se permite 1 o 2' };
-    }
-    return { letra: match[1], numero };
-  }, []);
 
   const detenerStream = useCallback(() => {
     scanActivoRef.current = false;

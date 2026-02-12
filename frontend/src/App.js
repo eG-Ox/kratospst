@@ -26,6 +26,7 @@ import RotulosPage from './modules/rotulos/pages/RotulosPage';
 // Componentes compartidos
 import Navbar from './shared/components/Navbar';
 import ProtectedRoute from './shared/components/ProtectedRoute';
+import ErrorBoundary from './shared/components/ErrorBoundary';
 import { authService } from './core/services/apiServices';
 
 // Estilos
@@ -116,176 +117,178 @@ function App() {
   }
 
   return (
-    <Router>
-      {isAuthenticated && <Navbar usuario={usuario} onLogout={handleLogout} />}
-      <Routes>
-        <Route
-          path="/login"
-          element={
-            isAuthenticated ? (
-              <Navigate to="/dashboard" />
-            ) : (
-              <LoginPage onLoginSuccess={handleLoginSuccess} />
-            )
-          }
-        />
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <DashboardPage usuario={usuario} />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/productos"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <ProductosPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/tipos-maquinas"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <TiposMaquinasPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/inventario"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <GestorInventarioPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/inventario-general"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <InventarioGeneralPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="/ingresos" element={<Navigate to="/inventario" />} />
-        <Route path="/salidas" element={<Navigate to="/inventario" />} />
-        <Route
-          path="/kits"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <KitsPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/cotizaciones"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <CotizacionesPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/cotizaciones-historial"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <HistorialCotizacionesPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/clientes"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <ClientesPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/usuarios"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <UsuariosPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/backups"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <BackupsPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/permisos"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <PermisosPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/historial"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <HistorialPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/ventas"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <VentasPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/ventas-envios"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <EnviosPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/ventas-detalle"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <VentasDetallePage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/ventas-requerimientos"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <RequerimientosPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/picking"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <PickingPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/rotulos"
-          element={
-            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
-              <RotulosPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="/" element={<Navigate to="/dashboard" />} />
-      </Routes>
-    </Router>
+    <ErrorBoundary>
+      <Router>
+        {isAuthenticated && <Navbar usuario={usuario} onLogout={handleLogout} />}
+        <Routes>
+          <Route
+            path="/login"
+            element={
+              isAuthenticated ? (
+                <Navigate to="/dashboard" />
+              ) : (
+                <LoginPage onLoginSuccess={handleLoginSuccess} />
+              )
+            }
+          />
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <DashboardPage usuario={usuario} />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/productos"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProductosPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/tipos-maquinas"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <TiposMaquinasPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/inventario"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <GestorInventarioPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/inventario-general"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <InventarioGeneralPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/ingresos" element={<Navigate to="/inventario" />} />
+          <Route path="/salidas" element={<Navigate to="/inventario" />} />
+          <Route
+            path="/kits"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <KitsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/cotizaciones"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <CotizacionesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/cotizaciones-historial"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <HistorialCotizacionesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/clientes"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ClientesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/usuarios"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <UsuariosPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/backups"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <BackupsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/permisos"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <PermisosPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/historial"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <HistorialPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ventas"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <VentasPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ventas-envios"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <EnviosPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ventas-detalle"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <VentasDetallePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ventas-requerimientos"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <RequerimientosPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/picking"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <PickingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/rotulos"
+            element={
+              <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <RotulosPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/" element={<Navigate to="/dashboard" />} />
+        </Routes>
+      </Router>
+    </ErrorBoundary>
   );
 }
 

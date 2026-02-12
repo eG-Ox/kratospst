@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { clientesService } from '../../../core/services/apiServices';
+import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/ClientesPage.css';
 
 const emptyForm = {
@@ -15,6 +16,7 @@ const emptyForm = {
 };
 
 const ClientesPage = () => {
+  const mountedRef = useMountedRef();
   const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -24,23 +26,28 @@ const ClientesPage = () => {
   const [consultando, setConsultando] = useState(false);
   const [consultaMensaje, setConsultaMensaje] = useState('');
 
-  useEffect(() => {
-    cargarClientes();
-  }, []);
-
-  const cargarClientes = async () => {
+  const cargarClientes = useCallback(async () => {
     try {
       setLoading(true);
       const response = await clientesService.getAll();
+      if (!mountedRef.current) return;
       setClientes(response.data);
       setError('');
     } catch (err) {
       console.error('Error cargando clientes:', err);
-      setError('Error al cargar clientes');
+      if (mountedRef.current) {
+        setError('Error al cargar clientes');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [mountedRef]);
+
+  useEffect(() => {
+    cargarClientes();
+  }, [cargarClientes]);
 
   const resetForm = () => {
     setFormData(emptyForm);
@@ -78,6 +85,7 @@ const ClientesPage = () => {
       try {
         setConsultando(true);
         const resp = await clientesService.consultaDni(formData.dni);
+        if (!mountedRef.current) return;
         if (resp.data?.success) {
           setFormData((prev) => ({
             ...prev,
@@ -90,9 +98,13 @@ const ClientesPage = () => {
         }
       } catch (err) {
         console.error('Error consultando DNI:', err);
-        setConsultaMensaje('Error consultando DNI.');
+        if (mountedRef.current) {
+          setConsultaMensaje('Error consultando DNI.');
+        }
       } finally {
-        setConsultando(false);
+        if (mountedRef.current) {
+          setConsultando(false);
+        }
       }
       return;
     }
@@ -107,6 +119,7 @@ const ClientesPage = () => {
     try {
       setConsultando(true);
       const resp = await clientesService.consultaRuc(formData.ruc);
+      if (!mountedRef.current) return;
       if (resp.data?.success) {
         setFormData((prev) => ({
           ...prev,
@@ -119,9 +132,13 @@ const ClientesPage = () => {
       }
     } catch (err) {
       console.error('Error consultando RUC:', err);
-      setConsultaMensaje('Error consultando RUC.');
+      if (mountedRef.current) {
+        setConsultaMensaje('Error consultando RUC.');
+      }
     } finally {
-      setConsultando(false);
+      if (mountedRef.current) {
+        setConsultando(false);
+      }
     }
   };
 
@@ -135,12 +152,16 @@ const ClientesPage = () => {
       } else {
         await clientesService.create(formData);
       }
-      setMostrarModal(false);
+      if (mountedRef.current) {
+        setMostrarModal(false);
+      }
       resetForm();
       await cargarClientes();
     } catch (err) {
       console.error('Error guardando cliente:', err);
-      setError(err.response?.data?.error || 'Error al guardar cliente');
+      if (mountedRef.current) {
+        setError(err.response?.data?.error || 'Error al guardar cliente');
+      }
     }
   };
 
@@ -168,7 +189,9 @@ const ClientesPage = () => {
         await cargarClientes();
       } catch (err) {
         console.error('Error eliminando cliente:', err);
-        setError('Error al eliminar cliente');
+        if (mountedRef.current) {
+          setError('Error al eliminar cliente');
+        }
       }
     }
   };

@@ -1,8 +1,10 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import { movimientosService, productosService, ventasService } from '../../../core/services/apiServices';
+import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/DashboardPage.css';
 
 const DashboardPage = ({ usuario }) => {
+  const mountedRef = useMountedRef();
   const [estadisticas, setEstadisticas] = useState(null);
   const [ultimosMovimientos, setUltimosMovimientos] = useState([]);
   const [ventas, setVentas] = useState([]);
@@ -17,30 +19,38 @@ const DashboardPage = ({ usuario }) => {
   const [error, setError] = useState('');
   const stockMinimo = 2;
 
-  useEffect(() => {
-    cargarDashboard();
-  }, []);
-
-  const cargarDashboard = async () => {
+  const cargarDashboard = useCallback(async () => {
     try {
       setLoading(true);
       const respEstad = await movimientosService.obtenerEstadisticas();
+      if (!mountedRef.current) return;
       setEstadisticas(respEstad.data);
 
       const respMovimientos = await movimientosService.obtener({ limite: 10, pagina: 1 });
+      if (!mountedRef.current) return;
       setUltimosMovimientos(respMovimientos.data);
       const respVentas = await ventasService.listar();
+      if (!mountedRef.current) return;
       setVentas(respVentas.data || []);
       const respProductos = await productosService.getAll();
+      if (!mountedRef.current) return;
       setProductos(respProductos.data || []);
       setError('');
     } catch (error) {
       console.error('Error cargando dashboard:', error);
-      setError('Error al cargar datos del dashboard');
+      if (mountedRef.current) {
+        setError('Error al cargar datos del dashboard');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [mountedRef]);
+
+  useEffect(() => {
+    cargarDashboard();
+  }, [cargarDashboard]);
 
   const ventasFiltradasPorFecha = useMemo(() => {
     if (!fechaDesde && !fechaHasta) return ventas;

@@ -1,5 +1,5 @@
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clientesService, cotizacionesService, kitsService, usuariosService, ventasService } from '../../../core/services/apiServices';
 import '../styles/VentasPage.css';
 
@@ -16,7 +16,819 @@ const agencias = ['SHALOM', 'MARVISUR', 'OLVA', 'OTROS', 'TIENDA'];
 
 const estadosEnvio = ['PENDIENTE', 'ENVIADO', 'CANCELADO', 'VISITA'];
 
+const VentasModalShell = ({ title, onClose, children }) => (
+  <div className="modal-overlay">
+    <div className="modal-content ventas-modal">
+      <div className="modal-header">
+        <h2>{title}</h2>
+        <button type="button" className="btn-icon" onClick={onClose}>
+          X
+        </button>
+      </div>
+      <div className="modal-body">{children}</div>
+    </div>
+  </div>
+);
+
+const VentasStepsHeader = ({ step }) => (
+  <div className="ventas-steps">
+    <div className={`ventas-step ${step === 1 ? 'active' : ''}`}>1. Datos</div>
+    <div className={`ventas-step ${step === 2 ? 'active' : ''}`}>2. Productos</div>
+    <div className={`ventas-step ${step === 3 ? 'active' : ''}`}>3. Regalos / Obs</div>
+  </div>
+);
+
+const VentasModalFooter = ({ step, onBack, onNext, onSave, editId }) => (
+  <div className="modal-footer">
+    <button type="button" className="btn-secondary" onClick={onBack} disabled={step === 1}>
+      Anterior
+    </button>
+    {step < 3 ? (
+      <button type="button" className="btn-primary" onClick={onNext}>
+        Siguiente
+      </button>
+    ) : (
+      <button type="button" className="btn-primary" onClick={onSave}>
+        {editId ? 'Guardar cambios' : 'Registrar venta'}
+      </button>
+    )}
+  </div>
+);
+
+const VentasStepDatos = ({
+  formData,
+  consultaMensaje,
+  consultando,
+  usuarioActual,
+  agencias,
+  estadosEnvio,
+  onConsultarDocumento,
+  onFormChange
+}) => (
+  <div className="ventas-step-panel">
+    <div className="form-row">
+      <div className="form-group">
+        <label>Documento (DNI/RUC)</label>
+        <div className="ventas-row">
+          <select
+            value={formData.documentoTipo}
+            onChange={(e) => onFormChange({ documentoTipo: e.target.value })}
+          >
+            <option value="dni">DNI</option>
+            <option value="ruc">RUC</option>
+          </select>
+          <input
+            type="text"
+            value={formData.documento}
+            onChange={(e) => onFormChange({ documento: e.target.value.trim() })}
+          />
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={onConsultarDocumento}
+            disabled={consultando}
+          >
+            {consultando ? 'Consultando' : 'Consultar'}
+          </button>
+        </div>
+        {consultaMensaje && <span className="helper-text">{consultaMensaje}</span>}
+      </div>
+      <div className="form-group">
+        <label>Cliente</label>
+        <input
+          type="text"
+          value={formData.clienteNombre}
+          onChange={(e) => onFormChange({ clienteNombre: e.target.value })}
+        />
+      </div>
+    </div>
+
+    <div className="form-row">
+      <div className="form-group">
+        <label>Telefono</label>
+        <input
+          type="text"
+          value={formData.clienteTelefono}
+          onChange={(e) => onFormChange({ clienteTelefono: e.target.value })}
+        />
+      </div>
+      <div className="form-group">
+        <label>Vendedor</label>
+        <input
+          type="text"
+          value={usuarioActual?.nombre || ''}
+          readOnly
+          placeholder="Usuario logeado"
+        />
+      </div>
+    </div>
+
+    <div className="form-row">
+      <div className="form-group">
+        <label>Agencia</label>
+        <select
+          value={formData.agencia}
+          onChange={(e) => onFormChange({ agencia: e.target.value })}
+        >
+          {agencias.map((ag) => (
+            <option key={ag} value={ag}>
+              {ag}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="form-group">
+        <label>Destino</label>
+        <input
+          type="text"
+          value={formData.destino}
+          disabled={formData.agencia === 'TIENDA'}
+          onChange={(e) => onFormChange({ destino: e.target.value })}
+        />
+      </div>
+    </div>
+
+    {formData.agencia === 'OTROS' && (
+      <div className="form-group">
+        <label>Agencia (otros)</label>
+        <input
+          type="text"
+          value={formData.agenciaOtro}
+          onChange={(e) => onFormChange({ agenciaOtro: e.target.value })}
+        />
+      </div>
+    )}
+
+    <div className="form-row">
+      <div className="form-group">
+        <label>Fecha de venta</label>
+        <input
+          type="date"
+          value={formData.fechaVenta}
+          onChange={(e) => onFormChange({ fechaVenta: e.target.value })}
+        />
+      </div>
+      <div className="form-group">
+        <label>Estado de envio</label>
+        <select
+          value={formData.estadoEnvio}
+          onChange={(e) => {
+            const nuevoEstado = e.target.value;
+            const now = getToday();
+            onFormChange({
+              estadoEnvio: nuevoEstado,
+              fechaDespacho:
+                nuevoEstado === 'ENVIADO' || nuevoEstado === 'VISITA'
+                  ? formData.fechaDespacho || now
+                  : formData.fechaDespacho,
+              fechaCancelacion:
+                nuevoEstado === 'CANCELADO'
+                  ? formData.fechaCancelacion || now
+                  : formData.fechaCancelacion,
+              rastreoEstado: nuevoEstado === 'CANCELADO' ? 'ENTREGADO' : formData.rastreoEstado
+            });
+          }}
+        >
+          {estadosEnvio.map((estado) => (
+            <option key={estado} value={estado}>
+              {estado}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+
+    <div className="form-row">
+      <div className="form-group">
+        <label>Adelanto</label>
+        <input
+          type="number"
+          value={formData.adelanto}
+          onChange={(e) => onFormChange({ adelanto: e.target.value })}
+        />
+      </div>
+      <div className="form-group">
+        <label>P. Venta (total)</label>
+        <input type="number" value={formData.pVenta} readOnly />
+      </div>
+    </div>
+  </div>
+);
+
+const VentasStepProductos = ({
+  tabProductos,
+  tabProductosModo,
+  busquedaProducto,
+  resultadosProducto,
+  cargandoKits,
+  errorKits,
+  kitsDisponibles,
+  productos,
+  setProductos,
+  requerimientos,
+  setTabProductos,
+  setTabProductosModo,
+  setBusquedaProducto,
+  agregarProducto,
+  agregarKitVenta,
+  actualizarItem,
+  quitarItem,
+  setRequerimientos
+}) => (
+  <div className="ventas-step-panel">
+    <div className="ventas-tab-buttons">
+      <button
+        type="button"
+        className={`ventas-tab ${tabProductos === 'productos' ? 'active' : ''}`}
+        onClick={() => setTabProductos('productos')}
+      >
+        Productos
+      </button>
+      <button
+        type="button"
+        className={`ventas-tab ${tabProductos === 'requerimientos' ? 'active' : ''}`}
+        onClick={() => setTabProductos('requerimientos')}
+      >
+        Requerimientos
+      </button>
+    </div>
+
+    {tabProductos === 'productos' && (
+      <div className="ventas-card">
+        <h3>Productos</h3>
+        <div className="ventas-subtabs">
+          <button
+            type="button"
+            className={`ventas-subtab ${tabProductosModo === 'avanzada' ? 'active' : ''}`}
+            onClick={() => setTabProductosModo('avanzada')}
+          >
+            Avanzada
+          </button>
+          <button
+            type="button"
+            className={`ventas-subtab ${tabProductosModo === 'kits' ? 'active' : ''}`}
+            onClick={() => setTabProductosModo('kits')}
+          >
+            Kits
+          </button>
+        </div>
+
+        {tabProductosModo === 'avanzada' ? (
+          <div className="busqueda-avanzada">
+            <input
+              type="text"
+              placeholder="Buscar producto por codigo, descripcion o marca"
+              value={busquedaProducto}
+              onChange={(e) => setBusquedaProducto(e.target.value)}
+            />
+            <div className="resultados">
+              {resultadosProducto.map((producto) => (
+                <button
+                  type="button"
+                  className="resultado-item"
+                  key={`${producto.id}-${producto.codigo}`}
+                  onClick={() => agregarProducto(producto)}
+                >
+                  {producto.codigo} - {producto.descripcion} ({producto.marca})
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="busqueda-avanzada">
+            {cargandoKits && <div className="helper-text">Cargando kits...</div>}
+            {errorKits && <div className="helper-text">{errorKits}</div>}
+            <div className="resultados">
+              {kitsDisponibles.map((kit) => (
+                <button
+                  type="button"
+                  className="resultado-item"
+                  key={`kit-${kit.id}`}
+                  onClick={() => agregarKitVenta(kit)}
+                >
+                  {kit.nombre} (S/. {Number(kit.precio_total || 0).toFixed(2)})
+                </button>
+              ))}
+              {!cargandoKits && !kitsDisponibles.length && !errorKits && (
+                <div className="helper-text">No hay kits activos.</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="table-container">
+          {productos.length === 0 ? (
+            <div className="empty-message">No hay productos agregados.</div>
+          ) : (
+            <table className="ventas-table">
+              <thead>
+                <tr>
+                  <th>Codigo</th>
+                  <th>Descripcion</th>
+                  <th>Stock</th>
+                  <th>Cantidad</th>
+                  <th>Venta</th>
+                  <th>Compra</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {productos.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.codigo}</td>
+                    <td>{item.descripcion}</td>
+                    <td>{item.stock === null ? '-' : item.stock}</td>
+                    <td>
+                      <input
+                        type="number"
+                        min="1"
+                        value={item.cantidad}
+                        onChange={(e) =>
+                          actualizarItem(setProductos, item.id, {
+                            cantidad: Number(e.target.value || 1)
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        value={item.precioVenta}
+                        onChange={(e) =>
+                          actualizarItem(setProductos, item.id, {
+                            precioVenta: Number(e.target.value || 0)
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        value={item.precioCompra}
+                        onChange={(e) =>
+                          actualizarItem(setProductos, item.id, {
+                            precioCompra: Number(e.target.value || 0)
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn-delete"
+                        onClick={() => quitarItem(setProductos, item.id)}
+                      >
+                        Quitar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    )}
+
+    {tabProductos === 'requerimientos' && (
+      <div className="ventas-card">
+        <h3>Requerimientos</h3>
+        <div className="table-container">
+          {requerimientos.length === 0 ? (
+            <div className="empty-message">Sin requerimientos.</div>
+          ) : (
+            <table className="ventas-table">
+              <thead>
+                <tr>
+                  <th>Codigo</th>
+                  <th>Descripcion</th>
+                  <th>Proveedor</th>
+                  <th>Cantidad</th>
+                  <th>Compra</th>
+                  <th>Venta</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {requerimientos.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.codigo}</td>
+                    <td>{item.descripcion}</td>
+                    <td>{item.proveedor || item.marca}</td>
+                    <td>
+                      <input
+                        type="number"
+                        min="1"
+                        value={item.cantidad}
+                        onChange={(e) =>
+                          actualizarItem(setRequerimientos, item.id, {
+                            cantidad: Number(e.target.value || 1)
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        value={item.precioCompra}
+                        onChange={(e) =>
+                          actualizarItem(setRequerimientos, item.id, {
+                            precioCompra: Number(e.target.value || 0)
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        value={item.precioVenta}
+                        onChange={(e) =>
+                          actualizarItem(setRequerimientos, item.id, {
+                            precioVenta: Number(e.target.value || 0)
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn-delete"
+                        onClick={() => quitarItem(setRequerimientos, item.id)}
+                      >
+                        Quitar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    )}
+  </div>
+);
+
+const VentasStepRegalos = ({
+  tabRegalosModo,
+  setTabRegalosModo,
+  busquedaRegalo,
+  setBusquedaRegalo,
+  resultadosRegalo,
+  agregarRegalo,
+  cargandoKits,
+  errorKits,
+  kitsDisponibles,
+  agregarKitRegalo,
+  regalos,
+  setRegalos,
+  tabReqRegaloModo,
+  setTabReqRegaloModo,
+  busquedaReqRegalo,
+  setBusquedaReqRegalo,
+  resultadosReqRegalo,
+  setResultadosReqRegalo,
+  setRegaloRequerimiento,
+  regaloRequerimiento,
+  sugerenciaRegalo,
+  agregarRegaloRequerimiento,
+  regaloRequerimientos,
+  setRegaloRequerimientos,
+  actualizarItem,
+  quitarItem,
+  formData,
+  setFormData
+}) => (
+  <div className="ventas-step-panel">
+    <div className="ventas-split">
+      <div className="ventas-card">
+        <h3>Regalos</h3>
+        <div className="ventas-subtabs">
+          <button
+            type="button"
+            className={`ventas-subtab ${tabRegalosModo === 'avanzada' ? 'active' : ''}`}
+            onClick={() => setTabRegalosModo('avanzada')}
+          >
+            Avanzada
+          </button>
+          <button
+            type="button"
+            className={`ventas-subtab ${tabRegalosModo === 'kits' ? 'active' : ''}`}
+            onClick={() => setTabRegalosModo('kits')}
+          >
+            Kits
+          </button>
+        </div>
+        {tabRegalosModo === 'avanzada' ? (
+          <div className="busqueda-avanzada">
+            <input
+              type="text"
+              placeholder="Buscar regalo por codigo, descripcion o marca"
+              value={busquedaRegalo}
+              onChange={(e) => setBusquedaRegalo(e.target.value)}
+            />
+            <div className="resultados">
+              {resultadosRegalo.map((producto) => (
+                <button
+                  type="button"
+                  className="resultado-item"
+                  key={`gift-${producto.id}-${producto.codigo}`}
+                  onClick={() => agregarRegalo(producto)}
+                >
+                  {producto.codigo} - {producto.descripcion} ({producto.marca})
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="busqueda-avanzada">
+            {cargandoKits && <div className="helper-text">Cargando kits...</div>}
+            {errorKits && <div className="helper-text">{errorKits}</div>}
+            <div className="resultados">
+              {kitsDisponibles.map((kit) => (
+                <button
+                  type="button"
+                  className="resultado-item"
+                  key={`kit-gift-${kit.id}`}
+                  onClick={() => agregarKitRegalo(kit)}
+                >
+                  {kit.nombre} (S/. {Number(kit.precio_total || 0).toFixed(2)})
+                </button>
+              ))}
+              {!cargandoKits && !kitsDisponibles.length && !errorKits && (
+                <div className="helper-text">No hay kits activos.</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="table-container">
+          {regalos.length === 0 ? (
+            <div className="empty-message">No hay regalos agregados.</div>
+          ) : (
+            <table className="ventas-table">
+              <thead>
+                <tr>
+                  <th>Codigo</th>
+                  <th>Descripcion</th>
+                  <th>Stock</th>
+                  <th>Cantidad</th>
+                  <th>Compra</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {regalos.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.codigo}</td>
+                    <td>{item.descripcion}</td>
+                    <td>{item.stock === null ? '-' : item.stock}</td>
+                    <td>
+                      <input
+                        type="number"
+                        min="1"
+                        value={item.cantidad}
+                        onChange={(e) =>
+                          actualizarItem(setRegalos, item.id, {
+                            cantidad: Number(e.target.value || 1)
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        value={item.precioCompra}
+                        onChange={(e) =>
+                          actualizarItem(setRegalos, item.id, {
+                            precioCompra: Number(e.target.value || 0)
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn-delete"
+                        onClick={() => quitarItem(setRegalos, item.id)}
+                      >
+                        Quitar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      <div className="ventas-card">
+        <h3>Requerimiento regalos</h3>
+        <div className="ventas-subtabs">
+          <button
+            type="button"
+            className={`ventas-subtab ${tabReqRegaloModo === 'avanzada' ? 'active' : ''}`}
+            onClick={() => setTabReqRegaloModo('avanzada')}
+          >
+            Avanzada
+          </button>
+          <button
+            type="button"
+            className={`ventas-subtab ${tabReqRegaloModo === 'kits' ? 'active' : ''}`}
+            onClick={() => setTabReqRegaloModo('kits')}
+          >
+            Kits
+          </button>
+        </div>
+        <div className="requerimiento-box">
+          {tabReqRegaloModo === 'avanzada' ? (
+            <div className="form-group">
+              <label>Buscar producto</label>
+              <input
+                type="text"
+                placeholder="Buscar por codigo, descripcion o marca"
+                value={busquedaReqRegalo}
+                onChange={(e) => setBusquedaReqRegalo(e.target.value)}
+              />
+              <div className="resultados">
+                {resultadosReqRegalo.map((producto) => (
+                  <button
+                    type="button"
+                    className="resultado-item"
+                    key={`req-reg-${producto.id}-${producto.codigo}`}
+                    onClick={() => {
+                      setRegaloRequerimiento((prev) => ({
+                        ...prev,
+                        codigo: producto.codigo || '',
+                        descripcion: producto.descripcion || producto.codigo || prev.descripcion,
+                        marca: producto.marca || '',
+                        precioCompra: prev.precioCompra || producto.precio_compra || ''
+                      }));
+                      setBusquedaReqRegalo('');
+                      setResultadosReqRegalo([]);
+                    }}
+                  >
+                    {producto.codigo} - {producto.descripcion} ({producto.marca})
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="form-group">
+              <label>Seleccionar kit</label>
+              <div className="resultados">
+                {kitsDisponibles.map((kit) => (
+                  <button
+                    type="button"
+                    className="resultado-item"
+                    key={`kit-req-reg-${kit.id}`}
+                    onClick={() => agregarKitRegalo(kit)}
+                  >
+                    {kit.nombre} (S/. {Number(kit.precio_total || 0).toFixed(2)})
+                  </button>
+                ))}
+                {!cargandoKits && !kitsDisponibles.length && !errorKits && (
+                  <div className="helper-text">No hay kits activos.</div>
+                )}
+                {errorKits && <div className="helper-text">{errorKits}</div>}
+              </div>
+            </div>
+          )}
+          <div className="form-group">
+            <label>Producto</label>
+            <input
+              type="text"
+              value={regaloRequerimiento.descripcion}
+              onChange={(e) =>
+                setRegaloRequerimiento((prev) => ({ ...prev, descripcion: e.target.value }))
+              }
+            />
+            {regaloRequerimiento.codigo && (
+              <span className="helper-text">Codigo: {regaloRequerimiento.codigo}</span>
+            )}
+          </div>
+          {sugerenciaRegalo && (
+            <div className="helper-text">
+              Sugerencia: {sugerenciaRegalo.descripcion || sugerenciaRegalo.codigo} /
+              {sugerenciaRegalo.proveedor ? ` ${sugerenciaRegalo.proveedor}` : ''} /
+              Compra S/ {Number(sugerenciaRegalo.precioCompra || 0).toFixed(2)}
+            </div>
+          )}
+          <div className="form-group">
+            <label>Proveedor</label>
+            <input
+              type="text"
+              value={regaloRequerimiento.proveedor}
+              onChange={(e) =>
+                setRegaloRequerimiento((prev) => ({ ...prev, proveedor: e.target.value }))
+              }
+            />
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label>Cantidad</label>
+              <input
+                type="number"
+                min="1"
+                value={regaloRequerimiento.cantidad}
+                onChange={(e) =>
+                  setRegaloRequerimiento((prev) => ({ ...prev, cantidad: e.target.value }))
+                }
+              />
+            </div>
+            <div className="form-group">
+              <label>Precio compra</label>
+              <input
+                type="number"
+                value={regaloRequerimiento.precioCompra}
+                onChange={(e) =>
+                  setRegaloRequerimiento((prev) => ({ ...prev, precioCompra: e.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <div className="form-group form-group-actions">
+            <button type="button" className="btn-secondary" onClick={agregarRegaloRequerimiento}>
+              Agregar requerimiento
+            </button>
+          </div>
+        </div>
+
+        <div className="table-container">
+          {regaloRequerimientos.length === 0 ? (
+            <div className="empty-message">Sin requerimientos.</div>
+          ) : (
+            <table className="ventas-table">
+              <thead>
+                <tr>
+                  <th>Codigo</th>
+                  <th>Descripcion</th>
+                  <th>Proveedor</th>
+                  <th>Cantidad</th>
+                  <th>Compra</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {regaloRequerimientos.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.codigo}</td>
+                    <td>{item.descripcion}</td>
+                    <td>{item.proveedor || item.marca}</td>
+                    <td>
+                      <input
+                        type="number"
+                        min="1"
+                        value={item.cantidad}
+                        onChange={(e) =>
+                          actualizarItem(setRegaloRequerimientos, item.id, {
+                            cantidad: Number(e.target.value || 1)
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        value={item.precioCompra}
+                        onChange={(e) =>
+                          actualizarItem(setRegaloRequerimientos, item.id, {
+                            precioCompra: Number(e.target.value || 0)
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn-delete"
+                        onClick={() => quitarItem(setRegaloRequerimientos, item.id)}
+                      >
+                        Quitar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="ventas-notas">
+          <label>Observaciones / notas</label>
+          <textarea
+            value={formData.notas}
+            onChange={(e) => setFormData((prev) => ({ ...prev, notas: e.target.value }))}
+          />
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
 const VentasPage = () => {
+  const mountedRef = useRef(true);
   const [ventas, setVentas] = useState([]);
   const [ventasPagina, setVentasPagina] = useState(1);
   const [ventasHasMore, setVentasHasMore] = useState(true);
@@ -61,12 +873,9 @@ const VentasPage = () => {
   const [resultadosProducto, setResultadosProducto] = useState([]);
   const [busquedaRegalo, setBusquedaRegalo] = useState('');
   const [resultadosRegalo, setResultadosRegalo] = useState([]);
-  const [busquedaReq, setBusquedaReq] = useState('');
-  const [resultadosReq, setResultadosReq] = useState([]);
   const [busquedaReqRegalo, setBusquedaReqRegalo] = useState('');
   const [resultadosReqRegalo, setResultadosReqRegalo] = useState([]);
   const [tabProductosModo, setTabProductosModo] = useState('avanzada');
-  const [tabReqModo, setTabReqModo] = useState('avanzada');
   const [tabRegalosModo, setTabRegalosModo] = useState('avanzada');
   const [tabReqRegaloModo, setTabReqRegaloModo] = useState('avanzada');
   const [kitsDisponibles, setKitsDisponibles] = useState([]);
@@ -77,16 +886,6 @@ const VentasPage = () => {
   const [regalos, setRegalos] = useState([]);
   const [regaloRequerimientos, setRegaloRequerimientos] = useState([]);
 
-  const [requerimientoData, setRequerimientoData] = useState({
-    codigo: '',
-    descripcion: '',
-    marca: '',
-    proveedor: '',
-    cantidad: 1,
-    precioCompra: '',
-    precioVenta: ''
-  });
-
   const [regaloRequerimiento, setRegaloRequerimiento] = useState({
     codigo: '',
     descripcion: '',
@@ -96,14 +895,15 @@ const VentasPage = () => {
     precioCompra: ''
   });
 
-  const [sugerenciaReq, setSugerenciaReq] = useState(null);
   const [sugerenciaRegalo, setSugerenciaRegalo] = useState(null);
 
   useEffect(() => {
+    mountedRef.current = true;
     const cargarUsuarios = async () => {
       try {
         const resp = await usuariosService.listar();
         const data = Array.isArray(resp.data) ? resp.data : [];
+        if (!mountedRef.current) return;
         setUsuariosVentas(data.filter((user) => user.rol === 'ventas'));
       } catch (err) {
         console.error('Error cargando usuarios:', err);
@@ -119,6 +919,9 @@ const VentasPage = () => {
     } catch (err) {
       console.error('Error leyendo usuario actual:', err);
     }
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -147,7 +950,7 @@ const VentasPage = () => {
     };
   }, [modalOpen]);
 
-  const cargarVentas = async (append = false) => {
+  const cargarVentas = useCallback(async (append = false) => {
     try {
       if (ventasLoading) return;
       setVentasLoading(true);
@@ -155,6 +958,7 @@ const VentasPage = () => {
       const pagina = append ? ventasPagina + 1 : 1;
       const resp = await ventasService.listar({ limite, pagina });
       const data = resp.data || [];
+      if (!mountedRef.current) return;
       if (append) {
         setVentas((prev) => [...prev, ...data]);
         setVentasPagina(pagina);
@@ -166,13 +970,15 @@ const VentasPage = () => {
     } catch (err) {
       console.error('Error cargando ventas:', err);
     } finally {
-      setVentasLoading(false);
+      if (mountedRef.current) {
+        setVentasLoading(false);
+      }
     }
-  };
+  }, [ventasLoading, ventasPagina]);
 
   useEffect(() => {
     cargarVentas(false);
-  }, []);
+  }, [cargarVentas]);
 
   useEffect(() => {
     if (formData.agencia === 'TIENDA') {
@@ -184,6 +990,17 @@ const VentasPage = () => {
     }
   }, [formData.agencia, formData.destino]);
 
+  const buscarProductos = useCallback(async (q, setResultados) => {
+    try {
+      const resp = await cotizacionesService.buscarProductos({ q, limit: 20 });
+      if (!mountedRef.current) return;
+      setResultados(resp.data || []);
+    } catch (err) {
+      console.error('Error buscando productos:', err);
+    }
+  }, []);
+
+
   useEffect(() => {
     const timeout = setTimeout(() => {
       if (busquedaProducto.trim().length < 1) {
@@ -193,7 +1010,7 @@ const VentasPage = () => {
       buscarProductos(busquedaProducto.trim(), setResultadosProducto);
     }, 350);
     return () => clearTimeout(timeout);
-  }, [busquedaProducto]);
+  }, [busquedaProducto, buscarProductos]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -204,18 +1021,7 @@ const VentasPage = () => {
       buscarProductos(busquedaRegalo.trim(), setResultadosRegalo);
     }, 350);
     return () => clearTimeout(timeout);
-  }, [busquedaRegalo]);
-
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      if (busquedaReq.trim().length < 1) {
-        setResultadosReq([]);
-        return;
-      }
-      buscarProductos(busquedaReq.trim(), setResultadosReq);
-    }, 350);
-    return () => clearTimeout(timeout);
-  }, [busquedaReq]);
+  }, [busquedaRegalo, buscarProductos]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -226,33 +1032,7 @@ const VentasPage = () => {
       buscarProductos(busquedaReqRegalo.trim(), setResultadosReqRegalo);
     }, 350);
     return () => clearTimeout(timeout);
-  }, [busquedaReqRegalo]);
-
-  useEffect(() => {
-    const timeout = setTimeout(async () => {
-      const term = requerimientoData.descripcion.trim();
-      if (term.length < 2) {
-        setSugerenciaReq(null);
-        return;
-      }
-      try {
-        const resp = await ventasService.historialRequerimientos({ q: term });
-        const match = resp.data?.[0];
-        if (match) {
-          setSugerenciaReq(match);
-          setRequerimientoData((prev) => ({
-            ...prev,
-            proveedor: prev.proveedor || match.proveedor || '',
-            precioCompra: prev.precioCompra || match.precioCompra || '',
-            precioVenta: prev.precioVenta || match.precioVenta || ''
-          }));
-        }
-      } catch (err) {
-        console.error('Error buscando historial requerimientos:', err);
-      }
-    }, 400);
-    return () => clearTimeout(timeout);
-  }, [requerimientoData.descripcion]);
+  }, [busquedaReqRegalo, buscarProductos]);
 
   useEffect(() => {
     const timeout = setTimeout(async () => {
@@ -279,14 +1059,6 @@ const VentasPage = () => {
     return () => clearTimeout(timeout);
   }, [regaloRequerimiento.descripcion]);
 
-  const buscarProductos = async (q, setResultados) => {
-    try {
-      const resp = await cotizacionesService.buscarProductos({ q, limit: 20 });
-      setResultados(resp.data || []);
-    } catch (err) {
-      console.error('Error buscando productos:', err);
-    }
-  };
 
   const handleConsultarDocumento = async () => {
     setConsultaMensaje('');
@@ -343,7 +1115,11 @@ const VentasPage = () => {
 
   const getStock = (producto) => {
     const stockRaw =
-      producto.stock ?? producto.stock_total ?? producto.stock_disponible ?? producto.cantidad ?? null;
+      producto.stock ??
+      producto.stock_total ??
+      producto.stock_disponible ??
+      producto.cantidad ??
+      null;
     return stockRaw === null ? null : Number(stockRaw || 0);
   };
 
@@ -532,66 +1308,6 @@ const VentasPage = () => {
     setBusquedaRegalo('');
     setResultadosRegalo([]);
   };
-  const agregarRequerimiento = async () => {
-    const descripcion = requerimientoData.descripcion.trim();
-    const codigo = String(requerimientoData.codigo || '').trim();
-    if (!descripcion && !codigo) return;
-    const clave = normalizarClaveLocal(codigo || descripcion);
-    if (clave) {
-      const yaExiste = requerimientos.some(
-        (item) => normalizarClaveLocal(item.codigo || item.descripcion) === clave
-      );
-      if (yaExiste) {
-        setAvisoStock('Requerimiento ya agregado.');
-        return;
-      }
-    }
-    try {
-      const resp = await ventasService.crearRequerimientoProducto({
-        descripcion,
-        codigo,
-        marca: requerimientoData.marca || '',
-        precioCompra: Number(requerimientoData.precioCompra || 0),
-        precioVenta: Number(requerimientoData.precioVenta || 0)
-      });
-      const data = resp?.data || {};
-      const codigoFinal = data.codigo || codigo;
-      const descripcionFinal = data.descripcion || descripcion || codigoFinal;
-      const marcaFinal = data.marca || requerimientoData.marca || '';
-      setRequerimientos((prev) => [
-        ...prev,
-        {
-          id: genId(),
-          tipo: 'compra',
-          producto_id: data.id || null,
-          codigo: codigoFinal,
-          descripcion: descripcionFinal,
-          marca: marcaFinal,
-          stock: null,
-          cantidad: Number(requerimientoData.cantidad || 1),
-          precioVenta: Number(requerimientoData.precioVenta || 0),
-          precioCompra: Number(requerimientoData.precioCompra || 0),
-          proveedor: requerimientoData.proveedor.trim()
-        }
-      ]);
-      setAvisoStock(data.existente ? 'Producto ya existia, se reutilizo.' : 'Producto creado.');
-    } catch (err) {
-      console.error('Error creando requerimiento:', err);
-      setAvisoStock('Error creando requerimiento.');
-      return;
-    }
-    setRequerimientoData({
-      codigo: '',
-      descripcion: '',
-      marca: '',
-      proveedor: '',
-      cantidad: 1,
-      precioCompra: '',
-      precioVenta: ''
-    });
-    setBusquedaReq('');
-    setResultadosReq([]);
-  };
 
   const agregarRegaloRequerimiento = async () => {
     const descripcion = regaloRequerimiento.descripcion.trim();
@@ -703,7 +1419,6 @@ const VentasPage = () => {
     setStep(1);
     setEditId(null);
     setTabProductosModo('avanzada');
-    setTabReqModo('avanzada');
     setTabRegalosModo('avanzada');
     setTabReqRegaloModo('avanzada');
   };
@@ -843,7 +1558,7 @@ const VentasPage = () => {
   };
 
   const escapeHtml = (value) =>
-    String(value ?? '')
+    String(value || '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -1363,16 +2078,11 @@ const VentasPage = () => {
       </div>
 
       {detalleVenta && (
-        <div className="modal-overlay">
-          <div className="modal-content ventas-modal">
-            <div className="modal-header">
-              <h2>Detalle venta #{detalleVenta.id}</h2>
-              <button type="button" className="btn-icon" onClick={() => setDetalleVenta(null)}>
-                X
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="ventas-split">
+        <VentasModalShell
+          title={`Detalle venta #${detalleVenta.id}`}
+          onClose={() => setDetalleVenta(null)}
+        >
+          <div className="ventas-split">
                 <div className="ventas-card">
                   <h3>Productos</h3>
                   <div className="table-container">
@@ -1437,928 +2147,94 @@ const VentasPage = () => {
                     )}
                   </div>
                 </div>
-              </div>
-            </div>
           </div>
-        </div>
+        </VentasModalShell>
       )}
 
       {modalOpen && (
-        <div className="modal-overlay">
-          <div className="modal-content ventas-modal">
-            <div className="modal-header">
-              <h2>{editId ? `Editar venta #${editId}` : 'Nueva venta'}</h2>
-              <button type="button" className="btn-icon" onClick={cerrarModal}>
-                X
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="ventas-steps">
-                <div className={`ventas-step ${step === 1 ? 'active' : ''}`}>1. Datos</div>
-                <div className={`ventas-step ${step === 2 ? 'active' : ''}`}>2. Productos</div>
-                <div className={`ventas-step ${step === 3 ? 'active' : ''}`}>3. Regalos / Obs</div>
-              </div>
+        <VentasModalShell
+          title={editId ? `Editar venta #${editId}` : 'Nueva venta'}
+          onClose={cerrarModal}
+        >
+          <VentasStepsHeader step={step} />
 
               {error && <div className="error-message">{error}</div>}
+              {avisoStock && <div className="helper-text">{avisoStock}</div>}
 
               {step === 1 && (
-                <div className="ventas-step-panel">
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Documento (DNI/RUC)</label>
-                      <div className="ventas-row">
-                        <select
-                          value={formData.documentoTipo}
-                          onChange={(e) =>
-                            setFormData((prev) => ({ ...prev, documentoTipo: e.target.value }))
-                          }
-                        >
-                          <option value="dni">DNI</option>
-                          <option value="ruc">RUC</option>
-                        </select>
-                        <input
-                          type="text"
-                          value={formData.documento}
-                          onChange={(e) =>
-                            setFormData((prev) => ({ ...prev, documento: e.target.value.trim() }))
-                          }
-                        />
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          onClick={handleConsultarDocumento}
-                          disabled={consultando}
-                        >
-                          {consultando ? 'Consultando' : 'Consultar'}
-                        </button>
-                      </div>
-                      {consultaMensaje && <span className="helper-text">{consultaMensaje}</span>}
-                    </div>
-                    <div className="form-group">
-                      <label>Cliente</label>
-                      <input
-                        type="text"
-                        value={formData.clienteNombre}
-                        onChange={(e) =>
-                          setFormData((prev) => ({ ...prev, clienteNombre: e.target.value }))
-                        }
-                      />
-                    </div>
-                  </div>
-
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Telefono</label>
-                      <input
-                        type="text"
-                        value={formData.clienteTelefono}
-                        onChange={(e) =>
-                          setFormData((prev) => ({ ...prev, clienteTelefono: e.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Vendedor</label>
-                      <input
-                        type="text"
-                        value={usuarioActual?.nombre || ''}
-                        readOnly
-                        placeholder="Usuario logeado"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Agencia</label>
-                      <select
-                        value={formData.agencia}
-                        onChange={(e) =>
-                          setFormData((prev) => ({ ...prev, agencia: e.target.value }))
-                        }
-                      >
-                        {agencias.map((ag) => (
-                          <option key={ag} value={ag}>
-                            {ag}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="form-group">
-                      <label>Destino</label>
-                      <input
-                        type="text"
-                        value={formData.destino}
-                        disabled={formData.agencia === 'TIENDA'}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, destino: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-
-                  {formData.agencia === 'OTROS' && (
-                    <div className="form-group">
-                      <label>Agencia (otros)</label>
-                      <input
-                        type="text"
-                        value={formData.agenciaOtro}
-                        onChange={(e) =>
-                          setFormData((prev) => ({ ...prev, agenciaOtro: e.target.value }))
-                        }
-                      />
-                    </div>
-                  )}
-
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Fecha de venta</label>
-                      <input
-                        type="date"
-                        value={formData.fechaVenta}
-                        onChange={(e) =>
-                          setFormData((prev) => ({ ...prev, fechaVenta: e.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Estado de envio</label>
-                      <select
-                        value={formData.estadoEnvio}
-                        onChange={(e) => {
-                          const nuevoEstado = e.target.value;
-                          const now = getToday();
-                          setFormData((prev) => ({
-                            ...prev,
-                            estadoEnvio: nuevoEstado,
-                            fechaDespacho:
-                              nuevoEstado === 'ENVIADO' || nuevoEstado === 'VISITA'
-                                ? prev.fechaDespacho || now
-                                : prev.fechaDespacho,
-                            fechaCancelacion:
-                              nuevoEstado === 'CANCELADO'
-                                ? prev.fechaCancelacion || now
-                                : prev.fechaCancelacion,
-                            rastreoEstado: nuevoEstado === 'CANCELADO' ? 'ENTREGADO' : prev.rastreoEstado
-                          }));
-                        }}
-                      >
-                        {estadosEnvio.map((estado) => (
-                          <option key={estado} value={estado}>
-                            {estado}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Adelanto</label>
-                      <input
-                        type="number"
-                        value={formData.adelanto}
-                        onChange={(e) =>
-                          setFormData((prev) => ({ ...prev, adelanto: e.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>P. Venta (total)</label>
-                      <input type="number" value={formData.pVenta} readOnly />
-                    </div>
-                  </div>
-                </div>
+                <VentasStepDatos
+                  formData={formData}
+                  consultaMensaje={consultaMensaje}
+                  consultando={consultando}
+                  usuarioActual={usuarioActual}
+                  agencias={agencias}
+                  estadosEnvio={estadosEnvio}
+                  onConsultarDocumento={handleConsultarDocumento}
+                  onFormChange={(patch) => setFormData((prev) => ({ ...prev, ...patch }))}
+                />
               )}
               {step === 2 && (
-                <div className="ventas-step-panel">
-                  <div className="ventas-tab-buttons">
-                    <button
-                      type="button"
-                      className={`ventas-tab ${tabProductos === 'productos' ? 'active' : ''}`}
-                      onClick={() => setTabProductos('productos')}
-                    >
-                      Productos
-                    </button>
-                    <button
-                      type="button"
-                      className={`ventas-tab ${tabProductos === 'requerimientos' ? 'active' : ''}`}
-                      onClick={() => setTabProductos('requerimientos')}
-                    >
-                      Requerimientos
-                    </button>
-                  </div>
-
-                  {tabProductos === 'productos' && (
-                    <div className="ventas-card">
-                      <h3>Productos</h3>
-                      <div className="ventas-subtabs">
-                        <button
-                          type="button"
-                          className={`ventas-subtab ${tabProductosModo === 'avanzada' ? 'active' : ''}`}
-                          onClick={() => setTabProductosModo('avanzada')}
-                        >
-                          Avanzada
-                        </button>
-                        <button
-                          type="button"
-                          className={`ventas-subtab ${tabProductosModo === 'kits' ? 'active' : ''}`}
-                          onClick={() => setTabProductosModo('kits')}
-                        >
-                          Kits
-                        </button>
-                      </div>
-
-                      {tabProductosModo === 'avanzada' ? (
-                        <div className="busqueda-avanzada">
-                          <input
-                            type="text"
-                            placeholder="Buscar producto por codigo, descripcion o marca"
-                            value={busquedaProducto}
-                            onChange={(e) => setBusquedaProducto(e.target.value)}
-                          />
-                          <div className="resultados">
-                            {resultadosProducto.map((producto) => (
-                              <button
-                                type="button"
-                                className="resultado-item"
-                                key={`${producto.id}-${producto.codigo}`}
-                                onClick={() => agregarProducto(producto)}
-                              >
-                                {producto.codigo} - {producto.descripcion} ({producto.marca})
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="busqueda-avanzada">
-                          {cargandoKits && <div className="helper-text">Cargando kits...</div>}
-                          {errorKits && <div className="helper-text">{errorKits}</div>}
-                          <div className="resultados">
-                            {kitsDisponibles.map((kit) => (
-                              <button
-                                type="button"
-                                className="resultado-item"
-                                key={`kit-prod-${kit.id}`}
-                                onClick={() => agregarKitVenta(kit)}
-                              >
-                                {kit.nombre} (S/. {Number(kit.precio_total || 0).toFixed(2)})
-                              </button>
-                            ))}
-                            {!cargandoKits && !kitsDisponibles.length && !errorKits && (
-                              <div className="helper-text">No hay kits activos.</div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {avisoStock && <div className="warning-message">{avisoStock}</div>}
-
-                      <div className="table-container">
-                        {productos.length === 0 ? (
-                          <div className="empty-message">No hay productos agregados.</div>
-                        ) : (
-                          <table className="ventas-table">
-                            <thead>
-                              <tr>
-                                <th>Codigo</th>
-                                <th>Descripcion</th>
-                                <th>Stock</th>
-                                <th>Cantidad</th>
-                                <th>Precio venta</th>
-                                <th>Precio compra</th>
-                                <th>Subtotal</th>
-                                <th></th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {productos.map((item) => {
-                                const subtotal =
-                                  Number(item.precioVenta || 0) * Number(item.cantidad || 0);
-                                return (
-                                  <tr key={item.id}>
-                                    <td>{item.codigo}</td>
-                                    <td>{item.descripcion}</td>
-                                    <td>{item.stock === null ? '-' : item.stock}</td>
-                                    <td>
-                                      <input
-                                        type="number"
-                                        min="1"
-                                        value={item.cantidad}
-                                        onChange={(e) =>
-                                          actualizarItem(setProductos, item.id, {
-                                            cantidad: Number(e.target.value || 1)
-                                          })
-                                        }
-                                      />
-                                    </td>
-                                    <td>
-                                      <input
-                                        type="number"
-                                        value={item.precioVenta}
-                                        onChange={(e) =>
-                                          actualizarItem(setProductos, item.id, {
-                                            precioVenta: Number(e.target.value || 0)
-                                          })
-                                        }
-                                      />
-                                    </td>
-                                    <td>
-                                      <input
-                                        type="number"
-                                        value={item.precioCompra}
-                                        onChange={(e) =>
-                                          actualizarItem(setProductos, item.id, {
-                                            precioCompra: Number(e.target.value || 0)
-                                          })
-                                        }
-                                      />
-                                    </td>
-                                    <td>{subtotal.toFixed(2)}</td>
-                                    <td>
-                                      <button
-                                        type="button"
-                                        className="btn-delete"
-                                        onClick={() => quitarItem(setProductos, item.id)}
-                                      >
-                                        Quitar
-                                      </button>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {tabProductos === 'requerimientos' && (
-                      <div className="ventas-card">
-                        <h3>Requerimiento</h3>
-                        <div className="ventas-subtabs">
-                          <button
-                            type="button"
-                            className={`ventas-subtab ${tabReqModo === 'avanzada' ? 'active' : ''}`}
-                            onClick={() => setTabReqModo('avanzada')}
-                          >
-                            Avanzada
-                          </button>
-                          <button
-                            type="button"
-                            className={`ventas-subtab ${tabReqModo === 'kits' ? 'active' : ''}`}
-                            onClick={() => setTabReqModo('kits')}
-                          >
-                            Kits
-                          </button>
-                        </div>
-                        <div className="requerimiento-box">
-                          {tabReqModo === 'avanzada' ? (
-                            <div className="form-group">
-                              <label>Buscar producto</label>
-                              <input
-                                type="text"
-                                placeholder="Buscar por codigo, descripcion o marca"
-                                value={busquedaReq}
-                                onChange={(e) => setBusquedaReq(e.target.value)}
-                              />
-                              <div className="resultados">
-                                {resultadosReq.map((producto) => (
-                                  <button
-                                    type="button"
-                                    className="resultado-item"
-                                    key={`req-${producto.id}-${producto.codigo}`}
-                                    onClick={() => {
-                                      setRequerimientoData((prev) => ({
-                                        ...prev,
-                                        codigo: producto.codigo || '',
-                                        descripcion: producto.descripcion || producto.codigo || prev.descripcion,
-                                        marca: producto.marca || '',
-                                        precioCompra: prev.precioCompra || producto.precio_compra || '',
-                                        precioVenta: prev.precioVenta || producto.precio_venta || ''
-                                      }));
-                                      setBusquedaReq('');
-                                      setResultadosReq([]);
-                                    }}
-                                  >
-                                    {producto.codigo} - {producto.descripcion} ({producto.marca})
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="form-group">
-                              <label>Seleccionar kit</label>
-                              <div className="resultados">
-                                {kitsDisponibles.map((kit) => (
-                                  <button
-                                    type="button"
-                                    className="resultado-item"
-                                    key={`kit-req-${kit.id}`}
-                                    onClick={() => agregarKitVenta(kit)}
-                                  >
-                                    {kit.nombre} (S/. {Number(kit.precio_total || 0).toFixed(2)})
-                                  </button>
-                                ))}
-                                {!cargandoKits && !kitsDisponibles.length && !errorKits && (
-                                  <div className="helper-text">No hay kits activos.</div>
-                                )}
-                                {errorKits && <div className="helper-text">{errorKits}</div>}
-                              </div>
-                            </div>
-                          )}
-                          <div className="form-group">
-                            <label>Producto</label>
-                            <input
-                              type="text"
-                              value={requerimientoData.descripcion}
-                              onChange={(e) =>
-                                setRequerimientoData((prev) => ({ ...prev, descripcion: e.target.value }))
-                              }
-                            />
-                            {requerimientoData.codigo && (
-                              <span className="helper-text">Codigo: {requerimientoData.codigo}</span>
-                            )}
-                          </div>
-                        {sugerenciaReq && (
-                          <div className="helper-text">
-                            Sugerencia: {sugerenciaReq.descripcion || sugerenciaReq.codigo} /
-                            {sugerenciaReq.proveedor ? ` ${sugerenciaReq.proveedor}` : ''} /
-                            Compra S/ {Number(sugerenciaReq.precioCompra || 0).toFixed(2)}
-                          </div>
-                        )}
-                        <div className="form-group">
-                          <label>Proveedor</label>
-                          <input
-                            type="text"
-                            value={requerimientoData.proveedor}
-                            onChange={(e) =>
-                              setRequerimientoData((prev) => ({ ...prev, proveedor: e.target.value }))
-                            }
-                          />
-                        </div>
-                        <div className="form-row">
-                          <div className="form-group">
-                            <label>Cantidad</label>
-                            <input
-                              type="number"
-                              min="1"
-                              value={requerimientoData.cantidad}
-                              onChange={(e) =>
-                                setRequerimientoData((prev) => ({ ...prev, cantidad: e.target.value }))
-                              }
-                            />
-                          </div>
-                          <div className="form-group">
-                            <label>Precio compra</label>
-                            <input
-                              type="number"
-                              value={requerimientoData.precioCompra}
-                              onChange={(e) =>
-                                setRequerimientoData((prev) => ({ ...prev, precioCompra: e.target.value }))
-                              }
-                            />
-                          </div>
-                        </div>
-                        <div className="form-row">
-                          <div className="form-group">
-                            <label>Precio venta</label>
-                            <input
-                              type="number"
-                              value={requerimientoData.precioVenta}
-                              onChange={(e) =>
-                                setRequerimientoData((prev) => ({ ...prev, precioVenta: e.target.value }))
-                              }
-                            />
-                          </div>
-                          <div className="form-group form-group-actions">
-                            <button type="button" className="btn-secondary" onClick={agregarRequerimiento}>
-                              Agregar requerimiento
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="table-container">
-                        {requerimientos.length === 0 ? (
-                          <div className="empty-message">Sin requerimientos.</div>
-                        ) : (
-                          <table className="ventas-table">
-                            <thead>
-                              <tr>
-                                <th>Codigo</th>
-                                <th>Descripcion</th>
-                                <th>Proveedor</th>
-                                <th>Cantidad</th>
-                                <th>Compra</th>
-                                <th>Venta</th>
-                                <th></th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {requerimientos.map((item) => (
-                                <tr key={item.id}>
-                                  <td>{item.codigo}</td>
-                                  <td>{item.descripcion}</td>
-                                  <td>{item.proveedor || item.marca}</td>
-                                  <td>
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      value={item.cantidad}
-                                      onChange={(e) =>
-                                        actualizarItem(setRequerimientos, item.id, {
-                                          cantidad: Number(e.target.value || 1)
-                                        })
-                                      }
-                                    />
-                                  </td>
-                                  <td>
-                                    <input
-                                      type="number"
-                                      value={item.precioCompra}
-                                      onChange={(e) =>
-                                        actualizarItem(setRequerimientos, item.id, {
-                                          precioCompra: Number(e.target.value || 0)
-                                        })
-                                      }
-                                    />
-                                  </td>
-                                  <td>
-                                    <input
-                                      type="number"
-                                      value={item.precioVenta}
-                                      onChange={(e) =>
-                                        actualizarItem(setRequerimientos, item.id, {
-                                          precioVenta: Number(e.target.value || 0)
-                                        })
-                                      }
-                                    />
-                                  </td>
-                                  <td>
-                                    <button
-                                      type="button"
-                                      className="btn-delete"
-                                      onClick={() => quitarItem(setRequerimientos, item.id)}
-                                    >
-                                      Quitar
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <VentasStepProductos
+                  tabProductos={tabProductos}
+                  tabProductosModo={tabProductosModo}
+                  busquedaProducto={busquedaProducto}
+                  resultadosProducto={resultadosProducto}
+                  cargandoKits={cargandoKits}
+                  errorKits={errorKits}
+                  kitsDisponibles={kitsDisponibles}
+                  productos={productos}
+                  setProductos={setProductos}
+                  requerimientos={requerimientos}
+                  setTabProductos={setTabProductos}
+                  setTabProductosModo={setTabProductosModo}
+                  setBusquedaProducto={setBusquedaProducto}
+                  agregarProducto={agregarProducto}
+                  agregarKitVenta={agregarKitVenta}
+                  actualizarItem={actualizarItem}
+                  quitarItem={quitarItem}
+                  setRequerimientos={setRequerimientos}
+                />
               )}
-
               {step === 3 && (
-                <div className="ventas-step-panel">
-                  <div className="ventas-split">
-                    <div className="ventas-card">
-                      <h3>Regalos</h3>
-                      <div className="ventas-subtabs">
-                        <button
-                          type="button"
-                          className={`ventas-subtab ${tabRegalosModo === 'avanzada' ? 'active' : ''}`}
-                          onClick={() => setTabRegalosModo('avanzada')}
-                        >
-                          Avanzada
-                        </button>
-                        <button
-                          type="button"
-                          className={`ventas-subtab ${tabRegalosModo === 'kits' ? 'active' : ''}`}
-                          onClick={() => setTabRegalosModo('kits')}
-                        >
-                          Kits
-                        </button>
-                      </div>
-                      {tabRegalosModo === 'avanzada' ? (
-                        <div className="busqueda-avanzada">
-                          <input
-                            type="text"
-                            placeholder="Buscar regalo por codigo, descripcion o marca"
-                            value={busquedaRegalo}
-                            onChange={(e) => setBusquedaRegalo(e.target.value)}
-                          />
-                          <div className="resultados">
-                            {resultadosRegalo.map((producto) => (
-                              <button
-                                type="button"
-                                className="resultado-item"
-                                key={`gift-${producto.id}-${producto.codigo}`}
-                                onClick={() => agregarRegalo(producto)}
-                              >
-                                {producto.codigo} - {producto.descripcion} ({producto.marca})
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="busqueda-avanzada">
-                          {cargandoKits && <div className="helper-text">Cargando kits...</div>}
-                          {errorKits && <div className="helper-text">{errorKits}</div>}
-                          <div className="resultados">
-                            {kitsDisponibles.map((kit) => (
-                              <button
-                                type="button"
-                                className="resultado-item"
-                                key={`kit-gift-${kit.id}`}
-                                onClick={() => agregarKitRegalo(kit)}
-                              >
-                                {kit.nombre} (S/. {Number(kit.precio_total || 0).toFixed(2)})
-                              </button>
-                            ))}
-                            {!cargandoKits && !kitsDisponibles.length && !errorKits && (
-                              <div className="helper-text">No hay kits activos.</div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="table-container">
-                        {regalos.length === 0 ? (
-                          <div className="empty-message">No hay regalos agregados.</div>
-                        ) : (
-                          <table className="ventas-table">
-                            <thead>
-                              <tr>
-                                <th>Codigo</th>
-                                <th>Descripcion</th>
-                                <th>Stock</th>
-                                <th>Cantidad</th>
-                                <th>Compra</th>
-                                <th></th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {regalos.map((item) => (
-                                <tr key={item.id}>
-                                  <td>{item.codigo}</td>
-                                  <td>{item.descripcion}</td>
-                                  <td>{item.stock === null ? '-' : item.stock}</td>
-                                  <td>
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      value={item.cantidad}
-                                      onChange={(e) =>
-                                        actualizarItem(setRegalos, item.id, {
-                                          cantidad: Number(e.target.value || 1)
-                                        })
-                                      }
-                                    />
-                                  </td>
-                                  <td>
-                                    <input
-                                      type="number"
-                                      value={item.precioCompra}
-                                      onChange={(e) =>
-                                        actualizarItem(setRegalos, item.id, {
-                                          precioCompra: Number(e.target.value || 0)
-                                        })
-                                      }
-                                    />
-                                  </td>
-                                  <td>
-                                    <button
-                                      type="button"
-                                      className="btn-delete"
-                                      onClick={() => quitarItem(setRegalos, item.id)}
-                                    >
-                                      Quitar
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                      </div>
-                    </div>
-
-                      <div className="ventas-card">
-                        <h3>Requerimiento regalos</h3>
-                        <div className="ventas-subtabs">
-                          <button
-                            type="button"
-                            className={`ventas-subtab ${tabReqRegaloModo === 'avanzada' ? 'active' : ''}`}
-                            onClick={() => setTabReqRegaloModo('avanzada')}
-                          >
-                            Avanzada
-                          </button>
-                          <button
-                            type="button"
-                            className={`ventas-subtab ${tabReqRegaloModo === 'kits' ? 'active' : ''}`}
-                            onClick={() => setTabReqRegaloModo('kits')}
-                          >
-                            Kits
-                          </button>
-                        </div>
-                        <div className="requerimiento-box">
-                          {tabReqRegaloModo === 'avanzada' ? (
-                            <div className="form-group">
-                              <label>Buscar producto</label>
-                              <input
-                                type="text"
-                                placeholder="Buscar por codigo, descripcion o marca"
-                                value={busquedaReqRegalo}
-                                onChange={(e) => setBusquedaReqRegalo(e.target.value)}
-                              />
-                              <div className="resultados">
-                                {resultadosReqRegalo.map((producto) => (
-                                  <button
-                                    type="button"
-                                    className="resultado-item"
-                                    key={`req-reg-${producto.id}-${producto.codigo}`}
-                                    onClick={() => {
-                                      setRegaloRequerimiento((prev) => ({
-                                        ...prev,
-                                        codigo: producto.codigo || '',
-                                        descripcion: producto.descripcion || producto.codigo || prev.descripcion,
-                                        marca: producto.marca || '',
-                                        precioCompra: prev.precioCompra || producto.precio_compra || ''
-                                      }));
-                                      setBusquedaReqRegalo('');
-                                      setResultadosReqRegalo([]);
-                                    }}
-                                  >
-                                    {producto.codigo} - {producto.descripcion} ({producto.marca})
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="form-group">
-                              <label>Seleccionar kit</label>
-                              <div className="resultados">
-                                {kitsDisponibles.map((kit) => (
-                                  <button
-                                    type="button"
-                                    className="resultado-item"
-                                    key={`kit-req-reg-${kit.id}`}
-                                    onClick={() => agregarKitRegalo(kit)}
-                                  >
-                                    {kit.nombre} (S/. {Number(kit.precio_total || 0).toFixed(2)})
-                                  </button>
-                                ))}
-                                {!cargandoKits && !kitsDisponibles.length && !errorKits && (
-                                  <div className="helper-text">No hay kits activos.</div>
-                                )}
-                                {errorKits && <div className="helper-text">{errorKits}</div>}
-                              </div>
-                            </div>
-                          )}
-                          <div className="form-group">
-                            <label>Producto</label>
-                            <input
-                              type="text"
-                              value={regaloRequerimiento.descripcion}
-                              onChange={(e) =>
-                                setRegaloRequerimiento((prev) => ({ ...prev, descripcion: e.target.value }))
-                              }
-                            />
-                            {regaloRequerimiento.codigo && (
-                              <span className="helper-text">Codigo: {regaloRequerimiento.codigo}</span>
-                            )}
-                          </div>
-                        {sugerenciaRegalo && (
-                          <div className="helper-text">
-                            Sugerencia: {sugerenciaRegalo.descripcion || sugerenciaRegalo.codigo} /
-                            {sugerenciaRegalo.proveedor ? ` ${sugerenciaRegalo.proveedor}` : ''} /
-                            Compra S/ {Number(sugerenciaRegalo.precioCompra || 0).toFixed(2)}
-                          </div>
-                        )}
-                        <div className="form-group">
-                          <label>Proveedor</label>
-                          <input
-                            type="text"
-                            value={regaloRequerimiento.proveedor}
-                            onChange={(e) =>
-                              setRegaloRequerimiento((prev) => ({ ...prev, proveedor: e.target.value }))
-                            }
-                          />
-                        </div>
-                        <div className="form-row">
-                          <div className="form-group">
-                            <label>Cantidad</label>
-                            <input
-                              type="number"
-                              min="1"
-                              value={regaloRequerimiento.cantidad}
-                              onChange={(e) =>
-                                setRegaloRequerimiento((prev) => ({ ...prev, cantidad: e.target.value }))
-                              }
-                            />
-                          </div>
-                          <div className="form-group">
-                            <label>Precio compra</label>
-                            <input
-                              type="number"
-                              value={regaloRequerimiento.precioCompra}
-                              onChange={(e) =>
-                                setRegaloRequerimiento((prev) => ({ ...prev, precioCompra: e.target.value }))
-                              }
-                            />
-                          </div>
-                        </div>
-                        <div className="form-group form-group-actions">
-                          <button type="button" className="btn-secondary" onClick={agregarRegaloRequerimiento}>
-                            Agregar requerimiento
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="table-container">
-                        {regaloRequerimientos.length === 0 ? (
-                          <div className="empty-message">Sin requerimientos.</div>
-                        ) : (
-                          <table className="ventas-table">
-                            <thead>
-                              <tr>
-                                <th>Codigo</th>
-                                <th>Descripcion</th>
-                                <th>Proveedor</th>
-                                <th>Cantidad</th>
-                                <th>Compra</th>
-                                <th></th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {regaloRequerimientos.map((item) => (
-                                <tr key={item.id}>
-                                  <td>{item.codigo}</td>
-                                  <td>{item.descripcion}</td>
-                                  <td>{item.proveedor || item.marca}</td>
-                                  <td>
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      value={item.cantidad}
-                                      onChange={(e) =>
-                                        actualizarItem(setRegaloRequerimientos, item.id, {
-                                          cantidad: Number(e.target.value || 1)
-                                        })
-                                      }
-                                    />
-                                  </td>
-                                  <td>
-                                    <input
-                                      type="number"
-                                      value={item.precioCompra}
-                                      onChange={(e) =>
-                                        actualizarItem(setRegaloRequerimientos, item.id, {
-                                          precioCompra: Number(e.target.value || 0)
-                                        })
-                                      }
-                                    />
-                                  </td>
-                                  <td>
-                                    <button
-                                      type="button"
-                                      className="btn-delete"
-                                      onClick={() => quitarItem(setRegaloRequerimientos, item.id)}
-                                    >
-                                      Quitar
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                      </div>
-
-                      <div className="ventas-notas">
-                        <label>Observaciones / notas</label>
-                        <textarea
-                          value={formData.notas}
-                          onChange={(e) => setFormData((prev) => ({ ...prev, notas: e.target.value }))}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <VentasStepRegalos
+                  tabRegalosModo={tabRegalosModo}
+                  setTabRegalosModo={setTabRegalosModo}
+                  busquedaRegalo={busquedaRegalo}
+                  setBusquedaRegalo={setBusquedaRegalo}
+                  resultadosRegalo={resultadosRegalo}
+                  agregarRegalo={agregarRegalo}
+                  cargandoKits={cargandoKits}
+                  errorKits={errorKits}
+                  kitsDisponibles={kitsDisponibles}
+                  agregarKitRegalo={agregarKitRegalo}
+                  regalos={regalos}
+                  setRegalos={setRegalos}
+                  tabReqRegaloModo={tabReqRegaloModo}
+                  setTabReqRegaloModo={setTabReqRegaloModo}
+                  busquedaReqRegalo={busquedaReqRegalo}
+                  setBusquedaReqRegalo={setBusquedaReqRegalo}
+                  resultadosReqRegalo={resultadosReqRegalo}
+                  setResultadosReqRegalo={setResultadosReqRegalo}
+                  setRegaloRequerimiento={setRegaloRequerimiento}
+                  regaloRequerimiento={regaloRequerimiento}
+                  sugerenciaRegalo={sugerenciaRegalo}
+                  agregarRegaloRequerimiento={agregarRegaloRequerimiento}
+                  regaloRequerimientos={regaloRequerimientos}
+                  setRegaloRequerimientos={setRegaloRequerimientos}
+                  actualizarItem={actualizarItem}
+                  quitarItem={quitarItem}
+                  formData={formData}
+                  setFormData={setFormData}
+                />
               )}
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn-secondary" onClick={retroceder} disabled={step === 1}>
-                Anterior
-              </button>
-              {step < 3 ? (
-                <button type="button" className="btn-primary" onClick={avanzar}>
-                  Siguiente
-                </button>
-              ) : (
-                <button type="button" className="btn-primary" onClick={registrarVenta}>
-                  {editId ? 'Guardar cambios' : 'Registrar venta'}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+          <VentasModalFooter
+            step={step}
+            onBack={retroceder}
+            onNext={avanzar}
+            onSave={registrarVenta}
+            editId={editId}
+          />
+        </VentasModalShell>
       )}
     </div>
   );

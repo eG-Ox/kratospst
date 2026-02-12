@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { kitsService, cotizacionesService } from '../../../core/services/apiServices';
+import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/KitsPage.css';
 
 const emptyKit = {
@@ -18,6 +19,7 @@ const createItem = () => ({
 });
 
 const KitsPage = () => {
+  const mountedRef = useMountedRef();
   const [kits, setKits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -26,33 +28,40 @@ const KitsPage = () => {
   const [kitForm, setKitForm] = useState(emptyKit);
   const [productos, setProductos] = useState([]);
 
-  useEffect(() => {
-    cargarKits();
-    cargarProductos();
-  }, []);
-
-  const cargarKits = async () => {
+  const cargarKits = useCallback(async () => {
     try {
       setLoading(true);
       const resp = await kitsService.listar();
+      if (!mountedRef.current) return;
       setKits(resp.data || []);
       setError('');
     } catch (err) {
       console.error('Error cargando kits:', err);
-      setError('Error al cargar kits');
+      if (mountedRef.current) {
+        setError('Error al cargar kits');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, [mountedRef]);
 
-  const cargarProductos = async () => {
+  const cargarProductos = useCallback(async () => {
     try {
       const resp = await cotizacionesService.productosCotizacion({});
-      setProductos(resp.data || []);
+      if (mountedRef.current) {
+        setProductos(resp.data || []);
+      }
     } catch (err) {
       console.error('Error cargando productos:', err);
     }
-  };
+  }, [mountedRef]);
+
+  useEffect(() => {
+    cargarKits();
+    cargarProductos();
+  }, [cargarKits, cargarProductos]);
 
   const resetForm = () => {
     setKitForm(emptyKit);
@@ -68,6 +77,7 @@ const KitsPage = () => {
     try {
       const resp = await kitsService.getById(kit.id);
       const data = resp.data;
+      if (!mountedRef.current) return;
       setEditandoKit(kit);
       setKitForm({
         nombre: data.nombre || '',
@@ -84,7 +94,9 @@ const KitsPage = () => {
       setMostrarModal(true);
     } catch (err) {
       console.error('Error obteniendo kit:', err);
-      setError('Error al obtener kit');
+      if (mountedRef.current) {
+        setError('Error al obtener kit');
+      }
     }
   };
 
@@ -97,7 +109,9 @@ const KitsPage = () => {
       await cargarKits();
     } catch (err) {
       console.error('Error eliminando kit:', err);
-      setError('Error al eliminar kit');
+      if (mountedRef.current) {
+        setError('Error al eliminar kit');
+      }
     }
   };
 
@@ -107,7 +121,9 @@ const KitsPage = () => {
       await cargarKits();
     } catch (err) {
       console.error('Error cambiando estado:', err);
-      setError('Error al actualizar estado');
+      if (mountedRef.current) {
+        setError('Error al actualizar estado');
+      }
     }
   };
 
@@ -177,12 +193,16 @@ const KitsPage = () => {
       } else {
         await kitsService.crear(payload);
       }
-      setMostrarModal(false);
+      if (mountedRef.current) {
+        setMostrarModal(false);
+      }
       resetForm();
       await cargarKits();
     } catch (err) {
       console.error('Error guardando kit:', err);
-      setError(err.response?.data?.error || 'Error al guardar kit');
+      if (mountedRef.current) {
+        setError(err.response?.data?.error || 'Error al guardar kit');
+      }
     }
   };
 

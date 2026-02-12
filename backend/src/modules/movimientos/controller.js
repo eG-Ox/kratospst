@@ -1,6 +1,9 @@
 const pool = require('../../core/config/database');
 const { registrarHistorial } = require('../../shared/utils/historial');
 const { isPositiveInt, isNonEmptyString } = require('../../shared/utils/validation');
+const { syncUbicacionPrincipal } = require('../../shared/utils/ubicaciones');
+
+const STOCK_ALERTA = Number(process.env.STOCK_ALERTA || 2);
 
 // Registrar ingreso o salida
 exports.registrarMovimiento = async (req, res) => {
@@ -28,7 +31,7 @@ exports.registrarMovimiento = async (req, res) => {
 
     // Verificar que la máquina existe y obtener stock actual
     const [maquinas] = await connection.execute(
-      'SELECT stock FROM maquinas WHERE id = ? FOR UPDATE',
+      'SELECT stock, ubicacion_letra, ubicacion_numero FROM maquinas WHERE id = ? FOR UPDATE',
       [maquina_id]
     );
 
@@ -64,6 +67,12 @@ exports.registrarMovimiento = async (req, res) => {
       'UPDATE maquinas SET stock = ? WHERE id = ?',
       [nuevoStock, maquina_id]
     );
+    await syncUbicacionPrincipal(connection, {
+      id: maquina_id,
+      ubicacion_letra: maquinas[0].ubicacion_letra,
+      ubicacion_numero: maquinas[0].ubicacion_numero,
+      stock: nuevoStock
+    });
 
     await registrarHistorial(connection, {
       entidad: 'movimientos',
@@ -136,11 +145,20 @@ exports.registrarMovimientosBatch = async (req, res) => {
     const ids = Array.from(new Set(normalizados.map((item) => item.maquina_id)));
     const placeholders = ids.map(() => '?').join(',');
     const [rows] = await connection.execute(
-      `SELECT id, stock FROM maquinas WHERE id IN (${placeholders}) FOR UPDATE`,
+      `SELECT id, stock, ubicacion_letra, ubicacion_numero FROM maquinas WHERE id IN (${placeholders}) FOR UPDATE`,
       ids
     );
 
-    const stockMap = new Map(rows.map((row) => [Number(row.id), Number(row.stock || 0)]));
+    const stockMap = new Map(
+      rows.map((row) => [
+        Number(row.id),
+        {
+          stock: Number(row.stock || 0),
+          ubicacion_letra: row.ubicacion_letra,
+          ubicacion_numero: row.ubicacion_numero
+        }
+      ])
+    );
     for (const id of ids) {
       if (!stockMap.has(id)) {
         await connection.rollback();
@@ -157,7 +175,8 @@ exports.registrarMovimientosBatch = async (req, res) => {
     }
 
     for (const [maquinaId, delta] of deltaMap.entries()) {
-      const stockActual = stockMap.get(maquinaId) || 0;
+      const stockInfo = stockMap.get(maquinaId);
+      const stockActual = stockInfo ? stockInfo.stock : 0;
       if (stockActual + delta < 0) {
         await connection.rollback();
         connection.release();
@@ -185,16 +204,24 @@ exports.registrarMovimientosBatch = async (req, res) => {
     }
 
     for (const [maquinaId, delta] of deltaMap.entries()) {
-      const stockActual = stockMap.get(maquinaId) || 0;
+      const stockInfo = stockMap.get(maquinaId);
+      const stockActual = stockInfo ? stockInfo.stock : 0;
       const nuevoStock = stockActual + delta;
       await connection.execute(
         'UPDATE maquinas SET stock = ? WHERE id = ?',
         [nuevoStock, maquinaId]
       );
+      await syncUbicacionPrincipal(connection, {
+        id: maquinaId,
+        ubicacion_letra: stockInfo?.ubicacion_letra,
+        ubicacion_numero: stockInfo?.ubicacion_numero,
+        stock: nuevoStock
+      });
     }
 
     for (const item of normalizados) {
-      const stockActual = stockMap.get(item.maquina_id) || 0;
+      const stockInfo = stockMap.get(item.maquina_id);
+      const stockActual = stockInfo ? stockInfo.stock : 0;
       const delta = item.tipo === 'ingreso' ? item.cantidad : -item.cantidad;
       const nuevoStock = stockActual + deltaMap.get(item.maquina_id);
       await registrarHistorial(connection, {
@@ -350,7 +377,8 @@ exports.obtenerEstadisticas = async (req, res) => {
 
     // Máquinas con stock bajo
     const [stockBajo] = await connection.execute(
-      'SELECT COUNT(*) as total FROM maquinas WHERE stock < precio_minimo'
+      'SELECT COUNT(*) as total FROM maquinas WHERE activo = TRUE AND stock <= ?',
+      [Number.isFinite(STOCK_ALERTA) ? STOCK_ALERTA : 2]
     );
 
     connection.release();

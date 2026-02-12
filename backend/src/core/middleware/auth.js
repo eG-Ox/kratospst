@@ -8,8 +8,9 @@ const obtenerToken = (req) => {
 };
 
 const cargarPermisos = async (rol) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(
       `SELECT p.clave, rp.permitido
        FROM roles r
@@ -18,10 +19,13 @@ const cargarPermisos = async (rol) => {
        WHERE r.nombre = ?`,
       [rol]
     );
-    connection.release();
     return rows.filter((row) => row.permitido).map((row) => row.clave);
   } catch (error) {
     return null;
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 };
 

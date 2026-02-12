@@ -1,17 +1,19 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { permisosService, productosService, tiposMaquinasService } from '../../../core/services/apiServices';
+import { marcasService, permisosService, productosService, tiposMaquinasService } from '../../../core/services/apiServices';
 import '../styles/ProductosPage.css';
 
 const ProductosPage = () => {
   const [productos, setProductos] = useState([]);
   const [tipos, setTipos] = useState([]);
+  const [marcas, setMarcas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [mensajeImport, setMensajeImport] = useState('');
   const [erroresImport, setErroresImport] = useState([]);
   const [importando, setImportando] = useState(false);
   const [puedeVerPrecioCompra, setPuedeVerPrecioCompra] = useState(true);
+  const [permisosCargados, setPermisosCargados] = useState(false);
   const [mostrarModalProducto, setMostrarModalProducto] = useState(false);
   const [editandoProducto, setEditandoProducto] = useState(null);
   const [mostrarModalTipo, setMostrarModalTipo] = useState(false);
@@ -35,6 +37,7 @@ const ProductosPage = () => {
     ficha_web: '',
     ficha_tecnica: null
   });
+  const PAGE_SIZE = 60;
 
   const [filtros, setFiltros] = useState({
     q: '',
@@ -42,6 +45,8 @@ const ProductosPage = () => {
     marca: '',
     stock: 'all'
   });
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [tipoForm, setTipoForm] = useState({
     nombre: '',
     descripcion: ''
@@ -50,72 +55,80 @@ const ProductosPage = () => {
 
 
   const marcasDisponibles = useMemo(() => {
-    const marcas = new Set();
-    productos.forEach((prod) => {
-      if (prod.marca) {
-        marcas.add(String(prod.marca));
+    const marcasSet = new Set();
+    (marcas || []).forEach((item) => {
+      const nombre = String(item.nombre || item.codigo || '').trim();
+      if (nombre) {
+        marcasSet.add(nombre);
       }
     });
-    return Array.from(marcas).sort((a, b) => a.localeCompare(b));
-  }, [productos]);
+    return Array.from(marcasSet).sort((a, b) => a.localeCompare(b));
+  }, [marcas]);
 
-  const productosFiltrados = useMemo(() => {
-    const q = filtros.q.trim().toLowerCase();
-    return productos.filter((prod) => {
-      if (filtros.tipo && String(prod.tipo_maquina_id || '') !== String(filtros.tipo)) {
-        return false;
+  const cargarCatalogos = useCallback(async () => {
+    try {
+      const [respTipos, respMarcas] = await Promise.all([
+        tiposMaquinasService.getAll(),
+        marcasService.getAll().catch((err) => {
+          console.warn('No se pudieron cargar marcas:', err);
+          return { data: [] };
+        })
+      ]);
+      setTipos(respTipos.data || []);
+      setMarcas(respMarcas.data || []);
+      if (!permisosCargados) {
+        try {
+          const respPermisos = await permisosService.misPermisos();
+          const permisos = respPermisos.data || [];
+          setPuedeVerPrecioCompra(permisos.includes('productos.precio_compra.ver'));
+          setPermisosCargados(true);
+        } catch (permError) {
+          console.warn('No se pudieron cargar permisos:', permError);
+        }
       }
-      if (filtros.marca && String(prod.marca || '') !== String(filtros.marca)) {
-        return false;
-      }
-      if (filtros.stock === 'bajo') {
-        const min = Number(prod.precio_minimo || 0);
-        if (!(Number(prod.stock || 0) <= min)) return false;
-      }
-      if (filtros.stock === 'sin') {
-        if (Number(prod.stock || 0) > 0) return false;
-      }
-      if (q) {
-        const hay = [prod.codigo, prod.descripcion, prod.marca, prod.tipo_nombre]
-          .map((v) => String(v || '').toLowerCase())
-          .some((v) => v.includes(q));
-        if (!hay) return false;
-      }
-      return true;
-    });
-  }, [productos, filtros]);
+    } catch (error) {
+      console.error('Error cargando catalogos:', error);
+      setError('Error al cargar catalogos');
+    }
+  }, [permisosCargados]);
 
-  useEffect(() => {
-    cargarDatos();
-  }, []);
-
-  const cargarDatos = async () => {
+  const cargarProductos = useCallback(async (pageValue = page, filtrosValue = filtros) => {
     try {
       setLoading(true);
-      const [respProductos, respTipos] = await Promise.all([
-        productosService.getAll(),
-        tiposMaquinasService.getAll()
-      ]);
-      let permisos = [];
-      try {
-        const respPermisos = await permisosService.misPermisos();
-        permisos = respPermisos.data || [];
-      } catch (permError) {
-        console.warn('No se pudieron cargar permisos:', permError);
-      }
-      setProductos(respProductos.data);
-      setTipos(respTipos.data);
-      setPuedeVerPrecioCompra(permisos.includes('productos.precio_compra.ver'));
+      const params = {
+        q: filtrosValue.q || undefined,
+        tipo: filtrosValue.tipo || undefined,
+        marca: filtrosValue.marca || undefined,
+        stock: filtrosValue.stock !== 'all' ? filtrosValue.stock : undefined,
+        page: pageValue,
+        limit: PAGE_SIZE
+      };
+      const respProductos = await productosService.getAll(params);
+      const data = respProductos.data;
+      const items = Array.isArray(data) ? data : data.items || [];
+      const totalValue = Array.isArray(data) ? items.length : data.total ?? items.length;
+      setProductos(items);
+      setTotal(totalValue);
       setError('');
-      setMensajeImport('');
-      setErroresImport([]);
     } catch (error) {
-      console.error('Error cargando datos:', error);
+      console.error('Error cargando productos:', error);
       setError('Error al cargar productos');
     } finally {
       setLoading(false);
     }
-  };
+  }, [PAGE_SIZE, filtros, page]);
+
+  useEffect(() => {
+    cargarCatalogos();
+  }, [cargarCatalogos]);
+
+  useEffect(() => {
+    const delay = filtros.q ? 300 : 0;
+    const debounce = setTimeout(() => {
+      cargarProductos(page, filtros);
+    }, delay);
+    return () => clearTimeout(debounce);
+  }, [cargarProductos, filtros, page]);
 
   const resetFormulario = () => {
     setFormularioData({
@@ -143,14 +156,18 @@ const ProductosPage = () => {
   const handleGuardarProducto = async (e) => {
     e.preventDefault();
     try {
+      const payload = { ...formularioData };
+      if (editandoProducto && !puedeVerPrecioCompra) {
+        delete payload.precio_compra;
+      }
       if (editandoProducto) {
-        await productosService.update(editandoProducto.id, formularioData);
+        await productosService.update(editandoProducto.id, payload);
       } else {
-        await productosService.create(formularioData);
+        await productosService.create(payload);
       }
       resetFormulario();
       setMostrarModalProducto(false);
-      await cargarDatos();
+      await cargarProductos(page, filtros);
     } catch (error) {
       console.error('Error guardando producto:', error);
       setError(error.response?.data?.error || 'Error al guardar producto');
@@ -165,7 +182,7 @@ const ProductosPage = () => {
       descripcion: producto.descripcion || '',
       ubicacion_letra: producto.ubicacion_letra || '',
       ubicacion_numero: producto.ubicacion_numero ?? '',
-      stock: Number(producto.stock || 0),
+      stock: Number(producto.stock ?? 0),
       precio_compra: producto.precio_compra ?? '',
       precio_venta: producto.precio_venta ?? '',
       precio_minimo: producto.precio_minimo ?? 0,
@@ -180,7 +197,11 @@ const ProductosPage = () => {
     if (window.confirm('¿Estás seguro de que deseas eliminar este producto?')) {
       try {
         await productosService.delete(id);
-        await cargarDatos();
+        if (productos.length === 1 && page > 1) {
+          setPage((prev) => Math.max(prev - 1, 1));
+        } else {
+          await cargarProductos(page, filtros);
+        }
       } catch (error) {
         console.error('Error eliminando producto:', error);
         setError('Error al eliminar producto');
@@ -239,7 +260,11 @@ const ProductosPage = () => {
 
     try {
       if (editandoTipo) {
-        await tiposMaquinasService.update(editandoTipo.id, tipoForm);
+        const resp = await tiposMaquinasService.update(editandoTipo.id, tipoForm);
+        const actualizado = resp?.data || { ...tipoForm, id: editandoTipo.id };
+        setTipos((prev) =>
+          prev.map((item) => (item.id === editandoTipo.id ? { ...item, ...actualizado } : item))
+        );
       } else {
         const response = await tiposMaquinasService.create(tipoForm);
         if (response?.data?.id) {
@@ -247,11 +272,11 @@ const ProductosPage = () => {
             ...prev,
             tipo_maquina_id: String(response.data.id)
           }));
+          setTipos((prev) => [...prev, response.data]);
         }
       }
       resetTipoForm();
       setMostrarModalTipo(false);
-      await cargarDatos();
     } catch (error) {
       console.error('Error guardando tipo de máquina:', error);
       setError(error.response?.data?.error || 'Error al guardar tipo de máquina');
@@ -321,7 +346,8 @@ const ProductosPage = () => {
         `Importados: ${insertados || 0} | Duplicados: ${duplicados?.length || 0} | Errores: ${errores?.length || 0}`
       );
       setErroresImport(errores || []);
-      await cargarDatos();
+      setPage(1);
+      await cargarProductos(1, filtros);
     } catch (err) {
       console.error('Error importando productos:', err);
       setError(err.response?.data?.error || 'Error al importar productos');
@@ -339,6 +365,8 @@ const ProductosPage = () => {
     if (!letra && !numero) return '-';
     return `${letra}${numero}`;
   };
+
+  const totalPages = Math.max(Math.ceil(total / PAGE_SIZE) || 1, 1);
 
   return (
     <div className="productos-container">
@@ -394,11 +422,17 @@ const ProductosPage = () => {
             type="text"
             placeholder="Buscar codigo, descripcion, marca..."
             value={filtros.q}
-            onChange={(e) => setFiltros((prev) => ({ ...prev, q: e.target.value }))}
+            onChange={(e) => {
+              setFiltros((prev) => ({ ...prev, q: e.target.value }));
+              setPage(1);
+            }}
           />
           <select
             value={filtros.tipo}
-            onChange={(e) => setFiltros((prev) => ({ ...prev, tipo: e.target.value }))}
+            onChange={(e) => {
+              setFiltros((prev) => ({ ...prev, tipo: e.target.value }));
+              setPage(1);
+            }}
           >
             <option value="">Tipo</option>
             {tipos.map((tipo) => (
@@ -409,7 +443,10 @@ const ProductosPage = () => {
           </select>
           <select
             value={filtros.marca}
-            onChange={(e) => setFiltros((prev) => ({ ...prev, marca: e.target.value }))}
+            onChange={(e) => {
+              setFiltros((prev) => ({ ...prev, marca: e.target.value }));
+              setPage(1);
+            }}
           >
             <option value="">Marca</option>
             {marcasDisponibles.map((marca) => (
@@ -420,16 +457,21 @@ const ProductosPage = () => {
           </select>
           <select
             value={filtros.stock}
-            onChange={(e) => setFiltros((prev) => ({ ...prev, stock: e.target.value }))}
+            onChange={(e) => {
+              setFiltros((prev) => ({ ...prev, stock: e.target.value }));
+              setPage(1);
+            }}
           >
             <option value="all">Stock</option>
-            <option value="bajo">Bajo</option>
             <option value="sin">Sin stock</option>
           </select>
           <button
             type="button"
             className="btn-secondary icon-btn-inline"
-            onClick={() => setFiltros({ q: '', tipo: '', marca: '', stock: 'all' })}
+            onClick={() => {
+              setFiltros({ q: '', tipo: '', marca: '', stock: 'all' });
+              setPage(1);
+            }}
             title="Limpiar"
             aria-label="Limpiar filtros"
           >
@@ -460,14 +502,14 @@ const ProductosPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {productosFiltrados.map(prod => (
+                {productos.map((prod) => (
                   <tr key={prod.id}>
                     <td>{prod.codigo}</td>
                     <td>{prod.tipo_nombre}</td>
                     <td>{prod.marca}</td>
                     <td>{prod.descripcion || '-'}</td>
                     <td>{formatearUbicacion(prod)}</td>
-                    <td className={prod.stock < prod.precio_minimo ? 'low-stock' : ''}>{prod.stock}</td>
+                    <td className={Number(prod.stock || 0) <= 0 ? 'low-stock' : ''}>{prod.stock}</td>
                     {puedeVerPrecioCompra && (
                       <td>S/. {Number(prod.precio_compra || 0).toFixed(2)}</td>
                     )}
@@ -545,6 +587,34 @@ const ProductosPage = () => {
             </table>
           ) : (
             <p className="empty-message">No hay productos creados</p>
+          )}
+          {productos.length > 0 && (
+            <div className="table-pagination">
+              <span>
+                Mostrando {productos.length} de {total}
+              </span>
+              <div className="page-controls">
+                <button
+                  type="button"
+                  className="btn-secondary btn-small"
+                  onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
+                  disabled={page <= 1}
+                >
+                  Anterior
+                </button>
+                <span>
+                  Pagina {page} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="btn-secondary btn-small"
+                  onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
+                  disabled={page >= totalPages}
+                >
+                  Siguiente
+                </button>
+              </div>
+            </div>
           )}
         </div>
         </>
@@ -667,20 +737,20 @@ const ProductosPage = () => {
                       }
                     />
                   </div>
-                  <div className="form-group">
-                    <label>Precio Compra *</label>
-                    <input
-                      type="number"
-                      required
-                      step="0.01"
-                      value={formularioData.precio_compra}
-                      onChange={(e) =>
-                        setFormularioData({ ...formularioData, precio_compra: e.target.value })
-                      }
-                      disabled={!puedeVerPrecioCompra}
-                      placeholder={puedeVerPrecioCompra ? '' : 'Sin permiso'}
-                    />
-                  </div>
+                  {puedeVerPrecioCompra && (
+                    <div className="form-group">
+                      <label>Precio Compra *</label>
+                      <input
+                        type="number"
+                        required
+                        step="0.01"
+                        value={formularioData.precio_compra}
+                        onChange={(e) =>
+                          setFormularioData({ ...formularioData, precio_compra: e.target.value })
+                        }
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-row">

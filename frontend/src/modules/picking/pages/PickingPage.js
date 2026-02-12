@@ -161,7 +161,7 @@ const PickingPage = () => {
         const raw = String(valor || '').trim();
         const tokens = raw
           .replace(/\r/g, '')
-          .split(/[\n,;\/\s]+/g)
+          .split(/[\n,;/\s]+/g)
           .map((item) => item.trim())
           .filter(Boolean);
         code = tokens[0] || raw;

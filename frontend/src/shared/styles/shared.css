@@ -190,6 +190,27 @@
   border-left: 4px solid var(--warning-color);
 }
 
+/* Error boundary */
+.error-boundary {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f7f8fb;
+  padding: 24px;
+}
+
+.error-boundary__card {
+  background: #fff;
+  border: 1px solid #e6e9f0;
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 520px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 10px 24px rgba(20, 30, 55, 0.12);
+}
+
 /* Modal */
 .modal-overlay {
   position: fixed !important;

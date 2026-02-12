@@ -3,8 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const { ExcelJS, addSheetFromObjects, workbookToBuffer, readFirstSheetToJson } = require('../../shared/utils/excel');
 const { registrarHistorial } = require('../../shared/utils/historial');
-const { isNonEmptyString, isNonNegative, toNumber } = require('../../shared/utils/validation');
+const { isNonNegative, toNumber } = require('../../shared/utils/validation');
 const { tienePermiso } = require('../../core/middleware/auth');
+const { syncUbicacionPrincipal } = require('../../shared/utils/ubicaciones');
 
 const normalizarHeader = (header) =>
   String(header || '')
@@ -13,12 +14,24 @@ const normalizarHeader = (header) =>
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]/g, '');
 
+const normalizarBusqueda = (value) =>
+  String(value || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9]/g, '');
+
 const parseNumero = (value, fallback = 0) => {
   const parsed = Number(String(value).replace(',', '.'));
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
 const UBICACION_VALIDAS = new Set(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']);
+
+const parsePositiveInt = (value, fallback) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
 
 const parseUbicacionString = (value) => {
   const raw = String(value || '').trim().toUpperCase();
@@ -76,55 +89,145 @@ const normalizarUbicacion = (data) => {
 
 // Obtener todas las máquinas
 exports.getMaquinas = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
-    const [maquinas] = await connection.execute(`
-      SELECT m.*, t.nombre as tipo_nombre 
-      FROM maquinas m 
-      JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id 
-      WHERE m.activo = TRUE
-      ORDER BY m.codigo
-    `);
-    connection.release();
-    if (!tienePermiso(req, 'productos.precio_compra.ver')) {
-      const sanitized = maquinas.map((item) => ({ ...item, precio_compra: null }));
-      return res.json(sanitized);
+    const { q, tipo, marca, stock, minimo, page, limit } = req.query;
+    const hasQuery =
+      q !== undefined ||
+      tipo !== undefined ||
+      marca !== undefined ||
+      stock !== undefined ||
+      minimo !== undefined ||
+      page !== undefined ||
+      limit !== undefined;
+
+    const where = ['m.activo = TRUE'];
+    const params = [];
+
+    if (tipo) {
+      where.push('m.tipo_maquina_id = ?');
+      params.push(tipo);
     }
-    res.json(maquinas);
+    if (marca) {
+      where.push('m.marca = ?');
+      params.push(marca);
+    }
+    if (stock === 'bajo') {
+      const limiteStock = Number(minimo);
+      where.push('m.stock <= ?');
+      params.push(Number.isFinite(limiteStock) ? limiteStock : 2);
+    } else if (stock === 'sin') {
+      where.push('m.stock <= 0');
+    }
+    const qText = String(q || '').trim();
+    if (qText) {
+      const normalized = normalizarBusqueda(qText);
+      const clauses = [];
+      if (normalized) {
+        clauses.push('m.codigo_busqueda LIKE ?');
+        params.push(`%${normalized}%`);
+        clauses.push('m.descripcion_busqueda LIKE ?');
+        params.push(`%${normalized}%`);
+      }
+      clauses.push('UPPER(m.marca) LIKE ?');
+      params.push(`%${qText.toUpperCase()}%`);
+      where.push(`(${clauses.join(' OR ')})`);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const orderSql = 'ORDER BY m.codigo';
+
+    let query = `
+      SELECT m.*, t.nombre as tipo_nombre
+      FROM maquinas m
+      JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id
+      ${whereSql}
+      ${orderSql}
+    `;
+
+    let total = null;
+    let pageValue = null;
+    let limitValue = null;
+
+    if (hasQuery) {
+      limitValue = parsePositiveInt(limit, 200);
+      pageValue = parsePositiveInt(page, 1);
+      const offset = (pageValue - 1) * limitValue;
+      query += ` LIMIT ${offset}, ${limitValue}`;
+    }
+
+    connection = await pool.getConnection();
+    const [maquinas] = await connection.execute(query, params);
+
+    if (hasQuery) {
+      const [totalRows] = await connection.execute(
+        `SELECT COUNT(*) as total FROM maquinas m ${whereSql}`,
+        params
+      );
+      total = totalRows?.[0]?.total || 0;
+    }
+    connection.release();
+    connection = null;
+
+    let sanitized = maquinas;
+    if (!tienePermiso(req, 'productos.precio_compra.ver')) {
+      sanitized = maquinas.map((item) => ({ ...item, precio_compra: null }));
+    }
+
+    if (hasQuery) {
+      return res.json({
+        items: sanitized,
+        total: total || 0,
+        page: pageValue,
+        limit: limitValue
+      });
+    }
+
+    res.json(sanitized);
   } catch (error) {
-    console.error('Error obteniendo máquinas:', error);
-    res.status(500).json({ error: 'Error al obtener máquinas' });
+    if (connection) {
+      connection.release();
+    }
+    console.error('Error obteniendo maquinas:', error);
+    res.status(500).json({ error: 'Error al obtener maquinas' });
   }
 };
 
 // Obtener una máquina por ID
 exports.getMaquina = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [maquina] = await connection.execute(
       'SELECT m.*, t.nombre as tipo_nombre FROM maquinas m JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id WHERE m.id = ?',
       [req.params.id]
     );
     connection.release();
-    
+    connection = null;
+
     if (maquina.length === 0) {
-      return res.status(404).json({ error: 'Máquina no encontrada' });
+      return res.status(404).json({ error: 'Maquina no encontrada' });
     }
-    
+
     if (!tienePermiso(req, 'productos.precio_compra.ver')) {
       return res.json({ ...maquina[0], precio_compra: null });
     }
     res.json(maquina[0]);
   } catch (error) {
-    console.error('Error obteniendo máquina:', error);
-    res.status(500).json({ error: 'Error al obtener máquina' });
+    if (connection) {
+      connection.release();
+      connection = null;
+    }
+    console.error('Error obteniendo maquina:', error);
+    res.status(500).json({ error: 'Error al obtener maquina' });
   }
 };
 
 // Obtener ubicaciones con stock de un producto
 exports.obtenerUbicaciones = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(
       `SELECT ubicacion_letra, ubicacion_numero, stock
        FROM maquinas_ubicaciones
@@ -132,9 +235,30 @@ exports.obtenerUbicaciones = async (req, res) => {
        ORDER BY stock DESC, ubicacion_letra, ubicacion_numero`,
       [req.params.id]
     );
+    if (rows.length === 0) {
+      const [fallbackRows] = await connection.execute(
+        `SELECT ubicacion_letra, ubicacion_numero, stock
+         FROM maquinas
+         WHERE id = ? AND activo = TRUE`,
+        [req.params.id]
+      );
+      const fallback = fallbackRows[0];
+      if (fallback?.ubicacion_letra && fallback?.ubicacion_numero && Number(fallback.stock || 0) > 0) {
+        rows.push({
+          ubicacion_letra: fallback.ubicacion_letra,
+          ubicacion_numero: fallback.ubicacion_numero,
+          stock: Number(fallback.stock || 0)
+        });
+      }
+    }
     connection.release();
+    connection = null;
     res.json(rows);
   } catch (error) {
+    if (connection) {
+      connection.release();
+      connection = null;
+    }
     console.error('Error obteniendo ubicaciones:', error);
     res.status(500).json({ error: 'Error al obtener ubicaciones' });
   }
@@ -147,13 +271,15 @@ exports.getMaquinaPorCodigo = async (req, res) => {
     return res.status(400).json({ error: 'Codigo requerido' });
   }
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [maquina] = await connection.execute(
       'SELECT m.*, t.nombre as tipo_nombre FROM maquinas m JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id WHERE m.codigo = ? AND m.activo = TRUE',
       [codigo]
     );
     connection.release();
+    connection = null;
 
     if (maquina.length === 0) {
       return res.status(404).json({ error: 'Maquina no encontrada' });
@@ -164,6 +290,10 @@ exports.getMaquinaPorCodigo = async (req, res) => {
     }
     res.json(maquina[0]);
   } catch (error) {
+    if (connection) {
+      connection.release();
+      connection = null;
+    }
     console.error('Error obteniendo maquina por codigo:', error);
     res.status(500).json({ error: 'Error al obtener maquina' });
   }
@@ -192,18 +322,20 @@ exports.crearMaquina = async (req, res) => {
   const precioVentaVacio =
     precio_venta === undefined || precio_venta === null || precio_venta === '';
   if (!codigo || !tipo_maquina_id || !marca || precioCompraVacio || precioVentaVacio) {
-    return res.status(400).json({ 
-      error: 'Campos requeridos: código, tipo de máquina, marca, precio de compra y precio de venta' 
+    return res.status(400).json({
+      error: 'Campos requeridos: codigo, tipo de maquina, marca, precio de compra y precio de venta'
     });
   }
   const precioCompraNum = toNumber(precio_compra);
   const precioVentaNum = toNumber(precio_venta);
   const precioMinimoNum = toNumber(precio_minimo) ?? 0;
-  const stockNum = toNumber(stock) ?? 0;
+  const stockNum = toNumber(stock);
+  const stockValue = stockNum ?? 0;
+
   if (!isNonNegative(precioCompraNum) || !isNonNegative(precioVentaNum)) {
     return res.status(400).json({ error: 'Precio de compra/venta invalido' });
   }
-  if (!isNonNegative(stockNum)) {
+  if (!isNonNegative(stockValue)) {
     return res.status(400).json({ error: 'Stock invalido' });
   }
   if (precioCompraNum > precioVentaNum) {
@@ -213,6 +345,10 @@ exports.crearMaquina = async (req, res) => {
     return res.status(400).json({ error: 'Precio minimo no puede ser mayor que precio de venta' });
   }
 
+  const codigoBusqueda = normalizarBusqueda(codigo);
+  const descripcionBusqueda = normalizarBusqueda(descripcion);
+
+  let connection;
   try {
     const ubicacionParse = normalizarUbicacion({
       ubicacion,
@@ -223,17 +359,18 @@ exports.crearMaquina = async (req, res) => {
       return res.status(400).json({ error: ubicacionParse.error });
     }
 
-    const connection = await pool.getConnection();
-    
-    // Verificar que el tipo de máquina existe
+    connection = await pool.getConnection();
+
+    // Verificar que el tipo de maquina existe
     const [tipo] = await connection.execute(
       'SELECT id FROM tipos_maquinas WHERE id = ?',
       [tipo_maquina_id]
     );
-    
+
     if (tipo.length === 0) {
       connection.release();
-      return res.status(400).json({ error: 'El tipo de máquina no existe' });
+      connection = null;
+      return res.status(400).json({ error: 'El tipo de maquina no existe' });
     }
 
     const [existente] = await connection.execute(
@@ -249,7 +386,7 @@ exports.crearMaquina = async (req, res) => {
     if (existente.length && existente[0].activo === 0) {
       await connection.execute(
         `UPDATE maquinas
-         SET tipo_maquina_id = ?, marca = ?, descripcion = ?, ubicacion_letra = ?, ubicacion_numero = ?,
+         SET tipo_maquina_id = ?, marca = ?, descripcion = ?, codigo_busqueda = ?, descripcion_busqueda = ?, ubicacion_letra = ?, ubicacion_numero = ?,
              stock = ?, precio_compra = ?, precio_venta = ?, precio_minimo = ?, ficha_web = ?, ficha_tecnica_ruta = ?,
              activo = TRUE
          WHERE id = ?`,
@@ -257,17 +394,25 @@ exports.crearMaquina = async (req, res) => {
           tipo_maquina_id,
           marca,
           descripcion || null,
+          codigoBusqueda,
+          descripcionBusqueda,
           ubicacionParse.letra,
           ubicacionParse.numero,
-          stock || 0,
-          precio_compra,
-          precio_venta,
-          precio_minimo || 0,
+          stockValue,
+          precioCompraNum,
+          precioVentaNum,
+          precioMinimoNum,
           ficha_web || null,
           ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
           existente[0].id
         ]
       );
+      await syncUbicacionPrincipal(connection, {
+        id: existente[0].id,
+        ubicacion_letra: ubicacionParse.letra,
+        ubicacion_numero: ubicacionParse.numero,
+        stock: stockValue
+      });
       await registrarHistorial(connection, {
         entidad: 'productos',
         entidad_id: existente[0].id,
@@ -282,16 +427,17 @@ exports.crearMaquina = async (req, res) => {
           descripcion: descripcion || null,
           ubicacion_letra: ubicacionParse.letra,
           ubicacion_numero: ubicacionParse.numero,
-          stock: stock || 0,
-          precio_compra,
-          precio_venta,
-          precio_minimo: precio_minimo || 0,
+          stock: stockValue,
+          precio_compra: precioCompraNum,
+          precio_venta: precioVentaNum,
+          precio_minimo: precioMinimoNum,
           ficha_web: ficha_web || null,
           ficha_tecnica_ruta: ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
           activo: 1
         }
       });
       connection.release();
+      connection = null;
       return res.status(200).json({
         id: existente[0].id,
         codigo,
@@ -300,10 +446,10 @@ exports.crearMaquina = async (req, res) => {
         descripcion,
         ubicacion_letra: ubicacionParse.letra,
         ubicacion_numero: ubicacionParse.numero,
-        stock,
-        precio_compra,
-        precio_venta,
-        precio_minimo,
+        stock: stockValue,
+        precio_compra: precioCompraNum,
+        precio_venta: precioVentaNum,
+        precio_minimo: precioMinimoNum,
         ficha_web,
         ficha_tecnica_ruta: ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
         activo: 1
@@ -312,24 +458,33 @@ exports.crearMaquina = async (req, res) => {
 
     const [result] = await connection.execute(
       `INSERT INTO maquinas 
-       (codigo, tipo_maquina_id, marca, descripcion, ubicacion_letra, ubicacion_numero, stock, precio_compra, 
-        precio_venta, precio_minimo, ficha_web, ficha_tecnica_ruta, activo) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
+       (codigo, tipo_maquina_id, marca, descripcion, codigo_busqueda, descripcion_busqueda,
+        ubicacion_letra, ubicacion_numero, stock, precio_compra, precio_venta, precio_minimo,
+        ficha_web, ficha_tecnica_ruta, activo) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
       [
         codigo,
         tipo_maquina_id,
         marca,
         descripcion || null,
+        codigoBusqueda,
+        descripcionBusqueda,
         ubicacionParse.letra,
         ubicacionParse.numero,
-        stock || 0,
-        precio_compra,
-        precio_venta,
-        precio_minimo || 0,
+        stockValue,
+        precioCompraNum,
+        precioVentaNum,
+        precioMinimoNum,
         ficha_web || null,
         ficha_tecnica_ruta
       ]
     );
+    await syncUbicacionPrincipal(connection, {
+      id: result.insertId,
+      ubicacion_letra: ubicacionParse.letra,
+      ubicacion_numero: ubicacionParse.numero,
+      stock: stockValue
+    });
     await registrarHistorial(connection, {
       entidad: 'productos',
       entidad_id: result.insertId,
@@ -345,13 +500,14 @@ exports.crearMaquina = async (req, res) => {
         descripcion: descripcion || null,
         ubicacion_letra: ubicacionParse.letra,
         ubicacion_numero: ubicacionParse.numero,
-        stock: stock || 0,
-        precio_compra,
-        precio_venta,
-        precio_minimo: precio_minimo || 0
+        stock: stockValue,
+        precio_compra: precioCompraNum,
+        precio_venta: precioVentaNum,
+        precio_minimo: precioMinimoNum
       }
     });
     connection.release();
+    connection = null;
 
     res.status(201).json({
       id: result.insertId,
@@ -361,22 +517,26 @@ exports.crearMaquina = async (req, res) => {
       descripcion,
       ubicacion_letra: ubicacionParse.letra,
       ubicacion_numero: ubicacionParse.numero,
-      stock,
-      precio_compra,
-      precio_venta,
-      precio_minimo,
+      stock: stockValue,
+      precio_compra: precioCompraNum,
+      precio_venta: precioVentaNum,
+      precio_minimo: precioMinimoNum,
       ficha_web,
       ficha_tecnica_ruta
     });
   } catch (error) {
-    console.error('Error creando máquina:', error);
+    console.error('Error creando maquina:', error);
     if (req.file) {
       fs.unlink(req.file.path, () => {});
     }
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ error: 'El código de máquina ya existe' });
+    if (connection) {
+      connection.release();
+      connection = null;
     }
-    res.status(500).json({ error: 'Error al crear máquina' });
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'El codigo de maquina ya existe' });
+    }
+    res.status(500).json({ error: 'Error al crear maquina' });
   }
 };
 
@@ -398,29 +558,14 @@ exports.actualizarMaquina = async (req, res) => {
   } = req.body;
 
   if (!codigo || !tipo_maquina_id || !marca) {
-    return res.status(400).json({ error: 'Campos requeridos: código, tipo de máquina, marca' });
-  }
-  const precioCompraNum = toNumber(precio_compra);
-  const precioVentaNum = toNumber(precio_venta);
-  const precioMinimoNum = toNumber(precio_minimo) ?? 0;
-  const stockNum = toNumber(stock) ?? 0;
-  if (!isNonNegative(precioCompraNum) || !isNonNegative(precioVentaNum)) {
-    return res.status(400).json({ error: 'Precio de compra/venta invalido' });
-  }
-  if (!isNonNegative(stockNum)) {
-    return res.status(400).json({ error: 'Stock invalido' });
-  }
-  if (precioCompraNum > precioVentaNum) {
-    return res.status(400).json({ error: 'Precio de compra no puede ser mayor que precio de venta' });
-  }
-  if (precioMinimoNum > precioVentaNum) {
-    return res.status(400).json({ error: 'Precio minimo no puede ser mayor que precio de venta' });
+    return res.status(400).json({ error: 'Campos requeridos: codigo, tipo de maquina, marca' });
   }
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
 
-    // Obtener la máquina actual
+    // Obtener la maquina actual
     const [maquinaActual] = await connection.execute(
       'SELECT * FROM maquinas WHERE id = ?',
       [req.params.id]
@@ -428,7 +573,59 @@ exports.actualizarMaquina = async (req, res) => {
 
     if (maquinaActual.length === 0) {
       connection.release();
-      return res.status(404).json({ error: 'M?quina no encontrada' });
+      connection = null;
+      return res.status(404).json({ error: 'Maquina no encontrada' });
+    }
+
+    const precioCompraInput =
+      precio_compra === undefined || precio_compra === null || precio_compra === ''
+        ? maquinaActual[0].precio_compra
+        : precio_compra;
+    const precioVentaInput =
+      precio_venta === undefined || precio_venta === null || precio_venta === ''
+        ? maquinaActual[0].precio_venta
+        : precio_venta;
+    const precioMinimoInput =
+      precio_minimo === undefined || precio_minimo === null || precio_minimo === ''
+        ? maquinaActual[0].precio_minimo
+        : precio_minimo;
+
+    const stockInputPresent = Object.prototype.hasOwnProperty.call(req.body, 'stock');
+    const stockInput =
+      !stockInputPresent || stock === undefined || stock === null || stock === ''
+        ? maquinaActual[0].stock
+        : stock;
+
+    const precioCompraNum = toNumber(precioCompraInput);
+    const precioVentaNum = toNumber(precioVentaInput);
+    const precioMinimoNum = toNumber(precioMinimoInput) ?? 0;
+    const stockNum = toNumber(stockInput);
+    const codigoBusqueda = normalizarBusqueda(codigo);
+    const descripcionBusqueda = normalizarBusqueda(descripcion);
+
+    if (!isNonNegative(precioCompraNum) || !isNonNegative(precioVentaNum)) {
+      connection.release();
+      connection = null;
+      return res.status(400).json({ error: 'Precio de compra/venta invalido' });
+    }
+    if (!isNonNegative(stockNum)) {
+      connection.release();
+      connection = null;
+      return res.status(400).json({ error: 'Stock invalido' });
+    }
+    if (precioCompraNum > precioVentaNum) {
+      connection.release();
+      connection = null;
+      return res
+        .status(400)
+        .json({ error: 'Precio de compra no puede ser mayor que precio de venta' });
+    }
+    if (precioMinimoNum > precioVentaNum) {
+      connection.release();
+      connection = null;
+      return res
+        .status(400)
+        .json({ error: 'Precio minimo no puede ser mayor que precio de venta' });
     }
 
     const ubicacionInputPresent =
@@ -448,6 +645,7 @@ exports.actualizarMaquina = async (req, res) => {
       });
       if (parsed.error) {
         connection.release();
+        connection = null;
         return res.status(400).json({ error: parsed.error });
       }
       ubicacionParse = { letra: parsed.letra, numero: parsed.numero };
@@ -467,7 +665,7 @@ exports.actualizarMaquina = async (req, res) => {
 
     await connection.execute(
       `UPDATE maquinas 
-       SET codigo = ?, tipo_maquina_id = ?, marca = ?, descripcion = ?, 
+       SET codigo = ?, tipo_maquina_id = ?, marca = ?, descripcion = ?, codigo_busqueda = ?, descripcion_busqueda = ?,
            ubicacion_letra = ?, ubicacion_numero = ?, stock = ?, precio_compra = ?, precio_venta = ?, precio_minimo = ?, 
            ficha_web = ?, ficha_tecnica_ruta = ?
        WHERE id = ?`,
@@ -476,17 +674,25 @@ exports.actualizarMaquina = async (req, res) => {
         tipo_maquina_id,
         marca,
         descripcion || null,
+        codigoBusqueda,
+        descripcionBusqueda,
         ubicacionParse.letra,
         ubicacionParse.numero,
-        stock || 0,
-        precio_compra,
-        precio_venta,
-        precio_minimo || 0,
+        stockNum,
+        precioCompraNum,
+        precioVentaNum,
+        precioMinimoNum,
         ficha_web || null,
         ficha_tecnica_ruta,
         req.params.id
       ]
     );
+    await syncUbicacionPrincipal(connection, {
+      id: req.params.id,
+      ubicacion_letra: ubicacionParse.letra,
+      ubicacion_numero: ubicacionParse.numero,
+      stock: stockNum
+    });
     await registrarHistorial(connection, {
       entidad: 'productos',
       entidad_id: req.params.id,
@@ -502,13 +708,14 @@ exports.actualizarMaquina = async (req, res) => {
         descripcion: descripcion || null,
         ubicacion_letra: ubicacionParse.letra,
         ubicacion_numero: ubicacionParse.numero,
-        stock: stock || 0,
-        precio_compra,
-        precio_venta,
-        precio_minimo: precio_minimo || 0
+        stock: stockNum,
+        precio_compra: precioCompraNum,
+        precio_venta: precioVentaNum,
+        precio_minimo: precioMinimoNum
       }
     });
     connection.release();
+    connection = null;
 
     res.json({
       id: req.params.id,
@@ -518,22 +725,26 @@ exports.actualizarMaquina = async (req, res) => {
       descripcion,
       ubicacion_letra: ubicacionParse.letra,
       ubicacion_numero: ubicacionParse.numero,
-      stock,
-      precio_compra,
-      precio_venta,
-      precio_minimo,
+      stock: stockNum,
+      precio_compra: precioCompraNum,
+      precio_venta: precioVentaNum,
+      precio_minimo: precioMinimoNum,
       ficha_web,
       ficha_tecnica_ruta
     });
   } catch (error) {
-    console.error('Error actualizando máquina:', error);
+    console.error('Error actualizando maquina:', error);
     if (req.file) {
       fs.unlink(req.file.path, () => {});
     }
-    if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ error: 'El código de máquina ya existe' });
+    if (connection) {
+      connection.release();
+      connection = null;
     }
-    res.status(500).json({ error: 'Error al actualizar máquina' });
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ error: 'El codigo de maquina ya existe' });
+    }
+    res.status(500).json({ error: 'Error al actualizar maquina' });
   }
 };
 
@@ -582,8 +793,9 @@ exports.descargarPlantilla = async (req, res) => {
 };
 
 exports.exportarExcel = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(`
       SELECT m.codigo, t.nombre as tipo_maquina, m.marca, m.descripcion,
         m.ubicacion_letra, m.ubicacion_numero,
@@ -594,6 +806,7 @@ exports.exportarExcel = async (req, res) => {
       ORDER BY m.codigo
     `);
     connection.release();
+    connection = null;
 
     const data = rows.map((row) => ({
       codigo: row.codigo,
@@ -619,6 +832,10 @@ exports.exportarExcel = async (req, res) => {
     );
     res.send(buffer);
   } catch (error) {
+    if (connection) {
+      connection.release();
+      connection = null;
+    }
     console.error('Error exportando productos:', error);
     res.status(500).json({ error: 'Error al exportar productos' });
   }
@@ -626,8 +843,9 @@ exports.exportarExcel = async (req, res) => {
 
 exports.exportarStockMinimo = async (req, res) => {
   const limite = Number(req.query.minimo || 2);
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(
       `
       SELECT m.codigo, m.descripcion, m.marca, m.stock, m.precio_venta
@@ -638,6 +856,7 @@ exports.exportarStockMinimo = async (req, res) => {
       [Number.isFinite(limite) ? limite : 2]
     );
     connection.release();
+    connection = null;
 
     const data = rows.map((row) => ({
       codigo: row.codigo,
@@ -656,6 +875,10 @@ exports.exportarStockMinimo = async (req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename="stock_minimo.xlsx"');
     res.send(buffer);
   } catch (error) {
+    if (connection) {
+      connection.release();
+      connection = null;
+    }
     console.error('Error exportando stock minimo:', error);
     res.status(500).json({ error: 'Error al exportar stock minimo' });
   }
@@ -668,12 +891,11 @@ exports.importarExcel = async (req, res) => {
 
   let connection;
   try {
-    const workbook = readFile(req.file.path);
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const rawRows = utils.sheet_to_json(worksheet, { defval: '' });
+    const rawRows = await readFirstSheetToJson(req.file.path);
 
     connection = await pool.getConnection();
+    await connection.beginTransaction();
+
     const [tipos] = await connection.execute('SELECT id, nombre FROM tipos_maquinas');
     const tiposMap = new Map(
       tipos.map((tipo) => [String(tipo.nombre || '').toLowerCase(), tipo.id])
@@ -686,6 +908,7 @@ exports.importarExcel = async (req, res) => {
 
     const errores = [];
     const duplicados = [];
+    const codigosProcesados = new Set();
     let insertados = 0;
 
     for (const [index, row] of rawRows.entries()) {
@@ -698,30 +921,15 @@ exports.importarExcel = async (req, res) => {
       if (!codigo) {
         continue;
       }
-      const existente = existentesMap.get(codigo.toLowerCase());
-      if (existente) {
-        if (existente.activo === 0) {
-          await connection.execute(
-            `UPDATE maquinas
-             SET tipo_maquina_id = ?, marca = ?, descripcion = ?, ubicacion_letra = ?, ubicacion_numero = ?,
-                 stock = ?, precio_compra = ?, precio_venta = ?, precio_minimo = ?, activo = TRUE
-             WHERE id = ?`,
-            [
-              tipoId,
-              marca,
-              descripcion || null,
-              ubicacionParse.letra,
-              ubicacionParse.numero,
-              stock,
-              precioCompra,
-              precioVenta,
-              precioMinimo,
-              existente.id
-            ]
-          );
-          insertados += 1;
-          continue;
-        }
+      const codigoKey = codigo.toLowerCase();
+      if (codigosProcesados.has(codigoKey)) {
+        duplicados.push(codigo);
+        continue;
+      }
+      codigosProcesados.add(codigoKey);
+
+      const existente = existentesMap.get(codigoKey);
+      if (existente && existente.activo !== 0) {
         duplicados.push(codigo);
         continue;
       }
@@ -744,14 +952,24 @@ exports.importarExcel = async (req, res) => {
       }
 
       const marca = String(normalized.marca || '').trim();
-      const precioCompra = parseNumero(normalized.preciocompra, null);
-      const precioVenta = parseNumero(normalized.precioventa, null);
+      const precioCompraRaw = normalized.preciocompra;
+      const precioVentaRaw = normalized.precioventa;
+      const precioCompra =
+        precioCompraRaw === '' || precioCompraRaw === null || precioCompraRaw === undefined
+          ? null
+          : parseNumero(precioCompraRaw, null);
+      const precioVenta =
+        precioVentaRaw === '' || precioVentaRaw === null || precioVentaRaw === undefined
+          ? null
+          : parseNumero(precioVentaRaw, null);
       if (!marca || precioCompra === null || precioVenta === null) {
         errores.push(`Fila ${index + 2}: faltan campos requeridos`);
         continue;
       }
 
       const descripcion = String(normalized.descripcion || '').trim();
+      const codigoBusqueda = normalizarBusqueda(codigo);
+      const descripcionBusqueda = normalizarBusqueda(descripcion);
       const stock = parseNumero(normalized.stock, 0);
       const precioMinimo = parseNumero(normalized.preciominimo, 0);
       const ubicacionRaw = String(normalized.ubicacion || '').trim();
@@ -768,16 +986,50 @@ exports.importarExcel = async (req, res) => {
         continue;
       }
 
-      await connection.execute(
+      if (existente && existente.activo === 0) {
+        await connection.execute(
+          `UPDATE maquinas
+           SET tipo_maquina_id = ?, marca = ?, descripcion = ?, codigo_busqueda = ?, descripcion_busqueda = ?, ubicacion_letra = ?, ubicacion_numero = ?,
+               stock = ?, precio_compra = ?, precio_venta = ?, precio_minimo = ?, activo = TRUE
+           WHERE id = ?`,
+          [
+            tipoId,
+            marca,
+            descripcion || null,
+            codigoBusqueda,
+            descripcionBusqueda,
+            ubicacionParse.letra,
+            ubicacionParse.numero,
+            stock,
+            precioCompra,
+            precioVenta,
+            precioMinimo,
+            existente.id
+          ]
+        );
+        await syncUbicacionPrincipal(connection, {
+          id: existente.id,
+          ubicacion_letra: ubicacionParse.letra,
+          ubicacion_numero: ubicacionParse.numero,
+          stock
+        });
+        insertados += 1;
+        existentesMap.set(codigoKey, { ...existente, activo: 1 });
+        continue;
+      }
+
+      const [insertResult] = await connection.execute(
         `INSERT INTO maquinas
-        (codigo, tipo_maquina_id, marca, descripcion, ubicacion_letra, ubicacion_numero, stock, precio_compra,
+        (codigo, tipo_maquina_id, marca, descripcion, codigo_busqueda, descripcion_busqueda, ubicacion_letra, ubicacion_numero, stock, precio_compra,
          precio_venta, precio_minimo, ficha_web, ficha_tecnica_ruta, activo)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
         [
           codigo,
           tipoId,
           marca,
           descripcion || null,
+          codigoBusqueda,
+          descripcionBusqueda,
           ubicacionParse.letra,
           ubicacionParse.numero,
           stock,
@@ -788,7 +1040,14 @@ exports.importarExcel = async (req, res) => {
           null
         ]
       );
+      await syncUbicacionPrincipal(connection, {
+        id: insertResult.insertId,
+        ubicacion_letra: ubicacionParse.letra,
+        ubicacion_numero: ubicacionParse.numero,
+        stock
+      });
       insertados += 1;
+      existentesMap.set(codigoKey, { id: insertResult.insertId, codigo, activo: 1 });
     }
 
     await registrarHistorial(connection, {
@@ -801,14 +1060,20 @@ exports.importarExcel = async (req, res) => {
       despues: { insertados, duplicados: duplicados.length, errores: errores.length }
     });
 
+    await connection.commit();
     connection.release();
+    connection = null;
     fs.unlink(req.file.path, () => {});
 
     res.json({ insertados, duplicados, errores });
   } catch (error) {
     console.error('Error importando productos:', error);
     if (connection) {
+      try {
+        await connection.rollback();
+      } catch (_) {}
       connection.release();
+      connection = null;
     }
     fs.unlink(req.file.path, () => {});
     res.status(500).json({ error: 'Error al importar productos' });
@@ -817,10 +1082,11 @@ exports.importarExcel = async (req, res) => {
 
 // Eliminar máquina
 exports.eliminarMaquina = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
 
-    // Obtener la máquina
+    // Obtener la maquina
     const [maquina] = await connection.execute(
       'SELECT * FROM maquinas WHERE id = ?',
       [req.params.id]
@@ -828,27 +1094,26 @@ exports.eliminarMaquina = async (req, res) => {
 
     if (maquina.length === 0) {
       connection.release();
-      return res.status(404).json({ error: 'Máquina no encontrada' });
+      connection = null;
+      return res.status(404).json({ error: 'Maquina no encontrada' });
     }
 
-    
-const ejecutarConReintentos = async (fn, { retries = 3, baseDelayMs = 250 } = {}) => {
-  let intento = 0;
-  while (true) {
-    try {
-      return await fn();
-    } catch (error) {
-      if (error?.code != 'ER_LOCK_WAIT_TIMEOUT' || intento >= retries) {
-        throw error;
+    const ejecutarConReintentos = async (fn, { retries = 3, baseDelayMs = 250 } = {}) => {
+      let intento = 0;
+      while (true) {
+        try {
+          return await fn();
+        } catch (error) {
+          if (error?.code !== 'ER_LOCK_WAIT_TIMEOUT' || intento >= retries) {
+            throw error;
+          }
+          const espera = baseDelayMs * Math.pow(2, intento);
+          await new Promise((resolve) => setTimeout(resolve, espera));
+          intento += 1;
+        }
       }
-      const espera = baseDelayMs * Math.pow(2, intento);
-      await new Promise((resolve) => setTimeout(resolve, espera));
-      intento += 1;
-    }
-  }
-};
+    };
 
-// Eliminar máquina
     await ejecutarConReintentos(
       () =>
         connection.execute(
@@ -867,10 +1132,15 @@ const ejecutarConReintentos = async (fn, { retries = 3, baseDelayMs = 250 } = {}
       despues: null
     });
     connection.release();
-    res.json({ mensaje: 'Máquina desactivada exitosamente' });
+    connection = null;
+    res.json({ mensaje: 'Maquina desactivada exitosamente' });
   } catch (error) {
-    console.error('Error eliminando máquina:', error);
-    res.status(500).json({ error: 'Error al eliminar máquina' });
+    console.error('Error eliminando maquina:', error);
+    if (connection) {
+      connection.release();
+      connection = null;
+    }
+    res.status(500).json({ error: 'Error al eliminar maquina' });
   }
 };
 
@@ -878,17 +1148,20 @@ const ejecutarConReintentos = async (fn, { retries = 3, baseDelayMs = 250 } = {}
 exports.descargarFichaTecnica = async (req, res) => {
   try {
     const { filename } = req.params;
-    const rutaArchivo = path.join(__dirname, '../../uploads', filename);
-    
-    // Validar que el archivo existe y está en la carpeta uploads
-    if (!rutaArchivo.startsWith(path.join(__dirname, '../../uploads'))) {
-      return res.status(400).json({ error: 'Ruta de archivo inválida' });
+    const uploadsDir = path.resolve(__dirname, '../../uploads');
+    const rutaArchivo = path.resolve(uploadsDir, filename);
+
+    if (!rutaArchivo.startsWith(`${uploadsDir}${path.sep}`)) {
+      return res.status(400).json({ error: 'Ruta de archivo invalida' });
+    }
+    if (!fs.existsSync(rutaArchivo)) {
+      return res.status(404).json({ error: 'Archivo no encontrado' });
     }
 
     res.download(rutaArchivo);
   } catch (error) {
-    console.error('Error descargando ficha técnica:', error);
-    res.status(500).json({ error: 'Error al descargar ficha técnica' });
+    console.error('Error descargando ficha tecnica:', error);
+    res.status(500).json({ error: 'Error al descargar ficha tecnica' });
   }
 };
 

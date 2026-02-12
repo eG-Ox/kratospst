@@ -2,9 +2,11 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { movimientosService, productosService, tiposMaquinasService, marcasService } from '../../../core/services/apiServices';
 import { parseQRPayload } from '../../../shared/utils/qr';
+import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/MovimientosPage.css';
 
 const IngresosPage = ({ usuario }) => {
+  const mountedRef = useMountedRef();
   const [productos, setProductos] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [marcas, setMarcas] = useState([]);
@@ -59,14 +61,19 @@ const IngresosPage = ({ usuario }) => {
         tiposMaquinasService.getAll(),
         marcasService.getAll()
       ]);
+      if (!mountedRef.current) return;
       setProductos(respProductos.data);
       setTipos(respTipos.data);
       setMarcas(respMarcas.data || []);
     } catch (err) {
       console.error('Error cargando datos:', err);
-      setError('Error al cargar productos');
+      if (mountedRef.current) {
+        setError('Error al cargar productos');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -132,7 +139,9 @@ const IngresosPage = ({ usuario }) => {
       nombre: 'General',
       descripcion: 'Generado automáticamente'
     });
-    setTipos((prev) => [...prev, response.data]);
+    if (mountedRef.current) {
+      setTipos((prev) => [...prev, response.data]);
+    }
     return response.data.id;
   };
 
@@ -149,7 +158,9 @@ const IngresosPage = ({ usuario }) => {
       nombre: nombreNormalizado,
       descripcion: 'Creado desde QR'
     });
-    setTipos((prev) => [...prev, response.data]);
+    if (mountedRef.current) {
+      setTipos((prev) => [...prev, response.data]);
+    }
     return response.data.id;
   };
 
@@ -209,7 +220,9 @@ const IngresosPage = ({ usuario }) => {
       const parsed = parsearQR(valor);
       const codigoDetectado = parsed?.codigo || extraerCodigoDesdeTexto(valor);
       if (!codigoDetectado) {
+      if (mountedRef.current) {
         setError('Codigo invalido');
+      }
         return;
       }
 
@@ -219,28 +232,38 @@ const IngresosPage = ({ usuario }) => {
         );
         if (!productoExistente) {
           const confirmar = window.confirm(
-            `??Crear nuevo producto?
+            `?Crear nuevo producto?
 
-C??digo: ${parsed.codigo}
+C?digo: ${parsed.codigo}
 Marca: ${parsed.marca}
 Tipo: ${parsed.tipo_maquina}
-Descripci??n: ${parsed.descripcion}
-Ubicaci??n: ${parsed.ubicacion}`
+Descripci?n: ${parsed.descripcion}
+Ubicaci?n: ${parsed.ubicacion}`
           );
           if (!confirmar) {
-            setError('Creaci??n cancelada');
+            if (mountedRef.current) {
+              setError('Creaci?n cancelada');
+            }
             return;
           }
           await crearProductoDesdeQR(parsed);
           await cargarDatos();
-          setCodigo(parsed.codigo);
-          setCantidad('1');
-          setSuccess(`??? Producto creado: ${parsed.codigo}`);
-          setTimeout(() => setSuccess(''), 2000);
+          if (mountedRef.current) {
+            setCodigo(parsed.codigo);
+            setCantidad('1');
+            setSuccess(`?? Producto creado: ${parsed.codigo}`);
+            setTimeout(() => {
+              if (mountedRef.current) {
+                setSuccess('');
+              }
+            }, 2000);
+          }
           return;
         }
-        setCodigo(parsed.codigo);
-        setCantidad('1');
+        if (mountedRef.current) {
+          setCodigo(parsed.codigo);
+          setCantidad('1');
+        }
         return;
       }
 
@@ -248,15 +271,21 @@ Ubicaci??n: ${parsed.ubicacion}`
         (p) => normalizarCodigo(p.codigo) === normalizarCodigo(codigoDetectado)
       );
       if (producto) {
-        setCodigo(codigoDetectado);
-        setCantidad('1');
-        setError('');
+        if (mountedRef.current) {
+          setCodigo(codigoDetectado);
+          setCantidad('1');
+          setError('');
+        }
       } else {
-        setError('Producto no encontrado. Escanea QR completo para crear nuevo.');
+        if (mountedRef.current) {
+          setError('Producto no encontrado. Escanea QR completo para crear nuevo.');
+        }
       }
     } catch (err) {
       console.error('Error:', err);
-      setError('Error procesando QR');
+      if (mountedRef.current) {
+        setError('Error procesando QR');
+      }
     }
   };
 
@@ -311,7 +340,9 @@ Ubicaci??n: ${parsed.ubicacion}`
 
   const detenerCamara = () => {
     detenerEscaneo();
-    setCameraActive(false);
+    if (mountedRef.current) {
+      setCameraActive(false);
+    }
   };
 
   const handleRegistrarIngreso = async (e) => {
@@ -351,7 +382,9 @@ Ubicaci??n: ${parsed.ubicacion}`
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       console.error('Error:', err);
-      setError(err.response?.data?.error || 'Error al registrar ingreso');
+      if (mountedRef.current) {
+        setError(err.response?.data?.error || 'Error al registrar ingreso');
+      }
     }
   };
 

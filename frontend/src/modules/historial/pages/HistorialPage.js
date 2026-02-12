@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { historialService } from '../../../core/services/apiServices';
+import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/HistorialPage.css';
 
 const HistorialPage = () => {
+  const mountedRef = useMountedRef();
   const [historial, setHistorial] = useState([]);
   const [filtros, setFiltros] = useState({
     entidad: '',
@@ -20,15 +22,20 @@ const HistorialPage = () => {
     try {
       setLoading(true);
       const resp = await historialService.listar(filtros);
+      if (!mountedRef.current) return;
       setHistorial(resp.data || []);
       setError('');
     } catch (err) {
       console.error('Error cargando historial:', err);
-      setError('Error al cargar historial');
+      if (mountedRef.current) {
+        setError('Error al cargar historial');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, [filtros]);
+  }, [filtros, mountedRef]);
 
   useEffect(() => {
     cargarHistorial();
@@ -57,9 +64,13 @@ const HistorialPage = () => {
       descargarArchivo(resp.data, 'historial.xlsx');
     } catch (err) {
       console.error('Error exportando historial:', err);
-      setError('Error al exportar historial');
+      if (mountedRef.current) {
+        setError('Error al exportar historial');
+      }
     } finally {
-      setExportando(false);
+      if (mountedRef.current) {
+        setExportando(false);
+      }
     }
   };
 
@@ -89,7 +100,7 @@ const HistorialPage = () => {
       const motivo = despues?.motivo ? ` | ${despues.motivo}` : '';
       if (modo === 'antes') return `Stock: ${stockAntes}`;
       if (modo === 'despues') return `Stock: ${stockDespues} | Cant: ${cantidad}${motivo}`;
-      return `Stock ${stockAntes} → ${stockDespues} | Cant: ${cantidad}${motivo}`;
+      return `Stock ${stockAntes} -> ${stockDespues} | Cant: ${cantidad}${motivo}`;
     }
 
     if (item.entidad === 'productos') {
@@ -108,7 +119,7 @@ const HistorialPage = () => {
       const clienteDespues = despues?.cotizacion?.cliente_id ?? despues?.cliente_id ?? '-';
       if (modo === 'antes') return `Cliente: ${clienteAntes} | Total: ${totalAntes}`;
       if (modo === 'despues') return `Cliente: ${clienteDespues} | Total: ${totalDespues}`;
-      return `Cliente ${clienteAntes} → ${clienteDespues} | Total ${totalAntes} → ${totalDespues}`;
+      return `Cliente ${clienteAntes} -> ${clienteDespues} | Total ${totalAntes} -> ${totalDespues}`;
     }
 
     if (item.entidad === 'clientes') {
@@ -118,7 +129,7 @@ const HistorialPage = () => {
       const nombreDespues = despues?.razon_social || `${despues?.nombre || ''} ${despues?.apellido || ''}`.trim();
       if (modo === 'antes') return `Doc: ${docAntes} | ${nombreAntes || '-'}`;
       if (modo === 'despues') return `Doc: ${docDespues} | ${nombreDespues || '-'}`;
-      return `Cliente ${docAntes} → ${docDespues} | ${nombreAntes || '-'} → ${nombreDespues || '-'}`;
+      return `Cliente ${docAntes} -> ${docDespues} | ${nombreAntes || '-'} -> ${nombreDespues || '-'}`;
     }
 
     if (item.entidad === 'kits') {
@@ -128,7 +139,7 @@ const HistorialPage = () => {
       const precioDespues = despues?.precio_total ?? '-';
       if (modo === 'antes') return `Kit: ${nombreAntes} | Total: ${precioAntes}`;
       if (modo === 'despues') return `Kit: ${nombreDespues} | Total: ${precioDespues}`;
-      return `Kit ${nombreAntes} → ${nombreDespues} | Total ${precioAntes} → ${precioDespues}`;
+      return `Kit ${nombreAntes} -> ${nombreDespues} | Total ${precioAntes} -> ${precioDespues}`;
     }
 
     if (item.entidad === 'usuarios') {
@@ -138,7 +149,7 @@ const HistorialPage = () => {
       const rolDespues = despues?.rol || '-';
       if (modo === 'antes') return `Usuario: ${nombreAntes} | Rol: ${rolAntes}`;
       if (modo === 'despues') return `Usuario: ${nombreDespues} | Rol: ${rolDespues}`;
-      return `Usuario ${nombreAntes} → ${nombreDespues} | Rol ${rolAntes} → ${rolDespues}`;
+      return `Usuario ${nombreAntes} -> ${nombreDespues} | Rol ${rolAntes} -> ${rolDespues}`;
     }
 
     if (item.entidad === 'tipos_maquinas') {
@@ -146,7 +157,7 @@ const HistorialPage = () => {
       const nombreDespues = despues?.nombre || '-';
       if (modo === 'antes') return `Tipo: ${nombreAntes}`;
       if (modo === 'despues') return `Tipo: ${nombreDespues}`;
-      return `Tipo ${nombreAntes} → ${nombreDespues}`;
+      return `Tipo ${nombreAntes} -> ${nombreDespues}`;
     }
 
     return item.descripcion || '-';
