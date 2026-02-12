@@ -43,6 +43,13 @@ const InventarioGeneralPage = () => {
   const ultimoTextoRef = useRef('');
   const ultimoTextoAtRef = useRef(0);
   const audioCtxRef = useRef(null);
+  const refreshTimerRef = useRef(null);
+
+  const normalizarCodigo = (value) =>
+    String(value || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
 
   const usuarioActual = useMemo(() => {
     try {
@@ -66,6 +73,27 @@ const InventarioGeneralPage = () => {
       setError('Error al cargar productos');
     }
   }, []);
+
+  const buscarProductoRemoto = async (codigoValue) => {
+    try {
+      const resp = await productosService.getByCodigo(codigoValue);
+      const producto = resp?.data;
+      if (producto?.id) {
+        setProductos((prev) => {
+          const existe = prev.some(
+            (item) => normalizarCodigo(item.codigo) === normalizarCodigo(producto.codigo)
+          );
+          return existe ? prev : [...prev, producto];
+        });
+        return producto;
+      }
+    } catch (err) {
+      if (err?.response?.status !== 404) {
+        console.error('Error buscando producto por codigo:', err);
+      }
+    }
+    return null;
+  };
 
   const cargarHistorial = useCallback(async () => {
     try {
@@ -210,7 +238,13 @@ const InventarioGeneralPage = () => {
         }
       }
 
-      const existente = productos.find((prod) => prod.codigo === codigoFinal);
+      const codigoNorm = normalizarCodigo(codigoFinal);
+      let existente = productos.find(
+        (prod) => normalizarCodigo(prod.codigo) === codigoNorm
+      );
+      if (!existente) {
+        existente = await buscarProductoRemoto(codigoFinal);
+      }
       if (!existente) {
         setUltimoScanOk(false);
         setUltimoScanTexto(codigoFinal);
@@ -224,7 +258,7 @@ const InventarioGeneralPage = () => {
         cantidad: 1,
         ubicacion: zonaFinal
       });
-      await refrescarDetalles();
+      programarRefresh();
       reproducirBeep();
       setUltimoScanOk(true);
       setUltimoScanTexto(codigoFinal);
@@ -245,11 +279,21 @@ const InventarioGeneralPage = () => {
     setInventarioInfo(resp.data.inventario);
   };
 
-  const ajustarConteo = async (productoId, conteo) => {
+  const programarRefresh = () => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = setTimeout(() => {
+      refreshTimerRef.current = null;
+      refrescarDetalles();
+    }, 400);
+  };
+
+  const ajustarConteo = async (detalleId, conteo) => {
     if (!inventarioId) return;
     try {
       await inventarioGeneralService.ajustar(inventarioId, {
-        producto_id: productoId,
+        detalle_id: detalleId,
         conteo: Number(conteo || 0)
       });
       await refrescarDetalles();
@@ -259,13 +303,13 @@ const InventarioGeneralPage = () => {
     }
   };
 
-  const eliminarDetalle = async (productoId) => {
+  const eliminarDetalle = async (detalleId) => {
     if (!inventarioId) return;
     const confirmar = window.confirm('Deseas eliminar este producto del conteo?');
     if (!confirmar) return;
     try {
       await inventarioGeneralService.eliminar(inventarioId, {
-        producto_id: productoId
+        detalle_id: detalleId
       });
       await refrescarDetalles();
     } catch (err) {
@@ -339,7 +383,7 @@ const InventarioGeneralPage = () => {
     }
     const tokens = raw
       .replace(/\r/g, '')
-      .split(/[\n,;]+/g)
+      .split(/[\n,;\/\s]+/g)
       .map((item) => item.trim())
       .filter(Boolean);
     const codigo = tokens[0] || raw;
@@ -539,14 +583,6 @@ const InventarioGeneralPage = () => {
             return;
           }
           const code = parsed?.codigo ? parsed.codigo : String(value);
-          const existente = productos.find((prod) => prod.codigo === code);
-          if (!existente) {
-            setUltimoScanOk(false);
-            setUltimoScanTexto(code);
-            setError(`QR no registrado: ${code}`);
-            setCodigo('');
-            return;
-          }
           setCodigo(code);
           agregarCodigo(code);
         }
@@ -756,7 +792,7 @@ const InventarioGeneralPage = () => {
                               <input
                                 type="number"
                                 value={item.conteo}
-                                onChange={(e) => ajustarConteo(item.producto_id, e.target.value)}
+                                onChange={(e) => ajustarConteo(item.id, e.target.value)}
                               />
                             </td>
                             <td className={item.diferencia === 0 ? '' : item.diferencia > 0 ? 'diff-plus' : 'diff-minus'}>
@@ -766,7 +802,7 @@ const InventarioGeneralPage = () => {
                               <button
                                 type="button"
                                 className="icon-btn icon-btn--delete"
-                                onClick={() => eliminarDetalle(item.producto_id)}
+                                onClick={() => eliminarDetalle(item.id)}
                                 title="Eliminar"
                                 aria-label="Eliminar"
                               >
@@ -945,7 +981,7 @@ const InventarioGeneralPage = () => {
                 </div>
               </div>
               <p className="warning-message">
-                Se actualizaran stock y ubicaciones de productos segun el inventario seleccionado.
+                Se actualizara el stock de productos segun el inventario seleccionado.
               </p>
             </div>
             <div className="modal-footer">

@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const apiRoutes = require('./core/routes');
+const { startBackupScheduler } = require('./modules/backups/scheduler');
 
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 16) {
   console.error('Falta JWT_SECRET en .env (minimo 16 caracteres).');
@@ -17,6 +18,7 @@ const PORT = process.env.PORT || 5000;
 // Middlewares
 // Confiar en el proxy (Caddy) para X-Forwarded-For
 app.set('trust proxy', 1);
+app.set('etag', false);
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -34,6 +36,13 @@ app.use('/static', express.static(path.join(__dirname, 'static')));
 
 // Montar todas las rutas de API
 app.use('/api/auth/login', loginLimiter);
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+  next();
+});
 app.use('/api', apiRoutes);
 
 // Manejo de errores 404
@@ -60,3 +69,5 @@ server.on('error', (err) => {
   }
   throw err;
 });
+
+startBackupScheduler();

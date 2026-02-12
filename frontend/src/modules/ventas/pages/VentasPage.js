@@ -1,11 +1,16 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { clientesService, cotizacionesService, usuariosService, ventasService } from '../../../core/services/apiServices';
+import { clientesService, cotizacionesService, kitsService, usuariosService, ventasService } from '../../../core/services/apiServices';
 import '../styles/VentasPage.css';
 
 const getToday = () => new Date().toISOString().slice(0, 10);
 
 const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const normalizarClaveLocal = (value) =>
+  String(value || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
 
 const agencias = ['SHALOM', 'MARVISUR', 'OLVA', 'OTROS', 'TIENDA'];
 
@@ -13,6 +18,9 @@ const estadosEnvio = ['PENDIENTE', 'ENVIADO', 'CANCELADO', 'VISITA'];
 
 const VentasPage = () => {
   const [ventas, setVentas] = useState([]);
+  const [ventasPagina, setVentasPagina] = useState(1);
+  const [ventasHasMore, setVentasHasMore] = useState(true);
+  const [ventasLoading, setVentasLoading] = useState(false);
   const [usuariosVentas, setUsuariosVentas] = useState([]);
   const [usuarioActual, setUsuarioActual] = useState(null);
   const [consultaMensaje, setConsultaMensaje] = useState('');
@@ -57,6 +65,13 @@ const VentasPage = () => {
   const [resultadosReq, setResultadosReq] = useState([]);
   const [busquedaReqRegalo, setBusquedaReqRegalo] = useState('');
   const [resultadosReqRegalo, setResultadosReqRegalo] = useState([]);
+  const [tabProductosModo, setTabProductosModo] = useState('avanzada');
+  const [tabReqModo, setTabReqModo] = useState('avanzada');
+  const [tabRegalosModo, setTabRegalosModo] = useState('avanzada');
+  const [tabReqRegaloModo, setTabReqRegaloModo] = useState('avanzada');
+  const [kitsDisponibles, setKitsDisponibles] = useState([]);
+  const [cargandoKits, setCargandoKits] = useState(false);
+  const [errorKits, setErrorKits] = useState('');
   const [productos, setProductos] = useState([]);
   const [requerimientos, setRequerimientos] = useState([]);
   const [regalos, setRegalos] = useState([]);
@@ -106,17 +121,57 @@ const VentasPage = () => {
     }
   }, []);
 
-  const cargarVentas = async () => {
+  useEffect(() => {
+    if (!modalOpen) return;
+    let activo = true;
+    const cargarKits = async () => {
+      try {
+        setCargandoKits(true);
+        setErrorKits('');
+        const resp = await kitsService.listarActivos();
+        if (!activo) return;
+        setKitsDisponibles(resp.data || []);
+      } catch (err) {
+        if (!activo) return;
+        console.error('Error cargando kits:', err);
+        setErrorKits('No se pudieron cargar los kits.');
+      } finally {
+        if (activo) {
+          setCargandoKits(false);
+        }
+      }
+    };
+    cargarKits();
+    return () => {
+      activo = false;
+    };
+  }, [modalOpen]);
+
+  const cargarVentas = async (append = false) => {
     try {
-      const resp = await ventasService.listar();
-      setVentas(resp.data || []);
+      if (ventasLoading) return;
+      setVentasLoading(true);
+      const limite = 200;
+      const pagina = append ? ventasPagina + 1 : 1;
+      const resp = await ventasService.listar({ limite, pagina });
+      const data = resp.data || [];
+      if (append) {
+        setVentas((prev) => [...prev, ...data]);
+        setVentasPagina(pagina);
+      } else {
+        setVentas(data);
+        setVentasPagina(1);
+      }
+      setVentasHasMore(data.length === limite);
     } catch (err) {
       console.error('Error cargando ventas:', err);
+    } finally {
+      setVentasLoading(false);
     }
   };
 
   useEffect(() => {
-    cargarVentas();
+    cargarVentas(false);
   }, []);
 
   useEffect(() => {
@@ -292,6 +347,108 @@ const VentasPage = () => {
     return stockRaw === null ? null : Number(stockRaw || 0);
   };
 
+  const mapKitItemToProducto = (item) => ({
+    id: genId(),
+    tipo: 'stock',
+    producto_id: item.producto_id,
+    codigo: item.codigo || '',
+    descripcion: item.descripcion || '',
+    marca: item.marca || '',
+    stock: Number(item.stock || 0),
+    cantidad: Number(item.cantidad || 1),
+    precioVenta: Number(item.precio_final || item.precio_unitario || 0),
+    precioCompra: 0,
+    proveedor: ''
+  });
+
+  const mapKitItemToRequerimiento = (item) => ({
+    id: genId(),
+    tipo: 'compra',
+    producto_id: item.producto_id,
+    codigo: item.codigo || '',
+    descripcion: item.descripcion || '',
+    marca: item.marca || '',
+    stock: Number(item.stock || 0),
+    cantidad: Number(item.cantidad || 1),
+    precioVenta: Number(item.precio_final || item.precio_unitario || 0),
+    precioCompra: 0,
+    proveedor: ''
+  });
+
+  const mapKitItemToRegalo = (item) => ({
+    id: genId(),
+    tipo: 'stock',
+    producto_id: item.producto_id,
+    codigo: item.codigo || '',
+    descripcion: item.descripcion || '',
+    marca: item.marca || '',
+    stock: Number(item.stock || 0),
+    cantidad: Number(item.cantidad || 1),
+    precioCompra: 0,
+    proveedor: ''
+  });
+
+  const mapKitItemToReqRegalo = (item) => ({
+    id: genId(),
+    tipo: 'compra',
+    producto_id: item.producto_id,
+    codigo: item.codigo || '',
+    descripcion: item.descripcion || '',
+    marca: item.marca || '',
+    stock: Number(item.stock || 0),
+    cantidad: Number(item.cantidad || 1),
+    precioCompra: 0,
+    proveedor: ''
+  });
+
+  const agregarKitVenta = async (kit) => {
+    try {
+      const resp = await kitsService.obtenerParaVenta(kit.id);
+      const conStock = resp.data?.productos_con_stock || [];
+      const sinStock = resp.data?.productos_sin_stock || [];
+      if (conStock.length) {
+        setProductos((prev) => [...prev, ...conStock.map(mapKitItemToProducto)]);
+      }
+      if (sinStock.length) {
+        setRequerimientos((prev) => [...prev, ...sinStock.map(mapKitItemToRequerimiento)]);
+      }
+      if (!conStock.length && !sinStock.length) {
+        setAvisoStock('El kit no tiene productos.');
+      } else if (sinStock.length) {
+        setAvisoStock('Kit: productos sin stock enviados a requerimientos.');
+      } else {
+        setAvisoStock('Kit agregado a productos.');
+      }
+    } catch (err) {
+      console.error('Error agregando kit:', err);
+      setAvisoStock('Error agregando kit.');
+    }
+  };
+
+  const agregarKitRegalo = async (kit) => {
+    try {
+      const resp = await kitsService.obtenerParaVenta(kit.id);
+      const conStock = resp.data?.productos_con_stock || [];
+      const sinStock = resp.data?.productos_sin_stock || [];
+      if (conStock.length) {
+        setRegalos((prev) => [...prev, ...conStock.map(mapKitItemToRegalo)]);
+      }
+      if (sinStock.length) {
+        setRegaloRequerimientos((prev) => [...prev, ...sinStock.map(mapKitItemToReqRegalo)]);
+      }
+      if (!conStock.length && !sinStock.length) {
+        setAvisoStock('El kit no tiene productos.');
+      } else if (sinStock.length) {
+        setAvisoStock('Kit: regalos sin stock enviados a requerimientos.');
+      } else {
+        setAvisoStock('Kit agregado a regalos.');
+      }
+    } catch (err) {
+      console.error('Error agregando kit regalos:', err);
+      setAvisoStock('Error agregando kit.');
+    }
+  };
+
   const agregarProducto = (producto) => {
     const stock = getStock(producto);
     if (stock !== null && stock <= 0) {
@@ -375,24 +532,54 @@ const VentasPage = () => {
     setBusquedaRegalo('');
     setResultadosRegalo([]);
   };
-  const agregarRequerimiento = () => {
-    if (!requerimientoData.descripcion.trim()) return;
-    setRequerimientos((prev) => [
-      ...prev,
-      {
-        id: genId(),
-        tipo: 'compra',
-        producto_id: null,
-        codigo: requerimientoData.codigo || '',
-        descripcion: requerimientoData.descripcion.trim(),
-        marca: requerimientoData.marca || '',
-        stock: null,
-        cantidad: Number(requerimientoData.cantidad || 1),
-        precioVenta: Number(requerimientoData.precioVenta || 0),
-        precioCompra: Number(requerimientoData.precioCompra || 0),
-        proveedor: requerimientoData.proveedor.trim()
+  const agregarRequerimiento = async () => {
+    const descripcion = requerimientoData.descripcion.trim();
+    const codigo = String(requerimientoData.codigo || '').trim();
+    if (!descripcion && !codigo) return;
+    const clave = normalizarClaveLocal(codigo || descripcion);
+    if (clave) {
+      const yaExiste = requerimientos.some(
+        (item) => normalizarClaveLocal(item.codigo || item.descripcion) === clave
+      );
+      if (yaExiste) {
+        setAvisoStock('Requerimiento ya agregado.');
+        return;
       }
-    ]);
+    }
+    try {
+      const resp = await ventasService.crearRequerimientoProducto({
+        descripcion,
+        codigo,
+        marca: requerimientoData.marca || '',
+        precioCompra: Number(requerimientoData.precioCompra || 0),
+        precioVenta: Number(requerimientoData.precioVenta || 0)
+      });
+      const data = resp?.data || {};
+      const codigoFinal = data.codigo || codigo;
+      const descripcionFinal = data.descripcion || descripcion || codigoFinal;
+      const marcaFinal = data.marca || requerimientoData.marca || '';
+      setRequerimientos((prev) => [
+        ...prev,
+        {
+          id: genId(),
+          tipo: 'compra',
+          producto_id: data.id || null,
+          codigo: codigoFinal,
+          descripcion: descripcionFinal,
+          marca: marcaFinal,
+          stock: null,
+          cantidad: Number(requerimientoData.cantidad || 1),
+          precioVenta: Number(requerimientoData.precioVenta || 0),
+          precioCompra: Number(requerimientoData.precioCompra || 0),
+          proveedor: requerimientoData.proveedor.trim()
+        }
+      ]);
+      setAvisoStock(data.existente ? 'Producto ya existia, se reutilizo.' : 'Producto creado.');
+    } catch (err) {
+      console.error('Error creando requerimiento:', err);
+      setAvisoStock('Error creando requerimiento.');
+      return;
+    }
     setRequerimientoData({
       codigo: '',
       descripcion: '',
@@ -406,23 +593,52 @@ const VentasPage = () => {
     setResultadosReq([]);
   };
 
-  const agregarRegaloRequerimiento = () => {
-    if (!regaloRequerimiento.descripcion.trim()) return;
-    setRegaloRequerimientos((prev) => [
-      ...prev,
-      {
-        id: genId(),
-        tipo: 'compra',
-        producto_id: null,
-        codigo: regaloRequerimiento.codigo || '',
-        descripcion: regaloRequerimiento.descripcion.trim(),
-        marca: regaloRequerimiento.marca || '',
-        stock: null,
-        cantidad: Number(regaloRequerimiento.cantidad || 1),
-        precioCompra: Number(regaloRequerimiento.precioCompra || 0),
-        proveedor: regaloRequerimiento.proveedor.trim()
+  const agregarRegaloRequerimiento = async () => {
+    const descripcion = regaloRequerimiento.descripcion.trim();
+    const codigo = String(regaloRequerimiento.codigo || '').trim();
+    if (!descripcion && !codigo) return;
+    const clave = normalizarClaveLocal(codigo || descripcion);
+    if (clave) {
+      const yaExiste = regaloRequerimientos.some(
+        (item) => normalizarClaveLocal(item.codigo || item.descripcion) === clave
+      );
+      if (yaExiste) {
+        setAvisoStock('Requerimiento ya agregado.');
+        return;
       }
-    ]);
+    }
+    try {
+      const resp = await ventasService.crearRequerimientoProducto({
+        descripcion,
+        codigo,
+        marca: regaloRequerimiento.marca || '',
+        precioCompra: Number(regaloRequerimiento.precioCompra || 0)
+      });
+      const data = resp?.data || {};
+      const codigoFinal = data.codigo || codigo;
+      const descripcionFinal = data.descripcion || descripcion || codigoFinal;
+      const marcaFinal = data.marca || regaloRequerimiento.marca || '';
+      setRegaloRequerimientos((prev) => [
+        ...prev,
+        {
+          id: genId(),
+          tipo: 'compra',
+          producto_id: data.id || null,
+          codigo: codigoFinal,
+          descripcion: descripcionFinal,
+          marca: marcaFinal,
+          stock: null,
+          cantidad: Number(regaloRequerimiento.cantidad || 1),
+          precioCompra: Number(regaloRequerimiento.precioCompra || 0),
+          proveedor: regaloRequerimiento.proveedor.trim()
+        }
+      ]);
+      setAvisoStock(data.existente ? 'Producto ya existia, se reutilizo.' : 'Producto creado.');
+    } catch (err) {
+      console.error('Error creando requerimiento regalo:', err);
+      setAvisoStock('Error creando requerimiento.');
+      return;
+    }
     setRegaloRequerimiento({
       codigo: '',
       descripcion: '',
@@ -486,6 +702,10 @@ const VentasPage = () => {
     setError('');
     setStep(1);
     setEditId(null);
+    setTabProductosModo('avanzada');
+    setTabReqModo('avanzada');
+    setTabRegalosModo('avanzada');
+    setTabReqRegaloModo('avanzada');
   };
 
   const cerrarModal = () => {
@@ -1128,6 +1348,18 @@ const VentasPage = () => {
             </table>
           )}
         </div>
+        {ventasHasMore && (
+          <div className="table-actions">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => cargarVentas(true)}
+              disabled={ventasLoading}
+            >
+              {ventasLoading ? 'Cargando...' : 'Cargar mas'}
+            </button>
+          </div>
+        )}
       </div>
 
       {detalleVenta && (
@@ -1418,26 +1650,65 @@ const VentasPage = () => {
                   {tabProductos === 'productos' && (
                     <div className="ventas-card">
                       <h3>Productos</h3>
-                      <div className="busqueda-avanzada">
-                        <input
-                          type="text"
-                          placeholder="Buscar producto por codigo, descripcion o marca"
-                          value={busquedaProducto}
-                          onChange={(e) => setBusquedaProducto(e.target.value)}
-                        />
-                        <div className="resultados">
-                          {resultadosProducto.map((producto) => (
-                            <button
-                              type="button"
-                              className="resultado-item"
-                              key={`${producto.id}-${producto.codigo}`}
-                              onClick={() => agregarProducto(producto)}
-                            >
-                              {producto.codigo} - {producto.descripcion} ({producto.marca})
-                            </button>
-                          ))}
-                        </div>
+                      <div className="ventas-subtabs">
+                        <button
+                          type="button"
+                          className={`ventas-subtab ${tabProductosModo === 'avanzada' ? 'active' : ''}`}
+                          onClick={() => setTabProductosModo('avanzada')}
+                        >
+                          Avanzada
+                        </button>
+                        <button
+                          type="button"
+                          className={`ventas-subtab ${tabProductosModo === 'kits' ? 'active' : ''}`}
+                          onClick={() => setTabProductosModo('kits')}
+                        >
+                          Kits
+                        </button>
                       </div>
+
+                      {tabProductosModo === 'avanzada' ? (
+                        <div className="busqueda-avanzada">
+                          <input
+                            type="text"
+                            placeholder="Buscar producto por codigo, descripcion o marca"
+                            value={busquedaProducto}
+                            onChange={(e) => setBusquedaProducto(e.target.value)}
+                          />
+                          <div className="resultados">
+                            {resultadosProducto.map((producto) => (
+                              <button
+                                type="button"
+                                className="resultado-item"
+                                key={`${producto.id}-${producto.codigo}`}
+                                onClick={() => agregarProducto(producto)}
+                              >
+                                {producto.codigo} - {producto.descripcion} ({producto.marca})
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="busqueda-avanzada">
+                          {cargandoKits && <div className="helper-text">Cargando kits...</div>}
+                          {errorKits && <div className="helper-text">{errorKits}</div>}
+                          <div className="resultados">
+                            {kitsDisponibles.map((kit) => (
+                              <button
+                                type="button"
+                                className="resultado-item"
+                                key={`kit-prod-${kit.id}`}
+                                onClick={() => agregarKitVenta(kit)}
+                              >
+                                {kit.nombre} (S/. {Number(kit.precio_total || 0).toFixed(2)})
+                              </button>
+                            ))}
+                            {!cargandoKits && !kitsDisponibles.length && !errorKits && (
+                              <div className="helper-text">No hay kits activos.</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                       {avisoStock && <div className="warning-message">{avisoStock}</div>}
 
@@ -1524,39 +1795,77 @@ const VentasPage = () => {
                   {tabProductos === 'requerimientos' && (
                       <div className="ventas-card">
                         <h3>Requerimiento</h3>
+                        <div className="ventas-subtabs">
+                          <button
+                            type="button"
+                            className={`ventas-subtab ${tabReqModo === 'avanzada' ? 'active' : ''}`}
+                            onClick={() => setTabReqModo('avanzada')}
+                          >
+                            Avanzada
+                          </button>
+                          <button
+                            type="button"
+                            className={`ventas-subtab ${tabReqModo === 'kits' ? 'active' : ''}`}
+                            onClick={() => setTabReqModo('kits')}
+                          >
+                            Kits
+                          </button>
+                        </div>
                         <div className="requerimiento-box">
-                          <div className="form-group">
-                            <label>Buscar producto</label>
-                            <input
-                              type="text"
-                              placeholder="Buscar por codigo, descripcion o marca"
-                              value={busquedaReq}
-                              onChange={(e) => setBusquedaReq(e.target.value)}
-                            />
-                            <div className="resultados">
-                              {resultadosReq.map((producto) => (
-                                <button
-                                  type="button"
-                                  className="resultado-item"
-                                  key={`req-${producto.id}-${producto.codigo}`}
-                                  onClick={() => {
-                                    setRequerimientoData((prev) => ({
-                                      ...prev,
-                                      codigo: producto.codigo || '',
-                                      descripcion: producto.descripcion || prev.descripcion,
-                                      marca: producto.marca || '',
-                                      precioCompra: prev.precioCompra || producto.precio_compra || '',
-                                      precioVenta: prev.precioVenta || producto.precio_venta || ''
-                                    }));
-                                    setBusquedaReq('');
-                                    setResultadosReq([]);
-                                  }}
-                                >
-                                  {producto.codigo} - {producto.descripcion} ({producto.marca})
-                                </button>
-                              ))}
+                          {tabReqModo === 'avanzada' ? (
+                            <div className="form-group">
+                              <label>Buscar producto</label>
+                              <input
+                                type="text"
+                                placeholder="Buscar por codigo, descripcion o marca"
+                                value={busquedaReq}
+                                onChange={(e) => setBusquedaReq(e.target.value)}
+                              />
+                              <div className="resultados">
+                                {resultadosReq.map((producto) => (
+                                  <button
+                                    type="button"
+                                    className="resultado-item"
+                                    key={`req-${producto.id}-${producto.codigo}`}
+                                    onClick={() => {
+                                      setRequerimientoData((prev) => ({
+                                        ...prev,
+                                        codigo: producto.codigo || '',
+                                        descripcion: producto.descripcion || producto.codigo || prev.descripcion,
+                                        marca: producto.marca || '',
+                                        precioCompra: prev.precioCompra || producto.precio_compra || '',
+                                        precioVenta: prev.precioVenta || producto.precio_venta || ''
+                                      }));
+                                      setBusquedaReq('');
+                                      setResultadosReq([]);
+                                    }}
+                                  >
+                                    {producto.codigo} - {producto.descripcion} ({producto.marca})
+                                  </button>
+                                ))}
+                              </div>
                             </div>
-                          </div>
+                          ) : (
+                            <div className="form-group">
+                              <label>Seleccionar kit</label>
+                              <div className="resultados">
+                                {kitsDisponibles.map((kit) => (
+                                  <button
+                                    type="button"
+                                    className="resultado-item"
+                                    key={`kit-req-${kit.id}`}
+                                    onClick={() => agregarKitVenta(kit)}
+                                  >
+                                    {kit.nombre} (S/. {Number(kit.precio_total || 0).toFixed(2)})
+                                  </button>
+                                ))}
+                                {!cargandoKits && !kitsDisponibles.length && !errorKits && (
+                                  <div className="helper-text">No hay kits activos.</div>
+                                )}
+                                {errorKits && <div className="helper-text">{errorKits}</div>}
+                              </div>
+                            </div>
+                          )}
                           <div className="form-group">
                             <label>Producto</label>
                             <input
@@ -1710,26 +2019,64 @@ const VentasPage = () => {
                   <div className="ventas-split">
                     <div className="ventas-card">
                       <h3>Regalos</h3>
-                      <div className="busqueda-avanzada">
-                        <input
-                          type="text"
-                          placeholder="Buscar regalo por codigo, descripcion o marca"
-                          value={busquedaRegalo}
-                          onChange={(e) => setBusquedaRegalo(e.target.value)}
-                        />
-                        <div className="resultados">
-                          {resultadosRegalo.map((producto) => (
-                            <button
-                              type="button"
-                              className="resultado-item"
-                              key={`gift-${producto.id}-${producto.codigo}`}
-                              onClick={() => agregarRegalo(producto)}
-                            >
-                              {producto.codigo} - {producto.descripcion} ({producto.marca})
-                            </button>
-                          ))}
-                        </div>
+                      <div className="ventas-subtabs">
+                        <button
+                          type="button"
+                          className={`ventas-subtab ${tabRegalosModo === 'avanzada' ? 'active' : ''}`}
+                          onClick={() => setTabRegalosModo('avanzada')}
+                        >
+                          Avanzada
+                        </button>
+                        <button
+                          type="button"
+                          className={`ventas-subtab ${tabRegalosModo === 'kits' ? 'active' : ''}`}
+                          onClick={() => setTabRegalosModo('kits')}
+                        >
+                          Kits
+                        </button>
                       </div>
+                      {tabRegalosModo === 'avanzada' ? (
+                        <div className="busqueda-avanzada">
+                          <input
+                            type="text"
+                            placeholder="Buscar regalo por codigo, descripcion o marca"
+                            value={busquedaRegalo}
+                            onChange={(e) => setBusquedaRegalo(e.target.value)}
+                          />
+                          <div className="resultados">
+                            {resultadosRegalo.map((producto) => (
+                              <button
+                                type="button"
+                                className="resultado-item"
+                                key={`gift-${producto.id}-${producto.codigo}`}
+                                onClick={() => agregarRegalo(producto)}
+                              >
+                                {producto.codigo} - {producto.descripcion} ({producto.marca})
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="busqueda-avanzada">
+                          {cargandoKits && <div className="helper-text">Cargando kits...</div>}
+                          {errorKits && <div className="helper-text">{errorKits}</div>}
+                          <div className="resultados">
+                            {kitsDisponibles.map((kit) => (
+                              <button
+                                type="button"
+                                className="resultado-item"
+                                key={`kit-gift-${kit.id}`}
+                                onClick={() => agregarKitRegalo(kit)}
+                              >
+                                {kit.nombre} (S/. {Number(kit.precio_total || 0).toFixed(2)})
+                              </button>
+                            ))}
+                            {!cargandoKits && !kitsDisponibles.length && !errorKits && (
+                              <div className="helper-text">No hay kits activos.</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                       <div className="table-container">
                         {regalos.length === 0 ? (
@@ -1794,38 +2141,76 @@ const VentasPage = () => {
 
                       <div className="ventas-card">
                         <h3>Requerimiento regalos</h3>
+                        <div className="ventas-subtabs">
+                          <button
+                            type="button"
+                            className={`ventas-subtab ${tabReqRegaloModo === 'avanzada' ? 'active' : ''}`}
+                            onClick={() => setTabReqRegaloModo('avanzada')}
+                          >
+                            Avanzada
+                          </button>
+                          <button
+                            type="button"
+                            className={`ventas-subtab ${tabReqRegaloModo === 'kits' ? 'active' : ''}`}
+                            onClick={() => setTabReqRegaloModo('kits')}
+                          >
+                            Kits
+                          </button>
+                        </div>
                         <div className="requerimiento-box">
-                          <div className="form-group">
-                            <label>Buscar producto</label>
-                            <input
-                              type="text"
-                              placeholder="Buscar por codigo, descripcion o marca"
-                              value={busquedaReqRegalo}
-                              onChange={(e) => setBusquedaReqRegalo(e.target.value)}
-                            />
-                            <div className="resultados">
-                              {resultadosReqRegalo.map((producto) => (
-                                <button
-                                  type="button"
-                                  className="resultado-item"
-                                  key={`req-reg-${producto.id}-${producto.codigo}`}
-                                  onClick={() => {
-                                    setRegaloRequerimiento((prev) => ({
-                                      ...prev,
-                                      codigo: producto.codigo || '',
-                                      descripcion: producto.descripcion || prev.descripcion,
-                                      marca: producto.marca || '',
-                                      precioCompra: prev.precioCompra || producto.precio_compra || ''
-                                    }));
-                                    setBusquedaReqRegalo('');
-                                    setResultadosReqRegalo([]);
-                                  }}
-                                >
-                                  {producto.codigo} - {producto.descripcion} ({producto.marca})
-                                </button>
-                              ))}
+                          {tabReqRegaloModo === 'avanzada' ? (
+                            <div className="form-group">
+                              <label>Buscar producto</label>
+                              <input
+                                type="text"
+                                placeholder="Buscar por codigo, descripcion o marca"
+                                value={busquedaReqRegalo}
+                                onChange={(e) => setBusquedaReqRegalo(e.target.value)}
+                              />
+                              <div className="resultados">
+                                {resultadosReqRegalo.map((producto) => (
+                                  <button
+                                    type="button"
+                                    className="resultado-item"
+                                    key={`req-reg-${producto.id}-${producto.codigo}`}
+                                    onClick={() => {
+                                      setRegaloRequerimiento((prev) => ({
+                                        ...prev,
+                                        codigo: producto.codigo || '',
+                                        descripcion: producto.descripcion || producto.codigo || prev.descripcion,
+                                        marca: producto.marca || '',
+                                        precioCompra: prev.precioCompra || producto.precio_compra || ''
+                                      }));
+                                      setBusquedaReqRegalo('');
+                                      setResultadosReqRegalo([]);
+                                    }}
+                                  >
+                                    {producto.codigo} - {producto.descripcion} ({producto.marca})
+                                  </button>
+                                ))}
+                              </div>
                             </div>
-                          </div>
+                          ) : (
+                            <div className="form-group">
+                              <label>Seleccionar kit</label>
+                              <div className="resultados">
+                                {kitsDisponibles.map((kit) => (
+                                  <button
+                                    type="button"
+                                    className="resultado-item"
+                                    key={`kit-req-reg-${kit.id}`}
+                                    onClick={() => agregarKitRegalo(kit)}
+                                  >
+                                    {kit.nombre} (S/. {Number(kit.precio_total || 0).toFixed(2)})
+                                  </button>
+                                ))}
+                                {!cargandoKits && !kitsDisponibles.length && !errorKits && (
+                                  <div className="helper-text">No hay kits activos.</div>
+                                )}
+                                {errorKits && <div className="helper-text">{errorKits}</div>}
+                              </div>
+                            </div>
+                          )}
                           <div className="form-group">
                             <label>Producto</label>
                             <input

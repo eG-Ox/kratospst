@@ -16,6 +16,11 @@ const ProductosPage = () => {
   const [editandoProducto, setEditandoProducto] = useState(null);
   const [mostrarModalTipo, setMostrarModalTipo] = useState(false);
   const [editandoTipo, setEditandoTipo] = useState(null);
+  const [mostrarModalUbicaciones, setMostrarModalUbicaciones] = useState(false);
+  const [productoUbicaciones, setProductoUbicaciones] = useState(null);
+  const [ubicacionesProducto, setUbicacionesProducto] = useState([]);
+  const [ubicacionesLoading, setUbicacionesLoading] = useState(false);
+  const [ubicacionesError, setUbicacionesError] = useState('');
   const [formularioData, setFormularioData] = useState({
     codigo: '',
     tipo_maquina_id: '',
@@ -181,6 +186,30 @@ const ProductosPage = () => {
         setError('Error al eliminar producto');
       }
     }
+  };
+
+  const abrirModalUbicaciones = async (producto) => {
+    setProductoUbicaciones(producto);
+    setUbicacionesProducto([]);
+    setUbicacionesError('');
+    setUbicacionesLoading(true);
+    setMostrarModalUbicaciones(true);
+    try {
+      const resp = await productosService.getUbicaciones(producto.id);
+      setUbicacionesProducto(resp.data || []);
+    } catch (err) {
+      console.error('Error cargando ubicaciones:', err);
+      setUbicacionesError('No se pudieron cargar las ubicaciones.');
+    } finally {
+      setUbicacionesLoading(false);
+    }
+  };
+
+  const cerrarModalUbicaciones = () => {
+    setMostrarModalUbicaciones(false);
+    setProductoUbicaciones(null);
+    setUbicacionesProducto([]);
+    setUbicacionesError('');
   };
 
   const handleDescargarFicha = async (filename) => {
@@ -480,6 +509,16 @@ const ProductosPage = () => {
                     </td>
                     <td className="acciones">
                       <button
+                        className="icon-btn"
+                        onClick={() => abrirModalUbicaciones(prod)}
+                        title="Ubicaciones"
+                        aria-label="Ubicaciones"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M12 2a7 7 0 0 0-7 7c0 4.2 5.3 11 7 11s7-6.8 7-11a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z" />
+                        </svg>
+                      </button>
+                      <button
                         className="icon-btn icon-btn--edit"
                         onClick={() => handleEditarProducto(prod)}
                         title="Editar"
@@ -774,6 +813,47 @@ const ProductosPage = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {mostrarModalUbicaciones && createPortal(
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2>Ubicaciones {productoUbicaciones?.codigo ? `(${productoUbicaciones.codigo})` : ''}</h2>
+              <button
+                type="button"
+                className="btn-icon"
+                onClick={cerrarModalUbicaciones}
+              >
+                X
+              </button>
+            </div>
+            <div className="modal-body">
+              {ubicacionesLoading ? (
+                <div className="loading">Cargando ubicaciones...</div>
+              ) : ubicacionesError ? (
+                <div className="error-message">{ubicacionesError}</div>
+              ) : ubicacionesProducto.length === 0 ? (
+                <div className="empty-message">Sin ubicaciones con stock.</div>
+              ) : (
+                <ul className="ubicaciones-list">
+                  {ubicacionesProducto.map((item) => (
+                    <li key={`${item.ubicacion_letra}${item.ubicacion_numero}`}>
+                      {item.ubicacion_letra}
+                      {item.ubicacion_numero} - {item.stock}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn-secondary" onClick={cerrarModalUbicaciones}>
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>,
         document.body

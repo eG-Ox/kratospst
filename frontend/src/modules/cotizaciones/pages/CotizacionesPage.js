@@ -153,25 +153,43 @@ const CotizacionesPage = () => {
   const modoEdicion = Boolean(cotizacionEditId);
 
 
+  const agregarItemCotizacion = (nuevo) => {
+    setItems((prev) => {
+      const idx = prev.findIndex(
+        (item) =>
+          String(item.producto_id) === String(nuevo.producto_id) &&
+          String(item.almacen_origen || 'productos') === String(nuevo.almacen_origen || 'productos')
+      );
+      if (idx === -1) {
+        return [...prev, nuevo];
+      }
+      const next = [...prev];
+      const cantidadActual = Number(next[idx].cantidad || 0);
+      const cantidadNueva = Number(nuevo.cantidad || 0) || 1;
+      next[idx] = {
+        ...next[idx],
+        cantidad: cantidadActual + cantidadNueva
+      };
+      return next;
+    });
+  };
+
   const agregarProductoDesdeLista = async (id) => {
     try {
       const resp = await cotizacionesService.obtenerProducto(id, {});
       const producto = resp.data;
       const precio = Number(producto.precio_venta || 0);
-      setItems((prev) => [
-        ...prev,
-        {
-          producto_id: producto.id,
-          codigo: producto.codigo,
-          descripcion: producto.descripcion,
-          marca: producto.marca,
-          almacen_origen: 'productos',
-          cantidad: 1,
-          precio_regular: precio,
-          precio_unitario: precio,
-          origen: 'manual'
-        }
-      ]);
+      agregarItemCotizacion({
+        producto_id: producto.id,
+        codigo: producto.codigo,
+        descripcion: producto.descripcion,
+        marca: producto.marca,
+        almacen_origen: 'productos',
+        cantidad: 1,
+        precio_regular: precio,
+        precio_unitario: precio,
+        origen: 'manual'
+      });
     } catch (err) {
       console.error('Error agregando producto:', err);
     }
@@ -204,20 +222,17 @@ const CotizacionesPage = () => {
 
   const agregarProductoDesdeBusqueda = (producto) => {
     const precio = Number(producto.precio_venta || 0);
-    setItems((prev) => [
-      ...prev,
-      {
-        producto_id: producto.id,
-        codigo: producto.codigo,
-        descripcion: producto.descripcion,
-        marca: producto.marca,
-        almacen_origen: 'productos',
-        cantidad: 1,
-        precio_regular: precio,
-        precio_unitario: precio,
-        origen: 'manual'
-      }
-    ]);
+    agregarItemCotizacion({
+      producto_id: producto.id,
+      codigo: producto.codigo,
+      descripcion: producto.descripcion,
+      marca: producto.marca,
+      almacen_origen: 'productos',
+      cantidad: 1,
+      precio_regular: precio,
+      precio_unitario: precio,
+      origen: 'manual'
+    });
     limpiarFiltrosAvanzada();
   };
 
@@ -241,7 +256,7 @@ const CotizacionesPage = () => {
         precio_unitario: Number(item.precio_final || item.precio_unitario || 0),
         origen: 'kit'
       }));
-      setItems((prev) => [...prev, ...nuevos]);
+      nuevos.forEach((nuevo) => agregarItemCotizacion(nuevo));
     } catch (err) {
       console.error('Error cargando kit:', err);
       setError('Error al cargar kit');
@@ -284,7 +299,7 @@ const CotizacionesPage = () => {
     if (!id) return;
     try {
       const resp = await cotizacionesService.pdf(id);
-      const url = window.URL.createObjectURL(new Blob([resp.data], { type: 'application/pdf' }));
+      const url = window.URL.createObjectURL(new Blob([resp.data], { type: 'text/html' }));
       window.open(url, '_blank', 'noopener,noreferrer');
       setTimeout(() => window.URL.revokeObjectURL(url), 2000);
     } catch (err) {

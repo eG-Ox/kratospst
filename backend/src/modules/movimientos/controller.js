@@ -98,6 +98,131 @@ exports.registrarMovimiento = async (req, res) => {
   }
 };
 
+// Registrar movimientos en batch
+exports.registrarMovimientosBatch = async (req, res) => {
+  const { items } = req.body;
+  const usuario_id = req.usuario.id;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Items requeridos' });
+  }
+
+  const normalizados = [];
+  for (const item of items) {
+    const maquina_id = Number(item.maquina_id);
+    const tipo = item.tipo;
+    const cantidad = Number(item.cantidad);
+    const motivo = item.motivo || null;
+    if (!maquina_id || !tipo || !cantidad) {
+      return res.status(400).json({ error: 'Campos requeridos: maquina_id, tipo, cantidad' });
+    }
+    if (!['ingreso', 'salida'].includes(tipo)) {
+      return res.status(400).json({ error: 'Tipo debe ser ingreso o salida' });
+    }
+    if (!isPositiveInt(cantidad)) {
+      return res.status(400).json({ error: 'Cantidad invalida' });
+    }
+    if (tipo === 'salida' && !isNonEmptyString(motivo)) {
+      return res.status(400).json({ error: 'Motivo requerido para salida' });
+    }
+    normalizados.push({ maquina_id, tipo, cantidad, motivo });
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const ids = Array.from(new Set(normalizados.map((item) => item.maquina_id)));
+    const placeholders = ids.map(() => '?').join(',');
+    const [rows] = await connection.execute(
+      `SELECT id, stock FROM maquinas WHERE id IN (${placeholders}) FOR UPDATE`,
+      ids
+    );
+
+    const stockMap = new Map(rows.map((row) => [Number(row.id), Number(row.stock || 0)]));
+    for (const id of ids) {
+      if (!stockMap.has(id)) {
+        await connection.rollback();
+        connection.release();
+        return res.status(404).json({ error: `Maquina no encontrada: ${id}` });
+      }
+    }
+
+    const deltaMap = new Map();
+    for (const item of normalizados) {
+      const current = deltaMap.get(item.maquina_id) || 0;
+      const delta = item.tipo === 'ingreso' ? item.cantidad : -item.cantidad;
+      deltaMap.set(item.maquina_id, current + delta);
+    }
+
+    for (const [maquinaId, delta] of deltaMap.entries()) {
+      const stockActual = stockMap.get(maquinaId) || 0;
+      if (stockActual + delta < 0) {
+        await connection.rollback();
+        connection.release();
+        return res.status(400).json({ error: `Stock insuficiente para la salida (${maquinaId})` });
+      }
+    }
+
+    const chunkSize = 500;
+    let insertResult = null;
+    for (let i = 0; i < normalizados.length; i += chunkSize) {
+      const chunk = normalizados.slice(i, i + chunkSize);
+      const valuesSql = chunk.map(() => '(?, ?, ?, ?, ?)').join(',');
+      const params = [];
+      chunk.forEach((item) => {
+        params.push(item.maquina_id, usuario_id, item.tipo, item.cantidad, item.motivo);
+      });
+      const [result] = await connection.execute(
+        `INSERT INTO ingresos_salidas (maquina_id, usuario_id, tipo, cantidad, motivo)
+         VALUES ${valuesSql}`,
+        params
+      );
+      if (!insertResult) {
+        insertResult = result;
+      }
+    }
+
+    for (const [maquinaId, delta] of deltaMap.entries()) {
+      const stockActual = stockMap.get(maquinaId) || 0;
+      const nuevoStock = stockActual + delta;
+      await connection.execute(
+        'UPDATE maquinas SET stock = ? WHERE id = ?',
+        [nuevoStock, maquinaId]
+      );
+    }
+
+    for (const item of normalizados) {
+      const stockActual = stockMap.get(item.maquina_id) || 0;
+      const delta = item.tipo === 'ingreso' ? item.cantidad : -item.cantidad;
+      const nuevoStock = stockActual + deltaMap.get(item.maquina_id);
+      await registrarHistorial(connection, {
+        entidad: 'movimientos',
+        entidad_id: null,
+        usuario_id,
+        accion: item.tipo,
+        descripcion: `Movimiento ${item.tipo} (${item.maquina_id})`,
+        antes: { stock: stockActual },
+        despues: { stock: nuevoStock, cantidad: item.cantidad, motivo: item.motivo }
+      });
+    }
+
+    await connection.commit();
+    connection.release();
+    res.status(201).json({ ok: true, total: normalizados.length });
+  } catch (error) {
+    console.error('Error registrando movimientos batch:', error);
+    if (connection) {
+      try {
+        await connection.rollback();
+        connection.release();
+      } catch (_) {}
+    }
+    res.status(500).json({ error: 'Error al registrar movimientos' });
+  }
+};
+
 const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;

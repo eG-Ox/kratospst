@@ -15,6 +15,11 @@ const PickingPage = () => {
   const [cameraActive, setCameraActive] = useState(false);
   const [scanActivo, setScanActivo] = useState(false);
 
+  const isNativeScannerAvailable = () =>
+    typeof window !== 'undefined' &&
+    window.Android &&
+    typeof window.Android.openQrScanner === 'function';
+
   const videoRef = useRef(null);
   const zxingRef = useRef(null);
   const zxingControlRef = useRef(null);
@@ -96,6 +101,8 @@ const PickingPage = () => {
       setMensaje('');
       await ventasService.confirmarPicking({
         detalleId: item.detalleId,
+        codigo: item.codigo,
+        ventaId: ventaSeleccionada?.ventaId,
         cantidad: 1
       });
       setMensaje('Salida registrada. Pedido actualizado.');
@@ -142,6 +149,11 @@ const PickingPage = () => {
       ultimoTextoRef.current = valor;
       ultimoTextoAtRef.current = ahora;
       const parsed = parseQRPayload(valor);
+      const normalizeCode = (value) =>
+        String(value || '')
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, '');
       let code = '';
       if (parsed.ok && parsed.data?.codigo) {
         code = parsed.data.codigo;
@@ -149,7 +161,7 @@ const PickingPage = () => {
         const raw = String(valor || '').trim();
         const tokens = raw
           .replace(/\r/g, '')
-          .split(/[\n,;]+/g)
+          .split(/[\n,;\/\s]+/g)
           .map((item) => item.trim())
           .filter(Boolean);
         code = tokens[0] || raw;
@@ -158,11 +170,14 @@ const PickingPage = () => {
         setError(parsed.error || 'QR invalido');
         return;
       }
+      const normalizedCode = normalizeCode(code);
       setCodigo(code);
       if (itemSeleccionado) {
+        const normalizedItem = normalizeCode(itemSeleccionado.codigo);
+        const rawNormalized = normalizeCode(valor);
         const matches =
-          code === itemSeleccionado.codigo ||
-          String(valor).includes(itemSeleccionado.codigo || '');
+          normalizedCode === normalizedItem ||
+          rawNormalized.includes(normalizedItem);
         if (!matches) {
           setError('ERROR NO CORRESPONDE AL PEDIDO');
           detenerCamara();
@@ -230,6 +245,10 @@ const PickingPage = () => {
   }, [procesarCodigoDetectado]);
 
   const toggleEscaneoDesdeBoton = useCallback(async () => {
+    if (isNativeScannerAvailable()) {
+      window.Android.openQrScanner();
+      return;
+    }
     if (!cameraActive) {
       await activarCamara();
     }
@@ -245,6 +264,19 @@ const PickingPage = () => {
       detenerCamara();
     };
   }, [detenerCamara]);
+
+  useEffect(() => {
+    const handler = (value) => {
+      if (!value) return;
+      procesarCodigoDetectado(String(value));
+    };
+    window.handleNativeQr = handler;
+    return () => {
+      if (window.handleNativeQr === handler) {
+        delete window.handleNativeQr;
+      }
+    };
+  }, [procesarCodigoDetectado]);
 
   useEffect(() => {
     if (!cameraActive) return undefined;

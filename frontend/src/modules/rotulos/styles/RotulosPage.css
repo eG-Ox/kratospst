@@ -1,0 +1,61 @@
+.rotulos-container {
+  padding: 12px;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.rotulos-header {
+  margin-bottom: 10px;
+}
+
+.rotulos-header h1 {
+  margin: 0 0 4px 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+}
+
+.rotulos-header p {
+  margin: 0;
+  color: rgba(15, 23, 42, 0.6);
+  font-size: 11px;
+}
+
+.rotulos-card {
+  background: var(--surface);
+  border-radius: var(--border-radius);
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  box-shadow: var(--box-shadow-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rotulos-card .form-row {
+  grid-template-columns: 1fr 1fr;
+}
+
+.rotulos-card .form-group-actions {
+  display: flex;
+  align-items: flex-end;
+}
+
+.rotulos-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.rotulos-card .helper-text {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--gray-color);
+  font-size: 10px;
+}
+
+@media (max-width: 768px) {
+  .rotulos-card .form-row {
+    grid-template-columns: 1fr;
+  }
+}

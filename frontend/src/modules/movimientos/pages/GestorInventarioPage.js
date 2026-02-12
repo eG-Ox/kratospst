@@ -122,6 +122,53 @@ const GestorInventarioPage = () => {
     };
   };
 
+
+  const normalizarCodigo = (value) =>
+    String(value || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+
+  const productosMap = useMemo(() => {
+    const map = new Map();
+    (productos || []).forEach((prod) => {
+      const key = normalizarCodigo(prod.codigo);
+      if (key) {
+        map.set(key, prod);
+      }
+    });
+    return map;
+  }, [productos]);
+
+  const buscarProductoRemoto = async (codigoValue) => {
+    try {
+      const resp = await productosService.getByCodigo(codigoValue);
+      const producto = resp?.data;
+      if (producto?.id) {
+        setProductos((prev) => {
+          const existe = prev.some(
+            (item) => normalizarCodigo(item.codigo) === normalizarCodigo(producto.codigo)
+          );
+          return existe ? prev : [...prev, producto];
+        });
+        return producto;
+      }
+    } catch (err) {
+      if (err?.response?.status !== 404) {
+        console.error('Error buscando producto por codigo:', err);
+      }
+    }
+    return null;
+  };
+
+  const getProductoPorCodigo = async (codigoValue) => {
+    const key = normalizarCodigo(codigoValue);
+    if (!key) return null;
+    const local = productosMap.get(key);
+    if (local) return local;
+    return await buscarProductoRemoto(codigoValue);
+  };
+
   const normalizarDocumento = (value) => String(value || '').replace(/\D/g, '');
 
   const obtenerTipoDocumento = (value) => {
@@ -219,13 +266,13 @@ const GestorInventarioPage = () => {
     return { marca: '', descripcion: '', tipo: '', ubicacion: '' };
   };
 
-  const agregarCodigo = (valor) => {
+  const agregarCodigo = async (valor) => {
     const raw = String(valor || '').trim();
     if (!raw) return;
     const parsed = parsearQR(raw);
     const code = parsed?.codigo || raw;
     if (!code) return;
-    const encontrado = productos.find((prod) => prod.codigo === code);
+    const encontrado = await getProductoPorCodigo(code);
     if (modo === 'ingreso' && !encontrado && parsed?.partial) {
       setError('QR completo requerido para registrar producto nuevo');
       return;
@@ -594,7 +641,7 @@ const GestorInventarioPage = () => {
 
     if (modo === 'salida') {
       for (const item of itemsBatch) {
-        const encontrado = productos.find((prod) => prod.codigo === item.codigo);
+        const encontrado = await getProductoPorCodigo(item.codigo);
         if (!encontrado) {
           setError(`Producto no encontrado para salida: ${item.codigo}`);
           return;
@@ -615,8 +662,9 @@ const GestorInventarioPage = () => {
         return;
       }
 
+      const batchItems = [];
       for (const item of itemsBatch) {
-        const encontrado = productos.find((prod) => prod.codigo === item.codigo);
+        const encontrado = await getProductoPorCodigo(item.codigo);
         let maquinaId = encontrado?.id;
         if (!maquinaId) {
           if (modo === 'salida') {
@@ -629,13 +677,14 @@ const GestorInventarioPage = () => {
             maquinaId = await crearProductoPorCodigo(item.codigo);
           }
         }
-        await movimientosService.registrar({
+        batchItems.push({
           maquina_id: maquinaId,
           tipo: modo,
           cantidad: parseInt(item.cantidad, 10),
           motivo: motivoFinal
         });
       }
+      await movimientosService.registrarBatch(batchItems);
 
       setSuccess(`Movimientos registrados: ${itemsBatch.length}`);
       setItemsBatch([]);

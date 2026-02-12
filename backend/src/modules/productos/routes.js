@@ -15,6 +15,7 @@ router.post('/', autorizar('productos.editar'), multerUpload.single('ficha_tecni
 router.put('/:id', autorizar('productos.editar'), multerUpload.single('ficha_tecnica'), controller.actualizarMaquina);
 router.delete('/:id', autorizar('productos.editar'), controller.eliminarMaquina);
 router.get('/descargar/:filename', autorizar('productos.ver'), controller.descargarFichaTecnica);
+router.get('/:id/ubicaciones', autorizar('productos.ver'), controller.obtenerUbicaciones);
 router.get('/:id', autorizar('productos.ver'), controller.getMaquina);
 
 module.exports = router;

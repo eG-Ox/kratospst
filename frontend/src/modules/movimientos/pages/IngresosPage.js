@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { movimientosService, productosService, tiposMaquinasService, marcasService } from '../../../core/services/apiServices';
 import { parseQRPayload } from '../../../shared/utils/qr';
@@ -18,6 +18,11 @@ const IngresosPage = ({ usuario }) => {
   const [cameraActive, setCameraActive] = useState(false);
   const [qrData, setQrData] = useState(null);
 
+  const isNativeScannerAvailable = () =>
+    typeof window !== 'undefined' &&
+    window.Android &&
+    typeof window.Android.openQrScanner === 'function';
+
   const videoRef = useRef(null);
   const zxingRef = useRef(null);
   const zxingControlRef = useRef(null);
@@ -32,6 +37,19 @@ const IngresosPage = ({ usuario }) => {
       detenerEscaneo();
     };
   }, []);
+
+  useEffect(() => {
+    const handler = (value) => {
+      if (!value) return;
+      procesarCodigoDetectado(String(value));
+    };
+    window.handleNativeQr = handler;
+    return () => {
+      if (window.handleNativeQr === handler) {
+        delete window.handleNativeQr;
+      }
+    };
+  }, [procesarCodigoDetectado]);
 
   const cargarDatos = async () => {
     try {
@@ -53,6 +71,11 @@ const IngresosPage = ({ usuario }) => {
   };
 
   const normalizarMarcaCodigo = (value) => String(value || '').trim().toUpperCase();
+  const normalizarCodigo = (value) =>
+    String(value || '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
 
   const marcasMap = useMemo(() => {
     const map = {};
@@ -70,11 +93,22 @@ const IngresosPage = ({ usuario }) => {
     return marcasMap[code] || value || '';
   };
 
+  const extraerCodigoDesdeTexto = (texto) => {
+    const raw = String(texto || '').trim();
+    if (!raw) return '';
+    const tokens = raw
+      .replace(/\r/g, '')
+      .split(/[\n,;\/\s]+/g)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return tokens[0] || raw;
+  };
+
   const parsearQR = (textoQR) => {
     const parsed = parseQRPayload(textoQR);
     if (!parsed.ok) {
-      setError(parsed.error || 'QR invalido');
-      return null;
+      setQrData(null);
+      return { codigo: extraerCodigoDesdeTexto(textoQR), partial: true };
     }
     if (parsed.partial) {
       setQrData(null);
@@ -138,7 +172,7 @@ const IngresosPage = ({ usuario }) => {
     return response.data.id;
   };
 
-  const procesarCodigoDetectado = (valor) => {
+  const procesarCodigoDetectado = useCallback((valor) => {
     const ahora = Date.now();
     if (valor === ultimoTextoRef.current && ahora - ultimoTextoAtRef.current < 2500) {
       return;
@@ -150,7 +184,7 @@ const IngresosPage = ({ usuario }) => {
       procesarIngreso(valor);
       reproducirBeep();
     }
-  };
+  }, []);
 
   const reproducirBeep = () => {
     try {
@@ -172,27 +206,36 @@ const IngresosPage = ({ usuario }) => {
   const procesarIngreso = async (valor) => {
     try {
       setError('');
-      
-      // Parsear como QR completo
       const parsed = parsearQR(valor);
+      const codigoDetectado = parsed?.codigo || extraerCodigoDesdeTexto(valor);
+      if (!codigoDetectado) {
+        setError('Codigo invalido');
+        return;
+      }
+
       if (parsed && !parsed.partial) {
-        // QR completo con todos los campos
-        const producto = productos.find(p => p.codigo === parsed.codigo);
-        if (!producto) {
-          // Crear producto nuevo
+        const productoExistente = productos.find(
+          (p) => normalizarCodigo(p.codigo) === normalizarCodigo(parsed.codigo)
+        );
+        if (!productoExistente) {
           const confirmar = window.confirm(
-            `¿Crear nuevo producto?\n\nCódigo: ${parsed.codigo}\nMarca: ${parsed.marca}\nTipo: ${parsed.tipo_maquina}\nDescripción: ${parsed.descripcion}\nUbicación: ${parsed.ubicacion}`
+            `??Crear nuevo producto?
+
+C??digo: ${parsed.codigo}
+Marca: ${parsed.marca}
+Tipo: ${parsed.tipo_maquina}
+Descripci??n: ${parsed.descripcion}
+Ubicaci??n: ${parsed.ubicacion}`
           );
           if (!confirmar) {
-            setError('Creación cancelada');
+            setError('Creaci??n cancelada');
             return;
           }
-          
-          const productoId = await crearProductoDesdeQR(parsed);
+          await crearProductoDesdeQR(parsed);
           await cargarDatos();
           setCodigo(parsed.codigo);
           setCantidad('1');
-          setSuccess(`✓ Producto creado: ${parsed.codigo}`);
+          setSuccess(`??? Producto creado: ${parsed.codigo}`);
           setTimeout(() => setSuccess(''), 2000);
           return;
         }
@@ -201,10 +244,11 @@ const IngresosPage = ({ usuario }) => {
         return;
       }
 
-      // Búsqueda por código simple
-      const producto = productos.find(p => p.codigo === valor);
+      const producto = productos.find(
+        (p) => normalizarCodigo(p.codigo) === normalizarCodigo(codigoDetectado)
+      );
       if (producto) {
-        setCodigo(valor);
+        setCodigo(codigoDetectado);
         setCantidad('1');
         setError('');
       } else {
@@ -217,6 +261,10 @@ const IngresosPage = ({ usuario }) => {
   };
 
   const iniciarCamara = async () => {
+    if (isNativeScannerAvailable()) {
+      window.Android.openQrScanner();
+      return;
+    }
     try {
       setCameraActive(true);
       if (!zxingRef.current) {

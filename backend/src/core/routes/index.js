@@ -14,6 +14,7 @@ const permisosRoutes = require('../../modules/permisos/routes');
 const marcasRoutes = require('../../modules/marcas/routes');
 const inventarioGeneralRoutes = require('../../modules/inventario-general/routes');
 const ventasRoutes = require('../../modules/ventas/routes');
+const backupsRoutes = require('../../modules/backups/routes');
 const pool = require('../config/database');
 
 const router = express.Router();
@@ -34,6 +35,7 @@ router.use('/historial', historialRoutes);
 router.use('/permisos', permisosRoutes);
 router.use('/inventario-general', autenticar, inventarioGeneralRoutes);
 router.use('/ventas', autenticar, ventasRoutes);
+router.use('/backups', backupsRoutes);
 
 // Tipos por almacen
 router.get('/tipos_por_almacen', autenticar, async (req, res) => {

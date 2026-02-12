@@ -136,9 +136,9 @@ exports.obtenerInventario = async (req, res) => {
 };
 
 exports.eliminarDetalle = async (req, res) => {
-  const { producto_id } = req.body;
-  if (!producto_id) {
-    return res.status(400).json({ error: 'producto_id requerido' });
+  const { producto_id, detalle_id } = req.body;
+  if (!producto_id && !detalle_id) {
+    return res.status(400).json({ error: 'producto_id o detalle_id requerido' });
   }
   try {
     const connection = await pool.getConnection();
@@ -151,10 +151,17 @@ exports.eliminarDetalle = async (req, res) => {
       connection.release();
       return res.status(400).json({ error: 'Inventario no esta abierto' });
     }
-    await connection.execute(
-      'DELETE FROM inventario_detalle WHERE inventario_id = ? AND producto_id = ?',
-      [req.params.id, producto_id]
-    );
+    if (detalle_id) {
+      await connection.execute(
+        'DELETE FROM inventario_detalle WHERE inventario_id = ? AND id = ?',
+        [req.params.id, detalle_id]
+      );
+    } else {
+      await connection.execute(
+        'DELETE FROM inventario_detalle WHERE inventario_id = ? AND producto_id = ?',
+        [req.params.id, producto_id]
+      );
+    }
     connection.release();
     res.json({ mensaje: 'Detalle eliminado' });
   } catch (error) {
@@ -205,57 +212,25 @@ exports.agregarConteo = async (req, res) => {
     }
 
     const producto = productos[0];
-    const [detalles] = await connection.execute(
-      `SELECT * FROM inventario_detalle
-       WHERE inventario_id = ? AND producto_id = ?`,
-      [req.params.id, producto.id]
+    const conteoIncremento = Number(cantidad || 0);
+    const diferenciaInicial = conteoIncremento - Number(producto.stock || 0);
+    await connection.execute(
+      `INSERT INTO inventario_detalle
+       (inventario_id, producto_id, ubicacion_letra, ubicacion_numero, stock_actual, conteo, diferencia)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         conteo = conteo + VALUES(conteo),
+         diferencia = (conteo + VALUES(conteo)) - stock_actual`,
+      [
+        req.params.id,
+        producto.id,
+        ubicacionParse.letra,
+        ubicacionParse.numero,
+        producto.stock,
+        conteoIncremento,
+        diferenciaInicial
+      ]
     );
-
-    if (!detalles.length) {
-      const conteoInicial = Number(cantidad || 0);
-      const diferencia = conteoInicial - Number(producto.stock || 0);
-      await connection.execute(
-        `INSERT INTO inventario_detalle
-         (inventario_id, producto_id, ubicacion_letra, ubicacion_numero, stock_actual, conteo, diferencia)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          req.params.id,
-          producto.id,
-          ubicacionParse.letra,
-          ubicacionParse.numero,
-          producto.stock,
-          conteoInicial,
-          diferencia
-        ]
-      );
-    } else {
-      const actual = detalles[0];
-      const nuevoConteo = Number(actual.conteo || 0) + Number(cantidad || 0);
-      const diferencia = nuevoConteo - Number(actual.stock_actual || 0);
-      if (ubicacionParse.letra && ubicacionParse.numero) {
-        await connection.execute(
-          `UPDATE inventario_detalle
-           SET conteo = ?, diferencia = ?, ubicacion_letra = ?, ubicacion_numero = ?
-           WHERE id = ?`,
-          [nuevoConteo, diferencia, ubicacionParse.letra, ubicacionParse.numero, actual.id]
-        );
-      } else {
-        await connection.execute(
-          `UPDATE inventario_detalle
-           SET conteo = ?, diferencia = ?
-           WHERE id = ?`,
-          [nuevoConteo, diferencia, actual.id]
-        );
-      }
-    }
-
-    // Actualizar ubicacion del producto al escanear en inventario general
-    if (ubicacionParse.letra && ubicacionParse.numero) {
-      await connection.execute(
-        'UPDATE maquinas SET ubicacion_letra = ?, ubicacion_numero = ? WHERE id = ?',
-        [ubicacionParse.letra, ubicacionParse.numero, producto.id]
-      );
-    }
 
     connection.release();
     res.json({ mensaje: 'Conteo actualizado' });
@@ -266,9 +241,9 @@ exports.agregarConteo = async (req, res) => {
 };
 
 exports.ajustarConteo = async (req, res) => {
-  const { producto_id, conteo } = req.body;
-  if (!producto_id) {
-    return res.status(400).json({ error: 'producto_id requerido' });
+  const { producto_id, detalle_id, conteo } = req.body;
+  if (!producto_id && !detalle_id) {
+    return res.status(400).json({ error: 'producto_id o detalle_id requerido' });
   }
   try {
     const connection = await pool.getConnection();
@@ -284,8 +259,9 @@ exports.ajustarConteo = async (req, res) => {
 
     const [detalles] = await connection.execute(
       `SELECT * FROM inventario_detalle
-       WHERE inventario_id = ? AND producto_id = ?`,
-      [req.params.id, producto_id]
+       WHERE inventario_id = ? AND ${detalle_id ? 'id = ?' : 'producto_id = ?'}
+       ORDER BY id ASC LIMIT 1`,
+      [req.params.id, detalle_id || producto_id]
     );
     if (!detalles.length) {
       connection.release();
@@ -389,10 +365,13 @@ exports.eliminarInventario = async (req, res) => {
 };
 
 exports.aplicarStock = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
     const inventario = await obtenerInventario(connection, req.params.id);
     if (!inventario) {
+      await connection.rollback();
       connection.release();
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
@@ -401,20 +380,24 @@ exports.aplicarStock = async (req, res) => {
     );
     const ultimoId = ultimoRows[0]?.id;
     if (ultimoId && Number(ultimoId) !== Number(req.params.id)) {
+      await connection.rollback();
       connection.release();
       return res.status(400).json({ error: 'Solo se puede aplicar el ultimo inventario' });
     }
     if (inventario.estado !== 'cerrado') {
+      await connection.rollback();
       connection.release();
       return res.status(400).json({ error: 'Inventario debe estar cerrado' });
     }
     const hoy = new Date().toISOString().slice(0, 10);
     const fechaInventario = new Date(inventario.created_at).toISOString().slice(0, 10);
     if (hoy !== fechaInventario) {
+      await connection.rollback();
       connection.release();
       return res.status(400).json({ error: 'Solo se puede aplicar stock el mismo dia' });
     }
     if (inventario.aplicado_at) {
+      await connection.rollback();
       connection.release();
       return res.status(400).json({ error: 'Inventario ya aplicado' });
     }
@@ -438,22 +421,91 @@ exports.aplicarStock = async (req, res) => {
       [req.params.id]
     );
 
-    for (const detalle of detalles) {
-      if (detalle.ubicacion_letra && detalle.ubicacion_numero) {
-        await connection.execute(
-          'UPDATE maquinas SET stock = ?, ubicacion_letra = ?, ubicacion_numero = ? WHERE id = ?',
-          [detalle.conteo, detalle.ubicacion_letra, detalle.ubicacion_numero, detalle.producto_id]
-        );
-      } else {
-        await connection.execute(
-          'UPDATE maquinas SET stock = ? WHERE id = ?',
-          [detalle.conteo, detalle.producto_id]
-        );
+    const stockPorProducto = new Map();
+    const productoIds = new Set();
+    detalles.forEach((detalle) => {
+      const id = Number(detalle.producto_id);
+      productoIds.add(id);
+      const actual = stockPorProducto.get(id) || 0;
+      stockPorProducto.set(id, actual + Number(detalle.conteo || 0));
+    });
+
+    const productoIdList = Array.from(productoIds.values());
+    const chunkIds = async (ids, handler) => {
+      const chunkSize = 500;
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        await handler(ids.slice(i, i + chunkSize));
       }
+    };
+
+    if (productoIdList.length) {
+      await chunkIds(productoIdList, async (chunk) => {
+        const caseParts = [];
+        const params = [];
+        chunk.forEach((id) => {
+          caseParts.push('WHEN ? THEN ?');
+          params.push(id, stockPorProducto.get(id) || 0);
+        });
+        const placeholders = chunk.map(() => '?').join(',');
+        params.push(...chunk);
+        await connection.execute(
+          `UPDATE maquinas SET stock = CASE id ${caseParts.join(' ')} ELSE stock END
+           WHERE id IN (${placeholders})`,
+          params
+        );
+      });
+
+      await chunkIds(productoIdList, async (chunk) => {
+        const deletePlaceholders = chunk.map(() => '?').join(',');
+        await connection.execute(
+          `DELETE FROM maquinas_ubicaciones WHERE producto_id IN (${deletePlaceholders})`,
+          chunk
+        );
+      });
     }
 
-    for (const item of noEscaneados) {
-      await connection.execute('UPDATE maquinas SET stock = 0 WHERE id = ?', [item.id]);
+    const ubicacionesRows = detalles
+      .filter((detalle) => detalle.conteo > 0 && detalle.ubicacion_letra && detalle.ubicacion_numero)
+      .map((detalle) => [
+        detalle.producto_id,
+        detalle.ubicacion_letra,
+        detalle.ubicacion_numero,
+        Number(detalle.conteo || 0)
+      ]);
+
+    const insertarUbicaciones = async (rows) => {
+      const valuesSql = rows.map(() => '(?, ?, ?, ?)').join(',');
+      const params = [];
+      rows.forEach((row) => params.push(...row));
+      await connection.execute(
+        `INSERT INTO maquinas_ubicaciones
+         (producto_id, ubicacion_letra, ubicacion_numero, stock)
+         VALUES ${valuesSql}`,
+        params
+      );
+    };
+
+    const chunkSize = 500;
+    for (let i = 0; i < ubicacionesRows.length; i += chunkSize) {
+      await insertarUbicaciones(ubicacionesRows.slice(i, i + chunkSize));
+    }
+
+    const noEscaneadosIds = noEscaneados.map((item) => item.id);
+    if (noEscaneadosIds.length) {
+      await chunkIds(noEscaneadosIds, async (chunk) => {
+        const placeholders = chunk.map(() => '?').join(',');
+        await connection.execute(
+          `UPDATE maquinas SET stock = 0 WHERE id IN (${placeholders})`,
+          chunk
+        );
+      });
+      await chunkIds(noEscaneadosIds, async (chunk) => {
+        const placeholders = chunk.map(() => '?').join(',');
+        await connection.execute(
+          `DELETE FROM maquinas_ubicaciones WHERE producto_id IN (${placeholders})`,
+          chunk
+        );
+      });
     }
 
     await connection.execute(
@@ -473,10 +525,17 @@ exports.aplicarStock = async (req, res) => {
       despues: { estado: 'aplicado' }
     });
 
+    await connection.commit();
     connection.release();
     res.json({ mensaje: 'Stock actualizado' });
   } catch (error) {
     console.error('Error aplicando stock:', error);
+    if (connection) {
+      try {
+        await connection.rollback();
+        connection.release();
+      } catch (_) {}
+    }
     res.status(500).json({ error: 'Error al aplicar stock' });
   }
 };

@@ -42,8 +42,8 @@ exports.obtenerParaVenta = async (req, res) => {
   try {
     const connection = await pool.getConnection();
     const [kits] = await connection.execute(
-      'SELECT id, nombre, descripcion, precio_total FROM kits WHERE id = ?',
-      [kit_id]
+      'SELECT id, nombre, descripcion, precio_total FROM kits WHERE id = ? AND usuario_id = ? AND activo = TRUE',
+      [kit_id, req.usuario.id]
     );
 
     if (!kits.length) {
@@ -126,8 +126,8 @@ exports.obtenerKit = async (req, res) => {
     const connection = await pool.getConnection();
     const [kits] = await connection.execute(
       `SELECT id, nombre, descripcion, precio_total, activo, created_at
-       FROM kits WHERE id = ?`,
-      [id]
+       FROM kits WHERE id = ? AND usuario_id = ?`,
+      [id, req.usuario.id]
     );
     if (!kits.length) {
       connection.release();
@@ -156,8 +156,10 @@ exports.crearKit = async (req, res) => {
   const items = normalizarItems(productos);
   const precio_total = calcularPrecioTotal(items);
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
     const [result] = await connection.execute(
       `INSERT INTO kits (usuario_id, nombre, descripcion, precio_total, activo)
        VALUES (?, ?, ?, ?, ?)`,
@@ -190,11 +192,18 @@ exports.crearKit = async (req, res) => {
       antes: null,
       despues: { id: kitId, nombre, descripcion, precio_total, activo: !!activo, productos: items }
     });
+    await connection.commit();
     connection.release();
 
     res.status(201).json({ id: kitId, nombre, descripcion, precio_total, activo: !!activo });
   } catch (error) {
     console.error('Error creando kit:', error);
+    if (connection) {
+      try {
+        await connection.rollback();
+        connection.release();
+      } catch (_) {}
+    }
     res.status(500).json({ error: 'Error al crear kit' });
   }
 };
@@ -210,9 +219,14 @@ exports.editarKit = async (req, res) => {
   const items = normalizarItems(productos);
   const precio_total = calcularPrecioTotal(items);
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
-    const [existing] = await connection.execute('SELECT * FROM kits WHERE id = ?', [id]);
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    const [existing] = await connection.execute(
+      'SELECT * FROM kits WHERE id = ? AND usuario_id = ?',
+      [id, req.usuario.id]
+    );
     if (!existing.length) {
       connection.release();
       return res.status(404).json({ error: 'Kit no encontrado' });
@@ -254,11 +268,18 @@ exports.editarKit = async (req, res) => {
       antes: { ...existing[0], productos: prevItems },
       despues: { id, nombre, descripcion, precio_total, activo: !!activo, productos: items }
     });
+    await connection.commit();
     connection.release();
 
     res.json({ id, nombre, descripcion, precio_total, activo: !!activo });
   } catch (error) {
     console.error('Error editando kit:', error);
+    if (connection) {
+      try {
+        await connection.rollback();
+        connection.release();
+      } catch (_) {}
+    }
     res.status(500).json({ error: 'Error al editar kit' });
   }
 };
@@ -266,9 +287,14 @@ exports.editarKit = async (req, res) => {
 exports.eliminarKit = async (req, res) => {
   const { id } = req.params;
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
-    const [prevKit] = await connection.execute('SELECT * FROM kits WHERE id = ?', [id]);
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    const [prevKit] = await connection.execute(
+      'SELECT * FROM kits WHERE id = ? AND usuario_id = ?',
+      [id, req.usuario.id]
+    );
     const [prevItems] = await connection.execute(
       `SELECT producto_id, cantidad, precio_unitario, precio_final, subtotal, almacen_origen
        FROM kit_productos WHERE kit_id = ?`,
@@ -285,6 +311,7 @@ exports.eliminarKit = async (req, res) => {
       antes: { ...(prevKit[0] || {}), productos: prevItems },
       despues: null
     });
+    await connection.commit();
     connection.release();
 
     if (!result.affectedRows) {
@@ -294,6 +321,12 @@ exports.eliminarKit = async (req, res) => {
     res.json({ mensaje: 'Kit eliminado' });
   } catch (error) {
     console.error('Error eliminando kit:', error);
+    if (connection) {
+      try {
+        await connection.rollback();
+        connection.release();
+      } catch (_) {}
+    }
     res.status(500).json({ error: 'Error al eliminar kit' });
   }
 };
@@ -303,14 +336,21 @@ exports.toggleKit = async (req, res) => {
 
   try {
     const connection = await pool.getConnection();
-    const [rows] = await connection.execute('SELECT activo FROM kits WHERE id = ?', [id]);
+    const [rows] = await connection.execute(
+      'SELECT activo FROM kits WHERE id = ? AND usuario_id = ?',
+      [id, req.usuario.id]
+    );
     if (!rows.length) {
       connection.release();
       return res.status(404).json({ error: 'Kit no encontrado' });
     }
 
     const nuevoEstado = !rows[0].activo;
-    await connection.execute('UPDATE kits SET activo = ? WHERE id = ?', [nuevoEstado, id]);
+    await connection.execute('UPDATE kits SET activo = ? WHERE id = ? AND usuario_id = ?', [
+      nuevoEstado,
+      id,
+      req.usuario.id
+    ]);
     await registrarHistorial(connection, {
       entidad: 'kits',
       entidad_id: id,

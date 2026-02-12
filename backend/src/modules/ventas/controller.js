@@ -161,8 +161,8 @@ const buscarProductoPorClave = async (connection, clave) => {
     `
       SELECT id, codigo, marca, descripcion, activo
       FROM maquinas
-      WHERE REPLACE(REPLACE(REPLACE(UPPER(codigo), ' ', ''), '-', ''), '/', '') = ?
-         OR REPLACE(REPLACE(REPLACE(UPPER(descripcion), ' ', ''), '-', ''), '/', '') = ?
+      WHERE codigo_normalizado = ?
+         OR descripcion_normalizada = ?
       LIMIT 1
     `,
     [normalizada, normalizada]
@@ -270,7 +270,7 @@ const prepararRequerimientos = async (connection, items) => {
 };
 
 exports.listarVentas = async (req, res) => {
-  const { fecha_inicio, fecha_fin } = req.query;
+  const { fecha_inicio, fecha_fin, limite = 200, pagina = 1 } = req.query;
   try {
     const connection = await pool.getConnection();
     let query = `
@@ -288,7 +288,11 @@ exports.listarVentas = async (req, res) => {
       query += ' AND v.fecha_venta <= ?';
       params.push(fecha_fin);
     }
-    query += ' ORDER BY v.created_at DESC';
+    const limitValue = parsePositiveInt(limite, 200);
+    const pageValue = parsePositiveInt(pagina, 1);
+    const safeLimit = Math.min(limitValue, 500);
+    const offset = (pageValue - 1) * safeLimit;
+    query += ` ORDER BY v.created_at DESC LIMIT ${safeLimit} OFFSET ${offset}`;
     const [rows] = await connection.execute(query, params);
     if (rows.length === 0) {
       connection.release();
@@ -471,12 +475,16 @@ exports.crearVenta = async (req, res) => {
           row.proveedor,
           row.stock
         ]);
-        await connection.query(
-          `INSERT INTO ventas_detalle
-          (venta_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked, precio_venta, precio_compra, proveedor, stock)
-          VALUES ?`,
-          [values]
-        );
+        const chunkSize = 500;
+        for (let i = 0; i < values.length; i += chunkSize) {
+          const chunk = values.slice(i, i + chunkSize);
+          await connection.query(
+            `INSERT INTO ventas_detalle
+            (venta_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked, precio_venta, precio_compra, proveedor, stock)
+            VALUES ?`,
+            [chunk]
+          );
+        }
       }
 
       await connection.commit();
@@ -604,12 +612,16 @@ exports.editarVenta = async (req, res) => {
           row.proveedor,
           row.stock
         ]);
-        await connection.query(
-          `INSERT INTO ventas_detalle
-          (venta_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked, precio_venta, precio_compra, proveedor, stock)
-          VALUES ?`,
-          [values]
-        );
+        const chunkSize = 500;
+        for (let i = 0; i < values.length; i += chunkSize) {
+          const chunk = values.slice(i, i + chunkSize);
+          await connection.query(
+            `INSERT INTO ventas_detalle
+            (venta_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked, precio_venta, precio_compra, proveedor, stock)
+            VALUES ?`,
+            [chunk]
+          );
+        }
       }
 
       await connection.commit();
@@ -773,7 +785,7 @@ exports.historialRequerimientos = async (req, res) => {
 };
 
 exports.listarRequerimientosPendientes = async (req, res) => {
-  const { q } = req.query;
+  const { q, limite = 200, pagina = 1 } = req.query;
   try {
     const connection = await pool.getConnection();
     let query = `
@@ -788,7 +800,11 @@ exports.listarRequerimientosPendientes = async (req, res) => {
       query += ' AND (d.codigo LIKE ? OR d.descripcion LIKE ?)';
       params.push(`%${q}%`, `%${q}%`);
     }
-    query += ' ORDER BY v.created_at DESC, d.id DESC';
+    const limitValue = parsePositiveInt(limite, 200);
+    const pageValue = parsePositiveInt(pagina, 1);
+    const safeLimit = Math.min(limitValue, 500);
+    const offset = (pageValue - 1) * safeLimit;
+    query += ` ORDER BY v.created_at DESC, d.id DESC LIMIT ${safeLimit} OFFSET ${offset}`;
     const [rows] = await connection.execute(query, params);
     connection.release();
     res.json(
@@ -904,7 +920,7 @@ exports.crearRequerimientoProducto = async (req, res) => {
 };
 
 exports.exportarVentas = async (req, res) => {
-  const { fecha_inicio, fecha_fin } = req.query;
+  const { fecha_inicio, fecha_fin, limite = 5000 } = req.query;
   try {
     const connection = await pool.getConnection();
     let query = `
@@ -1133,9 +1149,10 @@ exports.confirmarPicking = async (req, res) => {
       maquina.id
     ]);
 
+    const detalleTargetId = detalleId || detalle.id;
     await connection.execute(
       'UPDATE ventas_detalle SET cantidad_picked = cantidad_picked + ? WHERE id = ?',
-      [cantidadNum, detalleId]
+      [cantidadNum, detalleTargetId]
     );
 
     const [pendientes] = await connection.execute(

@@ -1,0 +1,51 @@
+.backups-container {
+  padding: 30px 20px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.backups-header h1 {
+  margin: 0 0 6px;
+  color: #2c3e50;
+}
+
+.backups-header p {
+  margin: 0 0 16px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.backups-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.backups-card {
+  background: white;
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  margin-bottom: 20px;
+}
+
+.backups-card h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: #2c3e50;
+}
+
+.backups-list {
+  display: grid;
+  gap: 8px;
+}
+
+.backup-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8f9fa;
+  border: 1px solid #eef0f2;
+  font-size: 12px;
+  color: #2c3e50;
+}

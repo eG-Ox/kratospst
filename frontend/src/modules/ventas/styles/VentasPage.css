@@ -6,6 +6,12 @@
   margin-top: 12px;
 }
 
+.table-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: center;
+}
+
 .ventas-table.compact {
   min-width: 900px;
   font-size: 12px;
@@ -331,6 +337,27 @@
 .ventas-tab.active {
   background: rgba(37, 99, 235, 0.12);
   border-color: rgba(37, 99, 235, 0.3);
+}
+.ventas-subtabs {
+  display: inline-flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ventas-subtab {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--surface-alt);
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ventas-subtab.active {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.3);
+  color: var(--dark-color);
 }
 
 .picking-sheet {

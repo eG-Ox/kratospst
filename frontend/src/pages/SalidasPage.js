@@ -1,7 +1,35 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
+import { parseQRPayload } from '../shared/utils/qr';
 import { maquinasService, movimientosService } from '../services/api';
 import '../styles/SalidasPage.css';
+
+
+const normalizarCodigo = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+
+const extraerCodigoDesdeTexto = (texto) => {
+  const raw = String(texto || '').trim();
+  if (!raw) return '';
+  const tokens = raw
+    .replace(//g, '')
+    .split(/[
+,;\/\s]+/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return tokens[0] || raw;
+};
+
+const extraerCodigoQR = (texto) => {
+  const parsed = parseQRPayload(texto);
+  if (parsed.ok && parsed.data?.codigo) {
+    return parsed.data.codigo;
+  }
+  return extraerCodigoDesdeTexto(texto);
+};
 
 const SalidasPage = ({ usuario }) => {
   const [maquinas, setMaquinas] = useState([]);
@@ -14,12 +42,29 @@ const SalidasPage = ({ usuario }) => {
   const [loading, setLoading] = useState(false);
   const [camaraActiva, setCamaraActiva] = useState(false);
   const html5QrcodeScanner = useRef(null);
+  const isNativeScannerAvailable = () =>
+    typeof window !== 'undefined' &&
+    window.Android &&
+    typeof window.Android.openQrScanner === 'function';
 
   useEffect(() => {
     cargarMaquinas();
     return () => {
       if (html5QrcodeScanner.current) {
         html5QrcodeScanner.current.clear();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const handler = (value) => {
+      if (!value) return;
+      onScanSuccess(String(value));
+    };
+    window.handleNativeQr = handler;
+    return () => {
+      if (window.handleNativeQr === handler) {
+        delete window.handleNativeQr;
       }
     };
   }, []);
@@ -34,6 +79,10 @@ const SalidasPage = ({ usuario }) => {
   };
 
   const iniciarCamara = async () => {
+    if (isNativeScannerAvailable()) {
+      window.Android.openQrScanner();
+      return;
+    }
     try {
       setCamaraActiva(true);
       html5QrcodeScanner.current = new Html5Qrcode('qr-reader-salida');
@@ -61,8 +110,9 @@ const SalidasPage = ({ usuario }) => {
   };
 
   const onScanSuccess = (decodedText) => {
-    setCodigoScaneado(decodedText);
-    buscarMaquina(decodedText);
+    const codigo = extraerCodigoQR(decodedText);
+    setCodigoScaneado(codigo);
+    buscarMaquina(codigo);
     detenerCamara();
   };
 
@@ -72,8 +122,15 @@ const SalidasPage = ({ usuario }) => {
 
   const buscarMaquina = async (codigo) => {
     try {
+      const codigoFinal = extraerCodigoQR(codigo);
+      if (!codigoFinal) {
+        setError('Codigo invalido');
+        return;
+      }
       const response = await maquinasService.getAll();
-      const maquina = response.data.find(m => m.codigo === codigo);
+      const maquina = response.data.find(
+        (m) => normalizarCodigo(m.codigo) === normalizarCodigo(codigoFinal)
+      );
       if (maquina) {
         setMaquinaSeleccionada(maquina);
         setError('');

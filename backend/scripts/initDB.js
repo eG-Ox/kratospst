@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS maquinas (
   tipo_maquina_id INT NOT NULL,
   marca VARCHAR(100) NOT NULL,
   descripcion TEXT,
+  codigo_normalizado VARCHAR(80) GENERATED ALWAYS AS (REGEXP_REPLACE(UPPER(codigo), '[^A-Z0-9]', '')) STORED,
+  descripcion_normalizada VARCHAR(255) GENERATED ALWAYS AS (REGEXP_REPLACE(UPPER(descripcion), '[^A-Z0-9]', '')) STORED,
   ubicacion_letra CHAR(1),
   ubicacion_numero INT,
   stock INT NOT NULL DEFAULT 0,
@@ -60,6 +62,8 @@ CREATE TABLE IF NOT EXISTS maquinas (
   fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (tipo_maquina_id) REFERENCES tipos_maquinas(id) ON DELETE RESTRICT,
   INDEX idx_codigo (codigo),
+  INDEX idx_codigo_normalizado (codigo_normalizado),
+  INDEX idx_desc_normalizada (descripcion_normalizada),
   INDEX idx_tipo (tipo_maquina_id)
 );
 `;
@@ -209,7 +213,24 @@ CREATE TABLE IF NOT EXISTS inventario_detalle (
   FOREIGN KEY (inventario_id) REFERENCES inventarios(id) ON DELETE CASCADE,
   FOREIGN KEY (producto_id) REFERENCES maquinas(id) ON DELETE RESTRICT,
   INDEX idx_inventario (inventario_id),
-  INDEX idx_producto (producto_id)
+  INDEX idx_producto (producto_id),
+  UNIQUE KEY uniq_inventario_producto_ubicacion (inventario_id, producto_id, ubicacion_letra, ubicacion_numero)
+);
+`;
+
+// Tabla ubicaciones por producto (stock por ubicacion)
+const crearMaquinasUbicaciones = `
+CREATE TABLE IF NOT EXISTS maquinas_ubicaciones (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  producto_id INT NOT NULL,
+  ubicacion_letra CHAR(1) NOT NULL,
+  ubicacion_numero INT NOT NULL,
+  stock INT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (producto_id) REFERENCES maquinas(id) ON DELETE CASCADE,
+  UNIQUE KEY uniq_producto_ubicacion (producto_id, ubicacion_letra, ubicacion_numero),
+  INDEX idx_producto (producto_id),
+  INDEX idx_stock (stock)
 );
 `;
 
@@ -296,7 +317,8 @@ CREATE TABLE IF NOT EXISTS ventas (
   FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE RESTRICT,
   INDEX idx_venta_usuario (usuario_id),
   INDEX idx_venta_fecha (fecha_venta),
-  INDEX idx_venta_estado (estado_envio)
+  INDEX idx_venta_estado (estado_envio),
+  INDEX idx_venta_created_at (created_at)
 );
 `;
 
@@ -317,7 +339,9 @@ CREATE TABLE IF NOT EXISTS ventas_detalle (
   stock INT NULL,
   FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
   INDEX idx_venta_detalle (venta_id),
-  INDEX idx_venta_tipo (tipo)
+  INDEX idx_venta_tipo (tipo),
+  INDEX idx_detalle_codigo (codigo),
+  INDEX idx_detalle_desc (descripcion(100))
 );
 `;
 
@@ -337,6 +361,7 @@ async function inicializarBaseDatos() {
         throw error;
       }
     }
+
 
     // Actualizar enum de roles si ya existÃ­a
     try {
@@ -437,6 +462,40 @@ async function inicializarBaseDatos() {
         throw error;
       }
     }
+
+    // Asegurar columnas normalizadas en maquinas
+    try {
+      await connection.execute(
+        "ALTER TABLE maquinas ADD COLUMN codigo_normalizado VARCHAR(80) GENERATED ALWAYS AS (REGEXP_REPLACE(UPPER(codigo), '[^A-Z0-9]', '')) STORED"
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute(
+        "ALTER TABLE maquinas ADD COLUMN descripcion_normalizada VARCHAR(255) GENERATED ALWAYS AS (REGEXP_REPLACE(UPPER(descripcion), '[^A-Z0-9]', '')) STORED"
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute('CREATE INDEX idx_codigo_normalizado ON maquinas (codigo_normalizado)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute('CREATE INDEX idx_desc_normalizada ON maquinas (descripcion_normalizada)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
     
     console.log('Creando tabla ingresos_salidas...');
     await connection.execute(crearIngresouSalidas);
@@ -468,10 +527,31 @@ async function inicializarBaseDatos() {
 
     console.log('Creando tabla ventas...');
     await connection.execute(crearVentas);
+    try {
+      await connection.execute('CREATE INDEX idx_venta_created_at ON ventas (created_at)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
     console.log('✓ Tabla ventas creada exitosamente');
 
     console.log('Creando tabla ventas_detalle...');
     await connection.execute(crearVentasDetalle);
+    try {
+      await connection.execute('CREATE INDEX idx_detalle_codigo ON ventas_detalle (codigo)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute('CREATE INDEX idx_detalle_desc ON ventas_detalle (descripcion(100))');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
 
     // Asegurar columna cantidad_picked en ventas_detalle
     try {
@@ -548,6 +628,9 @@ async function inicializarBaseDatos() {
 
     console.log('Creando tabla inventario_detalle...');
     await connection.execute(crearInventarioDetalle);
+    console.log('Creando tabla maquinas_ubicaciones...');
+    await connection.execute(crearMaquinasUbicaciones);
+    console.log('✓ Tabla maquinas_ubicaciones creada exitosamente');
     console.log('✓ Tabla inventario_detalle creada exitosamente');
 
     // Asegurar columnas de ubicacion en inventario_detalle
@@ -562,6 +645,15 @@ async function inicializarBaseDatos() {
       await connection.execute('ALTER TABLE inventario_detalle ADD COLUMN ubicacion_numero INT NULL AFTER ubicacion_letra');
     } catch (error) {
       if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute(
+        'ALTER TABLE inventario_detalle ADD UNIQUE KEY uniq_inventario_producto_ubicacion (inventario_id, producto_id, ubicacion_letra, ubicacion_numero)'
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME' && error.code !== 'ER_DUP_ENTRY') {
         throw error;
       }
     }

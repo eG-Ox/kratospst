@@ -39,9 +39,13 @@ export const marcasService = {
 
 // Servicios para Máquinas/Productos
 export const productosService = {
-  getAll: () => api.get('/productos'),
+  getAll: () =>
+    api.get('/productos', {
+      params: { _ts: Date.now() },
+      headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
+    }),
   getById: (id) => api.get(`/productos/${id}`),
-  getByCodigo: (codigo) => api.get(`/productos?codigo=${codigo}`),
+  getByCodigo: (codigo) => api.get(`/productos/codigo/${encodeURIComponent(codigo)}`),
   descargarPlantilla: () =>
     api.get('/productos/plantilla', { responseType: 'blob' }),
   exportarExcel: () =>
@@ -73,6 +77,7 @@ export const productosService = {
     });
   },
   delete: (id) => api.delete(`/productos/${id}`),
+  getUbicaciones: (id) => api.get(`/productos/${id}/ubicaciones`),
   descargarFichaTecnica: (filename) => 
     api.get(`/productos/descargar/${filename}`, { responseType: 'blob' }),
 };
@@ -80,6 +85,7 @@ export const productosService = {
 // Servicios para Movimientos (Ingresos/Salidas)
 export const movimientosService = {
   registrar: (data) => api.post('/movimientos', data),
+  registrarBatch: (items) => api.post('/movimientos/batch', { items }),
   obtener: (filtros) => api.get('/movimientos', { params: filtros }),
   obtenerPorMaquina: (maquina_id, opciones) => 
     api.get(`/movimientos/maquina/${maquina_id}`, { params: opciones }),
@@ -118,7 +124,7 @@ export const cotizacionesService = {
   crear: (data) => api.post('/cotizaciones', data),
   editar: (id, data) => api.put(`/cotizaciones/${id}`, data),
   ver: (id) => api.get(`/cotizaciones/ver/${id}`),
-  pdf: (id) => api.get(`/cotizaciones/pdf/${id}`, { responseType: 'blob' }),
+  pdf: (id) => api.get(`/cotizaciones/ver/${id}`, { responseType: 'blob' }),
   buscarProductos: (params) => api.get('/cotizaciones/api/buscar-productos', { params }),
   obtenerProducto: (id, params) => api.get(`/cotizaciones/api/producto/${id}`, { params }),
   filtrosCotizacion: (params) => api.get('/cotizaciones/api/filtros_cotizacion', { params }),
@@ -134,12 +140,19 @@ export const usuariosService = {
   actualizarPerfil: (data) => api.put('/usuarios/me', data),
 };
 
+// Backups (solo admin)
+export const backupsService = {
+  listar: () => api.get('/backups/listar'),
+  manual: () => api.post('/backups/manual')
+};
+
 // Servicios para Ventas
 export const ventasService = {
   listar: (params) => api.get('/ventas', { params }),
   obtener: (id) => api.get(`/ventas/${id}`),
   detalle: (params) => api.get('/ventas/detalle/listar', { params }),
   historialRequerimientos: (params) => api.get('/ventas/requerimientos/historial', { params }),
+  crearRequerimientoProducto: (data) => api.post('/ventas/requerimientos/crear', data),
   exportarExcel: (params) => api.get('/ventas/export', { params, responseType: 'blob' }),
   requerimientosPendientes: (params) => api.get('/ventas/requerimientos/pendientes', { params }),
   actualizarRequerimiento: (id, data) => api.patch(`/ventas/requerimientos/${id}`, data),

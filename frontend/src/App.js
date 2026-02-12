@@ -12,6 +12,7 @@ import CotizacionesPage from './modules/cotizaciones/pages/CotizacionesPage';
 import HistorialCotizacionesPage from './modules/cotizaciones/pages/HistorialCotizacionesPage';
 import ClientesPage from './modules/clientes/pages/ClientesPage';
 import UsuariosPage from './modules/usuarios/pages/UsuariosPage';
+import BackupsPage from './modules/backups/pages/BackupsPage';
 import HistorialPage from './modules/historial/pages/HistorialPage';
 import PermisosPage from './modules/permisos/pages/PermisosPage';
 import InventarioGeneralPage from './modules/inventario-general/pages/InventarioGeneralPage';
@@ -20,6 +21,7 @@ import EnviosPage from './modules/ventas/pages/EnviosPage';
 import VentasDetallePage from './modules/ventas/pages/VentasDetallePage';
 import RequerimientosPage from './modules/ventas/pages/RequerimientosPage';
 import PickingPage from './modules/picking/pages/PickingPage';
+import RotulosPage from './modules/rotulos/pages/RotulosPage';
 
 // Componentes compartidos
 import Navbar from './shared/components/Navbar';
@@ -210,6 +212,14 @@ function App() {
           }
         />
         <Route
+          path="/backups"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+              <BackupsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/permisos"
           element={
             <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
@@ -262,6 +272,14 @@ function App() {
           element={
             <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
               <PickingPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/rotulos"
+          element={
+            <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+              <RotulosPage />
             </ProtectedRoute>
           }
         />

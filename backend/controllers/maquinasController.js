@@ -255,6 +255,23 @@ exports.actualizarMaquina = async (req, res) => {
   }
 };
 
+
+const ejecutarConReintentos = async (fn, { retries = 3, baseDelayMs = 250 } = {}) => {
+  let intento = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error?.code != 'ER_LOCK_WAIT_TIMEOUT' || intento >= retries) {
+        throw error;
+      }
+      const espera = baseDelayMs * Math.pow(2, intento);
+      await new Promise((resolve) => setTimeout(resolve, espera));
+      intento += 1;
+    }
+  }
+};
+
 // Eliminar máquina
 exports.eliminarMaquina = async (req, res) => {
   try {
@@ -272,9 +289,13 @@ exports.eliminarMaquina = async (req, res) => {
     }
 
     // Desactivar máquina
-    await connection.execute(
-      'UPDATE maquinas SET activo = FALSE WHERE id = ?',
-      [req.params.id]
+    await ejecutarConReintentos(
+      () =>
+        connection.execute(
+          'UPDATE maquinas SET activo = FALSE WHERE id = ?',
+          [req.params.id]
+        ),
+      { retries: 3, baseDelayMs: 200 }
     );
     connection.release();
 

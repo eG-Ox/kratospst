@@ -121,6 +121,25 @@ exports.getMaquina = async (req, res) => {
   }
 };
 
+// Obtener ubicaciones con stock de un producto
+exports.obtenerUbicaciones = async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+    const [rows] = await connection.execute(
+      `SELECT ubicacion_letra, ubicacion_numero, stock
+       FROM maquinas_ubicaciones
+       WHERE producto_id = ? AND stock > 0
+       ORDER BY stock DESC, ubicacion_letra, ubicacion_numero`,
+      [req.params.id]
+    );
+    connection.release();
+    res.json(rows);
+  } catch (error) {
+    console.error('Error obteniendo ubicaciones:', error);
+    res.status(500).json({ error: 'Error al obtener ubicaciones' });
+  }
+};
+
 // Obtener una maquina por codigo
 exports.getMaquinaPorCodigo = async (req, res) => {
   const codigo = String(req.params.codigo || '').trim();
@@ -812,10 +831,31 @@ exports.eliminarMaquina = async (req, res) => {
       return res.status(404).json({ error: 'Máquina no encontrada' });
     }
 
-    // Eliminar máquina
-    await connection.execute(
-      'UPDATE maquinas SET activo = FALSE WHERE id = ?',
-      [req.params.id]
+    
+const ejecutarConReintentos = async (fn, { retries = 3, baseDelayMs = 250 } = {}) => {
+  let intento = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error?.code != 'ER_LOCK_WAIT_TIMEOUT' || intento >= retries) {
+        throw error;
+      }
+      const espera = baseDelayMs * Math.pow(2, intento);
+      await new Promise((resolve) => setTimeout(resolve, espera));
+      intento += 1;
+    }
+  }
+};
+
+// Eliminar máquina
+    await ejecutarConReintentos(
+      () =>
+        connection.execute(
+          'UPDATE maquinas SET activo = FALSE WHERE id = ?',
+          [req.params.id]
+        ),
+      { retries: 3, baseDelayMs: 200 }
     );
     await registrarHistorial(connection, {
       entidad: 'productos',

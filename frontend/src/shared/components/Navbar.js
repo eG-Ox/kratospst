@@ -40,14 +40,16 @@ const Navbar = ({ usuario, onLogout }) => {
         { to: '/ventas-envios', label: 'Control Envios' },
         { to: '/ventas-detalle', label: 'Detalle Ventas' },
         { to: '/ventas-requerimientos', label: 'Requerimientos' },
-        { to: '/picking', label: 'Picking' }
+        { to: '/picking', label: 'Picking' },
+        { to: '/rotulos', label: 'Rotulos' }
       ]
     },
     {
       title: 'Gestor de Cuentas',
       items: [
         { to: '/usuarios', label: usuario?.rol === 'admin' ? 'Usuarios' : 'Mi Perfil' },
-        { to: '/permisos', label: 'Permisos' }
+        { to: '/permisos', label: 'Permisos' },
+        ...(usuario?.rol === 'admin' ? [{ to: '/backups', label: 'Backups' }] : [])
       ]
     },
   ];

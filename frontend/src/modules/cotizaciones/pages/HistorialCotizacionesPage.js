@@ -83,7 +83,7 @@ const HistorialCotizacionesPage = () => {
     if (!id) return;
     try {
       const resp = await cotizacionesService.pdf(id);
-      const url = window.URL.createObjectURL(new Blob([resp.data], { type: 'application/pdf' }));
+      const url = window.URL.createObjectURL(new Blob([resp.data], { type: 'text/html' }));
       window.open(url, '_blank', 'noopener,noreferrer');
       setTimeout(() => window.URL.revokeObjectURL(url), 2000);
     } catch (err) {

@@ -167,6 +167,33 @@ exports.crearCliente = async (req, res) => {
   }
   try {
     const connection = await pool.getConnection();
+    const docValue =
+      tipo_cliente === 'juridico' ? normalizeString(ruc) : normalizeString(dni);
+    if (docValue) {
+      const [existentes] = await connection.execute(
+        'SELECT * FROM clientes WHERE dni = ? OR ruc = ? LIMIT 1',
+        [docValue, docValue]
+      );
+      if (existentes.length) {
+        const clienteExistente = existentes[0];
+        connection.release();
+        return res.status(200).json({
+          id: clienteExistente.id,
+          usuario_id: clienteExistente.usuario_id,
+          tipo_cliente: clienteExistente.tipo_cliente,
+          dni: clienteExistente.dni,
+          ruc: clienteExistente.ruc,
+          nombre: clienteExistente.nombre,
+          apellido: clienteExistente.apellido,
+          razon_social: clienteExistente.razon_social,
+          direccion: clienteExistente.direccion,
+          telefono: clienteExistente.telefono,
+          correo: clienteExistente.correo,
+          ya_existia: true
+        });
+      }
+    }
+
     const [result] = await connection.execute(
       `INSERT INTO clientes
         (usuario_id, tipo_cliente, dni, ruc, nombre, apellido, razon_social, direccion, telefono, correo)
@@ -223,7 +250,7 @@ exports.crearCliente = async (req, res) => {
   } catch (error) {
     console.error('Error creando cliente:', error);
     if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ error: 'DNI o RUC ya existe' });
+      return res.status(409).json({ error: 'DNI o RUC ya existe' });
     }
     res.status(500).json({ error: 'Error al crear cliente' });
   }

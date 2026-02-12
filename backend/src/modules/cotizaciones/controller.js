@@ -38,8 +38,9 @@ const formatDateTime = (dateValue) => {
 
 const padCorrelativo = (value) => String(value || 0).padStart(5, '0');
 
-const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, descuento, total }) => {
-  const staticBase = '/static';
+const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, descuento, total, baseUrl }) => {
+  const staticBase = `${baseUrl}/static`;
+  const logosBase = `${staticBase}/img/LOGOS%20PDF`;
   const clienteNombre = venta.cliente_nombre || '';
   const clienteApellido = venta.cliente_apellido || '';
   const clienteRazon = venta.razon_social || '';
@@ -114,7 +115,7 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
     .pdf-download-btn, .brand-toggle-btn, .pdf-print-btn { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; box-shadow: 0 3px 8px rgba(15, 23, 42, 0.25); font-size: 0.7rem; }
     .brand-toggle-btn.active { background: linear-gradient(135deg, #064e3b 0%, #065f46 100%); }
     .invoice-container { width: 100%; max-width: 210mm; margin: auto; padding: 2px; background: white; min-height: 280mm; max-height: 290mm; display: flex; flex-direction: column; position: relative; overflow: hidden; }
-    .watermark-logo { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); opacity: 0.05; z-index: 1; width: 400%; height: 250px; background-image: url('${staticBase}/img/KRATOS_LOGO.PNG'); background-size: contain; background-repeat: no-repeat; background-position: center; pointer-events: none; max-width: 100%; max-height: 100%; }
+    .watermark-logo { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); opacity: 0.05; z-index: 1; width: 400%; height: 250px; background-image: url('${staticBase}/img/KRATOS_LOGO.png'); background-size: contain; background-repeat: no-repeat; background-position: center; pointer-events: none; max-width: 100%; max-height: 100%; }
     .brands-logos-only { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; padding: 0 2px; }
     .brand-logo-color { height: 12px; object-fit: contain; }
     .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 2px solid #0f172a; background: white; position: relative; }
@@ -201,7 +202,7 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
   <div class="watermark-logo"></div>
   <div class="header">
     <div class="company-info">
-      <img src="${staticBase}/img/KRATOS_LOGO.PNG" alt="Logo" class="company-logo">
+      <img src="${staticBase}/img/KRATOS_LOGO.png" alt="Logo" class="company-logo">
       <div class="company-name">KRATOS MAQUINARIAS E.I.R.L</div>
       <div class="company-details">
         <div><strong>RUC:</strong> 20610448926</div>
@@ -218,14 +219,14 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
   </div>
 
   <div class="brands-logos-only">
-    <img src="${staticBase}/img/LOGOS PDF/FERTON.png" alt="FERTON" class="brand-logo-color">
-    <img src="${staticBase}/img/LOGOS PDF/HONDA.png" alt="HONDA" class="brand-logo-color">
-    <img src="${staticBase}/img/LOGOS PDF/KARCHER.png" alt="KARCHER" class="brand-logo-color">
-    <img src="${staticBase}/img/LOGOS PDF/big red.png" alt="Big Red" class="brand-logo-color">
-    <img src="${staticBase}/img/LOGOS PDF/campbell.png" alt="Campbell" class="brand-logo-color">
-    <img src="${staticBase}/img/LOGOS PDF/khomander.png" alt="Khomander" class="brand-logo-color">
-    <img src="${staticBase}/img/LOGOS PDF/bonelly.png" alt="Bonelly" class="brand-logo-color">
-    <img src="${staticBase}/img/LOGOS PDF/WARC.png" alt="WARC" class="brand-logo-color">
+    <img src="${logosBase}/FERTON.png" alt="FERTON" class="brand-logo-color">
+    <img src="${logosBase}/HONDA.png" alt="HONDA" class="brand-logo-color">
+    <img src="${logosBase}/KARCHER.png" alt="KARCHER" class="brand-logo-color">
+    <img src="${logosBase}/big%20red.png" alt="Big Red" class="brand-logo-color">
+    <img src="${logosBase}/campbell.png" alt="Campbell" class="brand-logo-color">
+    <img src="${logosBase}/khomander.png" alt="Khomander" class="brand-logo-color">
+    <img src="${logosBase}/bonelly.png" alt="Bonelly" class="brand-logo-color">
+    <img src="${logosBase}/WARC.png" alt="WARC" class="brand-logo-color">
   </div>
 
   <div class="info-section">
@@ -265,28 +266,28 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
         <div class="payment-title">Informacion de Pago</div>
         <div class="banks-grid">
           <div class="bank-section bcp">
-            <img src="${staticBase}/img/LOGOS PDF/BCP.png" alt="BCP" class="bank-logo">
+            <img src="${logosBase}/BCP.png" alt="BCP" class="bank-logo">
             <div class="bank-info">
               <span class="bank-cta">Soles: 192-99279-14057</span>
               <span class="bank-cci">CCI:  00219200992791405730</span>
             </div>
           </div>
           <div class="bank-section bbva">
-            <img src="${staticBase}/img/LOGOS PDF/BBVA.png" alt="BBVA" class="bank-logo">
+            <img src="${logosBase}/BBVA.png" alt="BBVA" class="bank-logo">
             <div class="bank-info">
               <span class="bank-cta">Soles: 001101640200783975</span>
               <span class="bank-cci">CCI: -</span>
             </div>
           </div>
           <div class="bank-section bcp-soles">
-            <img src="${staticBase}/img/LOGOS PDF/BCP.png" alt="BCP" class="bank-logo">
+            <img src="${logosBase}/BCP.png" alt="BCP" class="bank-logo">
             <div class="bank-info">
               <span class="bank-cta">Dolares: 193-99525-55166</span>
               <span class="bank-cci">CCI:  00219300995255516611</span>
             </div>
           </div>
           <div class="bank-section yape">
-            <img src="${staticBase}/img/LOGOS PDF/yape.png" alt="YAPE" class="bank-logo">
+            <img src="${logosBase}/yape.png" alt="YAPE" class="bank-logo">
             <div class="bank-info">
               <span class="bank-cta">933 912 288</span>
               <span class="bank-cci">A NOMBRE KRATOS MAQUINARIAS</span>
@@ -804,13 +805,15 @@ exports.verCotizacion = async (req, res) => {
     }, 0);
     const total = Math.max(subtotalRegular - descuento, 0);
 
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
     const html = buildHtmlCotizacion({
       venta,
       detalles,
       esCotizacion,
       subtotalRegular,
       descuento,
-      total
+      total,
+      baseUrl
     });
     res.send(html);
   } catch (error) {
@@ -863,13 +866,15 @@ exports.pdfCotizacion = async (req, res) => {
     }, 0);
     const total = Math.max(subtotalRegular - descuento, 0);
 
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
     const html = buildHtmlCotizacion({
       venta,
       detalles,
       esCotizacion,
       subtotalRegular,
       descuento,
-      total
+      total,
+      baseUrl
     });
     res.send(html);
   } catch (error) {
