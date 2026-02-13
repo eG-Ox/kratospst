@@ -33,11 +33,13 @@ const GestorInventarioPage = () => {
   const [numeroGuia, setNumeroGuia] = useState('');
   const [dniCliente, setDniCliente] = useState('');
   const [error, setError] = useState('');
+  const [warning, setWarning] = useState('');
   const [success, setSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [lectorSoportado, setLectorSoportado] = useState(true);
   const [ultimoScan, setUltimoScan] = useState(null);
+  const PRODUCTOS_PAGE_SIZE = 2000;
 
   const isNativeScannerAvailable = () =>
     typeof window !== 'undefined' &&
@@ -59,12 +61,14 @@ const GestorInventarioPage = () => {
     try {
       setLoading(true);
       const [respProductos, respTipos, respMarcas] = await Promise.all([
-        productosService.getAll(),
+        productosService.getAll({ page: 1, limit: PRODUCTOS_PAGE_SIZE }),
         tiposMaquinasService.getAll(),
         marcasService.getAll()
       ]);
       if (!mountedRef.current) return;
-      setProductos(respProductos.data);
+      const data = respProductos?.data;
+      const items = Array.isArray(data) ? data : data?.items || [];
+      setProductos(items);
       setTipos(respTipos.data);
       setMarcas(respMarcas.data || []);
     } catch (err) {
@@ -77,7 +81,7 @@ const GestorInventarioPage = () => {
         setLoading(false);
       }
     }
-  }, [mountedRef]);
+  }, [mountedRef, PRODUCTOS_PAGE_SIZE]);
 
   useEffect(() => {
     cargarDatos();
@@ -99,6 +103,18 @@ const GestorInventarioPage = () => {
     return marcasMap[code] || value || '';
   }, [marcasMap]);
 
+  const esCodigoMarca = (value) => /^M\d{4}$/.test(normalizarMarcaCodigo(value));
+
+  const validarMarcaRegistrada = useCallback((value) => {
+    const code = normalizarMarcaCodigo(value);
+    if (code && esCodigoMarca(code) && !Object.prototype.hasOwnProperty.call(marcasMap, code)) {
+      setWarning(`Marca no registrada: ${code}. El producto se guardará con ese código.`);
+      return false;
+    }
+    setWarning('');
+    return true;
+  }, [marcasMap]);
+
   const totalUnidades = useMemo(
     () => itemsBatch.reduce((sum, item) => sum + (Number(item.cantidad) || 0), 0),
     [itemsBatch]
@@ -115,11 +131,14 @@ const GestorInventarioPage = () => {
     const parsed = parseQRPayload(textoQR);
     if (!parsed.ok) {
       setError(parsed.error || 'QR invalido');
+      setWarning('');
       return null;
     }
     if (parsed.partial) {
+      setWarning('');
       return { codigo: parsed.data.codigo, partial: true };
     }
+    validarMarcaRegistrada(parsed.data?.marca);
     const marcaNormalizada = resolverMarcaCodigo(parsed.data?.marca);
     if (modo === 'ingreso') {
       return {
@@ -133,7 +152,7 @@ const GestorInventarioPage = () => {
       marca: marcaNormalizada,
       marca_codigo: parsed.data?.marca
     };
-  }, [modo, resolverMarcaCodigo]);
+  }, [modo, resolverMarcaCodigo, validarMarcaRegistrada]);
 
   const productosMap = useMemo(() => {
     const map = new Map();
@@ -763,6 +782,7 @@ const GestorInventarioPage = () => {
       </div>
 
       {error && <div className="error-message">{error}</div>}
+      {warning && <div className="warning-message">{warning}</div>}
       {success && <div className="success-message">{success}</div>}
 
       {loading ? (

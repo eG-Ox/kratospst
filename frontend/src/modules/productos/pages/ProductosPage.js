@@ -65,6 +65,27 @@ const ProductosPage = () => {
     return Array.from(marcasSet).sort((a, b) => a.localeCompare(b));
   }, [marcas]);
 
+  const normalizarMarcaCodigo = (value) => String(value || '').trim().toUpperCase();
+
+  const marcasMap = useMemo(() => {
+    const map = new Map();
+    (marcas || []).forEach((marcaItem) => {
+      const code = normalizarMarcaCodigo(marcaItem.codigo);
+      if (code) {
+        map.set(code, String(marcaItem.nombre || '').trim());
+      }
+    });
+    return map;
+  }, [marcas]);
+
+  const resolverMarcaNombre = (value) => {
+    const code = normalizarMarcaCodigo(value);
+    if (code && marcasMap.has(code)) {
+      return marcasMap.get(code);
+    }
+    return value || '';
+  };
+
   const cargarCatalogos = useCallback(async () => {
     try {
       const [respTipos, respMarcas] = await Promise.all([
@@ -236,14 +257,20 @@ const ProductosPage = () => {
   const handleDescargarFicha = async (filename) => {
     try {
       const response = await productosService.descargarFichaTecnica(filename);
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      const url = window.URL.createObjectURL(
+        new Blob([response.data], { type: 'application/pdf' })
+      );
+      const newTab = window.open(url, '_blank', 'noopener,noreferrer');
+      if (!newTab) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
+      setTimeout(() => window.URL.revokeObjectURL(url), 5000);
     } catch (error) {
       console.error('Error descargando ficha técnica:', error);
       setError('Error al descargar ficha técnica');
@@ -506,7 +533,7 @@ const ProductosPage = () => {
                   <tr key={prod.id}>
                     <td>{prod.codigo}</td>
                     <td>{prod.tipo_nombre}</td>
-                    <td>{prod.marca}</td>
+                    <td>{resolverMarcaNombre(prod.marca)}</td>
                     <td>{prod.descripcion || '-'}</td>
                     <td>{formatearUbicacion(prod)}</td>
                     <td className={Number(prod.stock || 0) <= 0 ? 'low-stock' : ''}>{prod.stock}</td>

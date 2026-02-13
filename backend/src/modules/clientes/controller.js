@@ -54,35 +54,40 @@ exports.getClientes = async (req, res) => {
 
   try {
     const connection = await pool.getConnection();
-    let query = 'SELECT * FROM clientes WHERE 1=1';
+    let query = 'SELECT c.* FROM clientes c';
     const params = [];
 
     if (req.usuario?.rol !== 'admin') {
-      query += ' AND usuario_id = ?';
-      params.push(req.usuario.id);
+      query += ' LEFT JOIN clientes_usuarios cu ON cu.cliente_id = c.id';
     }
 
+    query += ' WHERE 1=1';
     if (tipo) {
-      query += ' AND tipo_cliente = ?';
+      query += ' AND c.tipo_cliente = ?';
       params.push(tipo);
     }
 
     if (documento) {
-      query += ' AND (dni = ? OR ruc = ?)';
+      query += ' AND (c.dni = ? OR c.ruc = ?)';
       params.push(documento, documento);
     }
 
     if (search) {
-      query += ' AND (nombre LIKE ? OR apellido LIKE ? OR razon_social LIKE ?)';
+      query += ' AND (c.nombre LIKE ? OR c.apellido LIKE ? OR c.razon_social LIKE ?)';
       const term = `%${search}%`;
       params.push(term, term, term);
+    }
+
+    if (req.usuario?.rol !== 'admin') {
+      query += ' AND (c.usuario_id = ? OR cu.usuario_id = ?)';
+      params.push(req.usuario.id, req.usuario.id);
     }
 
     const limiteValue = parsePositiveInt(req.query.limite, 5000);
     const paginaValue = parsePositiveInt(req.query.pagina, 1);
     const safeLimit = Math.min(limiteValue, 20000);
     const offset = (paginaValue - 1) * safeLimit;
-    query += ` ORDER BY fecha_creacion DESC LIMIT ${offset}, ${safeLimit}`;
+    query += ` ORDER BY c.fecha_creacion DESC LIMIT ${offset}, ${safeLimit}`;
     const [rows] = await connection.execute(query, params);
     connection.release();
 
@@ -103,8 +108,17 @@ exports.getCliente = async (req, res) => {
       return res.status(404).json({ error: 'Cliente no encontrado' });
     }
 
-    if (req.usuario?.rol !== 'admin' && rows[0].usuario_id !== req.usuario.id) {
-      return res.status(403).json({ error: 'Acceso denegado' });
+    if (req.usuario?.rol !== 'admin') {
+      const cliente = rows[0];
+      const connection2 = await pool.getConnection();
+      const [rel] = await connection2.execute(
+        'SELECT id FROM clientes_usuarios WHERE cliente_id = ? AND usuario_id = ?',
+        [cliente.id, req.usuario.id]
+      );
+      connection2.release();
+      if (cliente.usuario_id !== req.usuario.id && !rel.length) {
+        return res.status(403).json({ error: 'Acceso denegado' });
+      }
     }
 
     res.json(buildClienteFromRow(rows[0]));
@@ -176,6 +190,20 @@ exports.crearCliente = async (req, res) => {
       );
       if (existentes.length) {
         const clienteExistente = existentes[0];
+        let vendedorNombre = null;
+        if (clienteExistente.usuario_id) {
+          const [usuarios] = await connection.execute(
+            'SELECT nombre FROM usuarios WHERE id = ?',
+            [clienteExistente.usuario_id]
+          );
+          vendedorNombre = usuarios?.[0]?.nombre || null;
+        }
+        if (req.usuario?.id) {
+          await connection.execute(
+            'INSERT IGNORE INTO clientes_usuarios (cliente_id, usuario_id) VALUES (?, ?)',
+            [clienteExistente.id, req.usuario.id]
+          );
+        }
         connection.release();
         return res.status(200).json({
           id: clienteExistente.id,
@@ -189,7 +217,9 @@ exports.crearCliente = async (req, res) => {
           direccion: clienteExistente.direccion,
           telefono: clienteExistente.telefono,
           correo: clienteExistente.correo,
-          ya_existia: true
+          ya_existia: true,
+          compartido: true,
+          vendedor_nombre: vendedorNombre
         });
       }
     }
@@ -211,6 +241,13 @@ exports.crearCliente = async (req, res) => {
         normalizeString(correo) || null
       ]
     );
+    if (req.usuario?.id) {
+      await connection.execute(
+        'INSERT IGNORE INTO clientes_usuarios (cliente_id, usuario_id) VALUES (?, ?)',
+        [result.insertId, req.usuario.id]
+      );
+    }
+
     await registrarHistorial(connection, {
       entidad: 'clientes',
       entidad_id: result.insertId,
@@ -310,9 +347,15 @@ exports.actualizarCliente = async (req, res) => {
       return res.status(404).json({ error: 'Cliente no encontrado' });
     }
 
-    if (req.usuario?.rol !== 'admin' && existing[0].usuario_id !== req.usuario.id) {
-      connection.release();
-      return res.status(403).json({ error: 'Acceso denegado' });
+    if (req.usuario?.rol !== 'admin') {
+      const [rel] = await connection.execute(
+        'SELECT id FROM clientes_usuarios WHERE cliente_id = ? AND usuario_id = ?',
+        [req.params.id, req.usuario.id]
+      );
+      if (existing[0].usuario_id !== req.usuario.id && !rel.length) {
+        connection.release();
+        return res.status(403).json({ error: 'Acceso denegado' });
+      }
     }
 
     await connection.execute(
@@ -387,9 +430,13 @@ exports.eliminarCliente = async (req, res) => {
       connection.release();
       return res.status(404).json({ error: 'Cliente no encontrado' });
     }
-    if (req.usuario?.rol !== 'admin' && existing[0].usuario_id !== req.usuario.id) {
+    if (req.usuario?.rol !== 'admin') {
+      await connection.execute(
+        'DELETE FROM clientes_usuarios WHERE cliente_id = ? AND usuario_id = ?',
+        [req.params.id, req.usuario.id]
+      );
       connection.release();
-      return res.status(403).json({ error: 'Acceso denegado' });
+      return res.json({ mensaje: 'Cliente removido de tu cartera' });
     }
     const [result] = await connection.execute('DELETE FROM clientes WHERE id = ?', [req.params.id]);
     await registrarHistorial(connection, {

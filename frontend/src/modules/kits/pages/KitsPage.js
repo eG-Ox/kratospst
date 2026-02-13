@@ -10,23 +10,19 @@ const emptyKit = {
   productos: []
 };
 
-const createItem = () => ({
-  producto_id: '',
-  cantidad: 1,
-  precio_unitario: 0,
-  precio_final: 0,
-  subtotal: 0
-});
-
 const KitsPage = () => {
   const mountedRef = useMountedRef();
   const [kits, setKits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [mostrarModal, setMostrarModal] = useState(false);
+  const [mostrarModalProductos, setMostrarModalProductos] = useState(false);
   const [editandoKit, setEditandoKit] = useState(null);
   const [kitForm, setKitForm] = useState(emptyKit);
-  const [productos, setProductos] = useState([]);
+  const [productosMap, setProductosMap] = useState({});
+  const [busquedaProducto, setBusquedaProducto] = useState('');
+  const [resultadosProducto, setResultadosProducto] = useState([]);
+  const [productosDraft, setProductosDraft] = useState([]);
 
   const cargarKits = useCallback(async () => {
     try {
@@ -47,25 +43,75 @@ const KitsPage = () => {
     }
   }, [mountedRef]);
 
-  const cargarProductos = useCallback(async () => {
+  const buscarProductos = useCallback(async (q) => {
     try {
-      const resp = await cotizacionesService.productosCotizacion({});
-      if (mountedRef.current) {
-        setProductos(resp.data || []);
-      }
+      const resp = await cotizacionesService.buscarProductos({ q, limit: 20 });
+      if (!mountedRef.current) return;
+      setResultadosProducto(resp.data || []);
     } catch (err) {
-      console.error('Error cargando productos:', err);
+      console.error('Error buscando productos:', err);
     }
   }, [mountedRef]);
 
+  const cargarProductosPorIds = useCallback(async (ids = []) => {
+    const unicos = Array.from(new Set(ids.filter(Boolean)));
+    if (!unicos.length) return;
+    const faltantes = unicos.filter((id) => !productosMap[id]);
+    if (!faltantes.length) return;
+    try {
+      const respuestas = await Promise.all(
+        faltantes.map((id) => cotizacionesService.obtenerProducto(id, {}))
+      );
+      const nuevos = {};
+      respuestas.forEach((resp) => {
+        const prod = resp?.data;
+        if (prod?.id) {
+          nuevos[prod.id] = prod;
+        }
+      });
+      if (!mountedRef.current) return;
+      setProductosMap((prev) => ({ ...prev, ...nuevos }));
+      setKitForm((prev) => ({
+        ...prev,
+        productos: prev.productos.map((item) => {
+          const info = nuevos[item.producto_id];
+          if (!info) return item;
+          return {
+            ...item,
+            codigo: item.codigo || info.codigo,
+            descripcion: item.descripcion || info.descripcion,
+            marca: item.marca || info.marca
+          };
+        })
+      }));
+    } catch (err) {
+      console.error('Error cargando productos por ids:', err);
+    }
+  }, [mountedRef, productosMap]);
+
   useEffect(() => {
     cargarKits();
-    cargarProductos();
-  }, [cargarKits, cargarProductos]);
+  }, [cargarKits]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      const term = busquedaProducto.trim();
+      if (term.length < 1) {
+        setResultadosProducto([]);
+        return;
+      }
+      buscarProductos(term);
+    }, 350);
+    return () => clearTimeout(timeout);
+  }, [busquedaProducto, buscarProductos]);
 
   const resetForm = () => {
     setKitForm(emptyKit);
     setEditandoKit(null);
+    setBusquedaProducto('');
+    setResultadosProducto([]);
+    setProductosDraft([]);
+    setMostrarModalProductos(false);
   };
 
   const abrirModal = () => {
@@ -91,6 +137,8 @@ const KitsPage = () => {
           subtotal: Number(item.subtotal || 0)
         }))
       });
+      const ids = (data.productos || []).map((item) => item.producto_id);
+      cargarProductosPorIds(ids);
       setMostrarModal(true);
     } catch (err) {
       console.error('Error obteniendo kit:', err);
@@ -127,46 +175,94 @@ const KitsPage = () => {
     }
   };
 
-  const handleAgregarItem = () => {
-    setKitForm((prev) => ({ ...prev, productos: [...prev.productos, createItem()] }));
+  const seleccionarProductoBusqueda = (producto) => {
+    if (!producto?.id) return;
+    const precio = Number(producto.precio_venta || 0);
+    setProductosMap((prev) => ({
+      ...prev,
+      [producto.id]: producto
+    }));
+    setProductosDraft((prev) => {
+      const idx = prev.findIndex(
+        (item) => String(item.producto_id) === String(producto.id)
+      );
+      if (idx === -1) {
+        return [
+          ...prev,
+          {
+            producto_id: producto.id,
+            codigo: producto.codigo,
+            descripcion: producto.descripcion,
+            marca: producto.marca,
+            cantidad: 1,
+            precio_unitario: precio,
+            precio_final: precio,
+            subtotal: precio
+          }
+        ];
+      }
+      const next = [...prev];
+      const cantidadNueva = Number(next[idx].cantidad || 0) + 1;
+      const precioFinal = Number(next[idx].precio_final || precio);
+      next[idx] = {
+        ...next[idx],
+        cantidad: cantidadNueva,
+        subtotal: cantidadNueva * precioFinal
+      };
+      return next;
+    });
+    setBusquedaProducto('');
+    setResultadosProducto([]);
   };
 
-  const handleQuitarItem = (index) => {
+  const actualizarDraftItem = (index, changes) => {
+    setProductosDraft((prev) => {
+      const next = [...prev];
+      const current = next[index];
+      if (!current) return prev;
+      const cantidad = Number((changes.cantidad ?? current.cantidad) || 0);
+      const precioUnitario = Number((changes.precio_unitario ?? current.precio_unitario) || 0);
+      const precioFinal = Number((changes.precio_final ?? current.precio_final) || 0);
+      next[index] = {
+        ...current,
+        ...changes,
+        cantidad,
+        precio_unitario: precioUnitario,
+        precio_final: precioFinal,
+        subtotal: cantidad * precioFinal
+      };
+      return next;
+    });
+  };
+
+  const quitarDraftItem = (index) => {
+    setProductosDraft((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const abrirModalProductos = () => {
+    setProductosDraft(kitForm.productos.map((item) => ({ ...item })));
+    setBusquedaProducto('');
+    setResultadosProducto([]);
+    setMostrarModalProductos(true);
+  };
+
+  const guardarProductos = () => {
     setKitForm((prev) => ({
       ...prev,
-      productos: prev.productos.filter((_, idx) => idx !== index)
+      productos: productosDraft.map((item) => {
+        const cantidad = Number(item.cantidad || 0);
+        const precioUnitario = Number(item.precio_unitario || 0);
+        const precioFinal = Number(item.precio_final || 0);
+        return {
+          ...item,
+          cantidad,
+          precio_unitario: precioUnitario,
+          precio_final: precioFinal,
+          subtotal: cantidad * precioFinal
+        };
+      })
     }));
-  };
-
-  const actualizarItem = (index, changes) => {
-    setKitForm((prev) => {
-      const productos = prev.productos.map((item, idx) =>
-        idx === index ? { ...item, ...changes } : item
-      );
-      return { ...prev, productos };
-    });
-  };
-
-  const handleProductoChange = (index, productoId) => {
-    const producto = productos.find((item) => String(item.id) === String(productoId));
-    if (!producto) {
-      actualizarItem(index, { producto_id: productoId });
-      return;
-    }
-    const precio = Number(producto.precio_venta || 0);
-    actualizarItem(index, {
-      producto_id: productoId,
-      precio_unitario: precio,
-      precio_final: precio,
-      subtotal: precio * Number(kitForm.productos[index].cantidad || 0)
-    });
-  };
-
-  const recalcularItem = (index, next) => {
-    const cantidad = Number(next.cantidad || kitForm.productos[index].cantidad || 0);
-    const precioFinal = Number(next.precio_final || kitForm.productos[index].precio_final || 0);
-    const subtotal = cantidad * precioFinal;
-    actualizarItem(index, { ...next, subtotal });
+    setMostrarModalProductos(false);
   };
 
   const precioTotal = useMemo(
@@ -314,84 +410,42 @@ const KitsPage = () => {
                 <div className="kit-items">
                   <div className="kit-items-header">
                     <h3>Productos del kit</h3>
-                    <button type="button" className="btn-secondary" onClick={handleAgregarItem}>
-                      + Agregar
+                    <button type="button" className="btn-secondary" onClick={abrirModalProductos}>
+                      Seleccionar productos
                     </button>
                   </div>
                   {kitForm.productos.length === 0 ? (
                     <p className="empty-message">Agrega productos al kit.</p>
                   ) : (
                     <div className="kit-items-list">
-                      {kitForm.productos.map((item, index) => (
-                        <div className="kit-item" key={`${item.producto_id}-${index}`}>
-                          <div className="kit-item-row">
-                            <div className="form-group">
-                              <label>Producto</label>
-                              <select
-                                value={item.producto_id}
-                                onChange={(e) =>
-                                  handleProductoChange(index, e.target.value)
-                                }
-                              >
-                                <option value="">Selecciona...</option>
-                                {productos.map((prod) => (
-                                  <option key={prod.id} value={prod.id}>
-                                    {prod.codigo} - {prod.descripcion}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="form-group">
-                              <label>Cantidad</label>
-                              <input
-                                type="number"
-                                min="1"
-                                value={item.cantidad}
-                                onChange={(e) =>
-                                  recalcularItem(index, { cantidad: e.target.value })
-                                }
-                              />
-                            </div>
-                          </div>
-                          <div className="kit-item-row">
-                            <div className="form-group">
-                              <label>Precio unitario</label>
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={item.precio_unitario}
-                                onChange={(e) =>
-                                  actualizarItem(index, {
-                                    precio_unitario: Number(e.target.value || 0)
-                                  })
-                                }
-                              />
-                            </div>
-                            <div className="form-group">
-                              <label>Precio final</label>
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={item.precio_final}
-                                onChange={(e) =>
-                                  recalcularItem(index, { precio_final: e.target.value })
-                                }
-                              />
-                            </div>
-                            <div className="form-group">
-                              <label>Subtotal</label>
-                              <input type="number" value={item.subtotal} readOnly />
-                            </div>
-                            <button
-                              type="button"
-                              className="btn-delete"
-                              onClick={() => handleQuitarItem(index)}
-                            >
-                              Quitar
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                      <table className="kits-table compact">
+                        <thead>
+                          <tr>
+                            <th>Producto</th>
+                            <th>Cantidad</th>
+                            <th>Precio Final</th>
+                            <th>Subtotal</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {kitForm.productos.map((item, index) => (
+                            <tr key={`${item.producto_id}-${index}`}>
+                              <td>
+                                {(item.codigo || item.descripcion)
+                                  ? `${item.codigo || ''} ${item.descripcion || ''}`.trim()
+                                  : productosMap[item.producto_id]
+                                    ? `${productosMap[item.producto_id].codigo || ''} ${productosMap[item.producto_id].descripcion || ''}`.trim()
+                                    : item.producto_id
+                                      ? `ID ${item.producto_id}`
+                                      : ''}
+                              </td>
+                              <td>{item.cantidad}</td>
+                              <td>{Number(item.precio_final || 0).toFixed(2)}</td>
+                              <td>{Number(item.subtotal || 0).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>
@@ -413,6 +467,129 @@ const KitsPage = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {mostrarModalProductos && (
+        <div className="modal-overlay">
+          <div className="modal-content modal-content--wide">
+            <div className="modal-header">
+              <h2>Seleccionar productos</h2>
+              <button
+                type="button"
+                className="btn-icon"
+                onClick={() => setMostrarModalProductos(false)}
+              >
+                X
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="kit-products-toolbar">
+                <input
+                  type="text"
+                  placeholder="Buscar por codigo, descripcion o marca"
+                  value={busquedaProducto}
+                  onChange={(e) => setBusquedaProducto(e.target.value)}
+                />
+                <div className="kit-products-actions">
+                  <button type="button" className="btn-secondary" onClick={() => setMostrarModalProductos(false)}>
+                    Cancelar
+                  </button>
+                  <button type="button" className="btn-primary" onClick={guardarProductos}>
+                    Guardar productos
+                  </button>
+                </div>
+              </div>
+              <div className="resultados">
+                {resultadosProducto.map((prod) => (
+                  <button
+                    type="button"
+                    className="resultado-item"
+                    key={`kit-search-${prod.id}-${prod.codigo}`}
+                    onClick={() => seleccionarProductoBusqueda(prod)}
+                  >
+                    {prod.codigo} - {prod.descripcion} ({prod.marca})
+                  </button>
+                ))}
+              </div>
+
+              <div className="kit-products-table">
+                {productosDraft.length === 0 ? (
+                  <p className="empty-message">No hay productos agregados.</p>
+                ) : (
+                  <table className="kits-table compact">
+                    <thead>
+                      <tr>
+                        <th>Producto</th>
+                        <th>Cantidad</th>
+                        <th>Precio Unit.</th>
+                        <th>Precio Final</th>
+                        <th>Subtotal</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {productosDraft.map((item, index) => (
+                        <tr key={`${item.producto_id}-${index}`}>
+                          <td>
+                            {(item.codigo || item.descripcion)
+                              ? `${item.codigo || ''} ${item.descripcion || ''}`.trim()
+                              : productosMap[item.producto_id]
+                                ? `${productosMap[item.producto_id].codigo || ''} ${productosMap[item.producto_id].descripcion || ''}`.trim()
+                                : item.producto_id
+                                  ? `ID ${item.producto_id}`
+                                  : ''}
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              min="1"
+                              value={item.cantidad}
+                              onChange={(e) =>
+                                actualizarDraftItem(index, { cantidad: e.target.value })
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={item.precio_unitario}
+                              onChange={(e) =>
+                                actualizarDraftItem(index, { precio_unitario: e.target.value })
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={item.precio_final}
+                              onChange={(e) =>
+                                actualizarDraftItem(index, { precio_final: e.target.value })
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input type="number" value={item.subtotal} readOnly />
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="btn-delete"
+                              onClick={() => quitarDraftItem(index)}
+                            >
+                              Quitar
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

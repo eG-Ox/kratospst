@@ -16,9 +16,11 @@ const IngresosPage = ({ usuario }) => {
   const [motivo, setMotivo] = useState('Compra a proveedor');
   const [numeroGuia, setNumeroGuia] = useState('');
   const [error, setError] = useState('');
+  const [warning, setWarning] = useState('');
   const [success, setSuccess] = useState('');
   const [cameraActive, setCameraActive] = useState(false);
   const [qrData, setQrData] = useState(null);
+  const PRODUCTOS_PAGE_SIZE = 2000;
 
   const isNativeScannerAvailable = () =>
     typeof window !== 'undefined' &&
@@ -57,12 +59,14 @@ const IngresosPage = ({ usuario }) => {
     try {
       setLoading(true);
       const [respProductos, respTipos, respMarcas] = await Promise.all([
-        productosService.getAll(),
+        productosService.getAll({ page: 1, limit: PRODUCTOS_PAGE_SIZE }),
         tiposMaquinasService.getAll(),
         marcasService.getAll()
       ]);
       if (!mountedRef.current) return;
-      setProductos(respProductos.data);
+      const data = respProductos?.data;
+      const items = Array.isArray(data) ? data : data?.items || [];
+      setProductos(items);
       setTipos(respTipos.data);
       setMarcas(respMarcas.data || []);
     } catch (err) {
@@ -100,6 +104,58 @@ const IngresosPage = ({ usuario }) => {
     return marcasMap[code] || value || '';
   };
 
+  const productosMap = useMemo(() => {
+    const map = new Map();
+    (productos || []).forEach((prod) => {
+      const key = normalizarCodigo(prod.codigo);
+      if (key) {
+        map.set(key, prod);
+      }
+    });
+    return map;
+  }, [productos]);
+
+  const buscarProductoRemoto = async (codigoValue) => {
+    try {
+      const resp = await productosService.getByCodigo(codigoValue);
+      const producto = resp?.data;
+      if (producto?.id) {
+        setProductos((prev) => {
+          const existe = prev.some(
+            (item) => normalizarCodigo(item.codigo) === normalizarCodigo(producto.codigo)
+          );
+          return existe ? prev : [...prev, producto];
+        });
+        return producto;
+      }
+    } catch (err) {
+      if (err?.response?.status !== 404) {
+        console.error('Error buscando producto por codigo:', err);
+      }
+    }
+    return null;
+  };
+
+  const getProductoPorCodigo = async (codigoValue) => {
+    const key = normalizarCodigo(codigoValue);
+    if (!key) return null;
+    const local = productosMap.get(key);
+    if (local) return local;
+    return await buscarProductoRemoto(codigoValue);
+  };
+
+  const esCodigoMarca = (value) => /^M\d{4}$/.test(normalizarMarcaCodigo(value));
+
+  const validarMarcaRegistrada = (value) => {
+    const code = normalizarMarcaCodigo(value);
+    if (code && esCodigoMarca(code) && !Object.prototype.hasOwnProperty.call(marcasMap, code)) {
+      setWarning(`Marca no registrada: ${code}. El producto se guardará con ese código.`);
+      return false;
+    }
+    setWarning('');
+    return true;
+  };
+
   const extraerCodigoDesdeTexto = (texto) => {
     const raw = String(texto || '').trim();
     if (!raw) return '';
@@ -115,12 +171,15 @@ const IngresosPage = ({ usuario }) => {
     const parsed = parseQRPayload(textoQR);
     if (!parsed.ok) {
       setQrData(null);
+      setWarning('');
       return { codigo: extraerCodigoDesdeTexto(textoQR), partial: true };
     }
     if (parsed.partial) {
       setQrData(null);
+      setWarning('');
       return { codigo: parsed.data.codigo, partial: true };
     }
+    validarMarcaRegistrada(parsed.data?.marca);
     const marcaNormalizada = resolverMarcaCodigo(parsed.data?.marca);
     const resolved = {
       ...parsed.data,
@@ -227,9 +286,7 @@ const IngresosPage = ({ usuario }) => {
       }
 
       if (parsed && !parsed.partial) {
-        const productoExistente = productos.find(
-          (p) => normalizarCodigo(p.codigo) === normalizarCodigo(parsed.codigo)
-        );
+        const productoExistente = await getProductoPorCodigo(parsed.codigo);
         if (!productoExistente) {
           const confirmar = window.confirm(
             `?Crear nuevo producto?
@@ -267,9 +324,7 @@ Ubicaci?n: ${parsed.ubicacion}`
         return;
       }
 
-      const producto = productos.find(
-        (p) => normalizarCodigo(p.codigo) === normalizarCodigo(codigoDetectado)
-      );
+      const producto = await getProductoPorCodigo(codigoDetectado);
       if (producto) {
         if (mountedRef.current) {
           setCodigo(codigoDetectado);
@@ -356,7 +411,7 @@ Ubicaci?n: ${parsed.ubicacion}`
     }
 
     try {
-      const producto = productos.find(p => p.codigo === codigo);
+      const producto = await getProductoPorCodigo(codigo);
       if (!producto) {
         setError('Producto no encontrado');
         return;
@@ -401,6 +456,7 @@ Ubicaci?n: ${parsed.ubicacion}`
       </div>
 
       {error && <div className="error-message">{error}</div>}
+      {warning && <div className="warning-message">{warning}</div>}
       {success && <div className="success-message">{success}</div>}
 
       <div className="movimientos-content">

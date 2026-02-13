@@ -32,6 +32,7 @@ const CotizacionesPage = () => {
   const [consultaMensaje, setConsultaMensaje] = useState('');
   const [consultando, setConsultando] = useState(false);
   const [error, setError] = useState('');
+  const [warning, setWarning] = useState('');
   const [notas, setNotas] = useState('');
   const [tipos, setTipos] = useState([]);
   const [tipoId, setTipoId] = useState('');
@@ -368,6 +369,7 @@ const CotizacionesPage = () => {
 
   const guardarCotizacion = async () => {
     setError('');
+    setWarning('');
     if (!items.length) {
       setError('Agrega productos antes de guardar.');
       return;
@@ -475,8 +477,15 @@ const CotizacionesPage = () => {
     try {
       const resp = await clientesService.create(clienteForm);
       if (!mountedRef.current) return;
+      const data = resp.data || {};
+      if (data?.ya_existia) {
+        const vendedor = data?.vendedor_nombre ? `por ${data.vendedor_nombre}` : 'por otro vendedor';
+        setWarning(`Cliente ya registrado ${vendedor}. Se compartió contigo.`);
+      } else {
+        setWarning('');
+      }
       await cargarClientes();
-      setClienteId(resp.data?.id || '');
+      setClienteId(data?.id || '');
       setMostrarModalCliente(false);
       resetClienteForm();
     } catch (err) {
@@ -516,6 +525,7 @@ const CotizacionesPage = () => {
       </div>
 
       {error && <div className="error-message">{error}</div>}
+      {warning && <div className="warning-message">{warning}</div>}
 
       <div className="cotizacion-grid">
         <div className="cotizacion-left">

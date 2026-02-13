@@ -377,6 +377,21 @@ CREATE TABLE IF NOT EXISTS clientes (
 );
 `;
 
+// Relacion cliente-usuarios (cartera compartida)
+const crearClientesUsuarios = `
+CREATE TABLE IF NOT EXISTS clientes_usuarios (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  cliente_id INT NOT NULL,
+  usuario_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_cliente_usuario (cliente_id, usuario_id),
+  INDEX idx_cliente (cliente_id),
+  INDEX idx_usuario (usuario_id),
+  FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE CASCADE,
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
+);
+`;
+
 // Tabla ventas
 const crearVentas = `
 CREATE TABLE IF NOT EXISTS ventas (
@@ -636,6 +651,10 @@ async function inicializarBaseDatos() {
     console.log('Creando tabla clientes...');
     await connection.execute(crearClientes);
     console.log('✓ Tabla clientes creada exitosamente');
+
+    console.log('Creando tabla clientes_usuarios...');
+    await connection.execute(crearClientesUsuarios);
+    console.log('✓ Tabla clientes_usuarios creada exitosamente');
 
     console.log('Creando tabla ventas...');
     await connection.execute(crearVentas);

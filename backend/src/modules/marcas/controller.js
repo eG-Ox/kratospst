@@ -4,6 +4,11 @@ const { registrarHistorial } = require('../../shared/utils/historial');
 const normalizarCodigo = (value) => String(value || '').trim().toUpperCase();
 const normalizarNombre = (value) => String(value || '').trim();
 
+const parsePositiveInt = (value, fallback) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
 const generarCodigoMarca = async (connection) => {
   const [rows] = await connection.execute(
     "SELECT MAX(CAST(SUBSTRING(codigo, 2) AS UNSIGNED)) AS max_codigo FROM marcas WHERE codigo REGEXP '^M[0-9]+'"
@@ -14,9 +19,25 @@ const generarCodigoMarca = async (connection) => {
 
 exports.listarMarcas = async (req, res) => {
   try {
+    const { page, limit } = req.query;
+    const hasPagination = page !== undefined || limit !== undefined;
+    const orderBy = `ORDER BY CAST(SUBSTRING(codigo, 2) AS UNSIGNED) DESC, codigo DESC`;
+
     const connection = await pool.getConnection();
+    if (hasPagination) {
+      const limitValue = parsePositiveInt(limit, 50);
+      const pageValue = parsePositiveInt(page, 1);
+      const offset = (pageValue - 1) * limitValue;
+      const [rows] = await connection.execute(
+        `SELECT * FROM marcas ${orderBy} LIMIT ${offset}, ${limitValue}`
+      );
+      const [totalRows] = await connection.execute('SELECT COUNT(*) as total FROM marcas');
+      const total = totalRows?.[0]?.total || 0;
+      connection.release();
+      return res.json({ items: rows, total, page: pageValue, limit: limitValue });
+    }
     const [rows] = await connection.execute(
-      'SELECT * FROM marcas ORDER BY nombre'
+      `SELECT * FROM marcas ${orderBy}`
     );
     connection.release();
     res.json(rows);
@@ -62,6 +83,10 @@ exports.crearMarca = async (req, res) => {
       'INSERT INTO marcas (codigo, nombre, descripcion) VALUES (?, ?, ?)',
       [codigo, nombre, descripcion || null]
     );
+    await connection.execute(
+      'UPDATE maquinas SET marca = ? WHERE UPPER(marca) = ?',
+      [nombre, codigo]
+    );
     await registrarHistorial(connection, {
       entidad: 'marcas',
       entidad_id: result.insertId,
@@ -106,6 +131,10 @@ exports.actualizarMarca = async (req, res) => {
     await connection.execute(
       'UPDATE marcas SET codigo = ?, nombre = ?, descripcion = ? WHERE id = ?',
       [codigo, nombre, descripcion || null, req.params.id]
+    );
+    await connection.execute(
+      'UPDATE maquinas SET marca = ? WHERE UPPER(marca) = ?',
+      [nombre, codigo]
     );
     await registrarHistorial(connection, {
       entidad: 'marcas',

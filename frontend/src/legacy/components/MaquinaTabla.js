@@ -29,13 +29,20 @@ const MaquinaTabla = ({ maquinas, onEdit, onDelete, onRefresh }) => {
   const descargarPDF = async (filename) => {
     try {
       const response = await maquinasService.descargarFichaTecnica(filename);
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      link.parentElement.removeChild(link);
+      const url = window.URL.createObjectURL(
+        new Blob([response.data], { type: 'application/pdf' })
+      );
+      const newTab = window.open(url, '_blank', 'noopener,noreferrer');
+      if (!newTab) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        link.parentElement.removeChild(link);
+      }
+      setTimeout(() => window.URL.revokeObjectURL(url), 5000);
     } catch (error) {
       console.error('Error descargando archivo:', error);
     }

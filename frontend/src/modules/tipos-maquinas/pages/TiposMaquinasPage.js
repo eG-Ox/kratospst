@@ -12,6 +12,8 @@ const TiposMaquinasPage = () => {
   const [mostrarModalMarca, setMostrarModalMarca] = useState(false);
   const [editandoMarca, setEditandoMarca] = useState(null);
   const [vista, setVista] = useState('tipos');
+  const [marcasPage, setMarcasPage] = useState(1);
+  const [marcasTotal, setMarcasTotal] = useState(0);
   const [formData, setFormData] = useState({
     nombre: '',
     descripcion: ''
@@ -21,10 +23,11 @@ const TiposMaquinasPage = () => {
     nombre: '',
     descripcion: ''
   });
+  const MARCAS_PAGE_SIZE = 30;
 
   useEffect(() => {
     cargarTipos();
-    cargarMarcas();
+    cargarMarcas(1);
   }, []);
 
   const cargarTipos = async () => {
@@ -41,15 +44,26 @@ const TiposMaquinasPage = () => {
     }
   };
 
-  const cargarMarcas = async () => {
+  const cargarMarcas = async (pageValue = marcasPage) => {
     try {
-      const response = await marcasService.getAll();
-      setMarcas(response.data || []);
+      const response = await marcasService.getAll({ page: pageValue, limit: MARCAS_PAGE_SIZE });
+      const data = response.data;
+      const items = Array.isArray(data) ? data : data.items || [];
+      const totalValue = Array.isArray(data) ? items.length : data.total ?? items.length;
+      setMarcas(items);
+      setMarcasTotal(totalValue);
+      setMarcasPage(pageValue);
     } catch (err) {
       console.error('Error cargando marcas:', err);
       setError('Error al cargar marcas');
     }
   };
+
+  useEffect(() => {
+    if (vista === 'marcas') {
+      cargarMarcas(marcasPage);
+    }
+  }, [vista, marcasPage]);
 
   const resetForm = () => {
     setFormData({ nombre: '', descripcion: '' });
@@ -105,16 +119,17 @@ const TiposMaquinasPage = () => {
     try {
       if (editandoMarca) {
         await marcasService.update(editandoMarca.id, marcaForm);
+        await cargarMarcas(marcasPage);
       } else {
         const payload = {
           nombre: marcaForm.nombre,
           descripcion: marcaForm.descripcion
         };
         await marcasService.create(payload);
+        await cargarMarcas(1);
       }
       resetMarcaForm();
       setMostrarModalMarca(false);
-      await cargarMarcas();
     } catch (err) {
       console.error('Error guardando marca:', err);
       setError(err.response?.data?.error || 'Error al guardar marca');
@@ -156,7 +171,11 @@ const TiposMaquinasPage = () => {
     if (window.confirm('?Estas seguro de que deseas eliminar esta marca?')) {
       try {
         await marcasService.delete(id);
-        await cargarMarcas();
+        if (marcas.length === 1 && marcasPage > 1) {
+          await cargarMarcas(marcasPage - 1);
+        } else {
+          await cargarMarcas(marcasPage);
+        }
       } catch (err) {
         console.error('Error eliminando marca:', err);
         setError('Error al eliminar marca');
@@ -313,6 +332,33 @@ const TiposMaquinasPage = () => {
               </table>
             ) : (
               <p className="empty-message">No hay marcas registradas</p>
+            )}
+            {marcasTotal > MARCAS_PAGE_SIZE && (
+              <div className="pagination">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={marcasPage <= 1}
+                  onClick={() => setMarcasPage((prev) => Math.max(1, prev - 1))}
+                >
+                  Anterior
+                </button>
+                <span className="pagination-info">
+                  Pagina {marcasPage} de {Math.max(1, Math.ceil(marcasTotal / MARCAS_PAGE_SIZE))}
+                </span>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={marcasPage >= Math.max(1, Math.ceil(marcasTotal / MARCAS_PAGE_SIZE))}
+                  onClick={() =>
+                    setMarcasPage((prev) =>
+                      Math.min(Math.max(1, Math.ceil(marcasTotal / MARCAS_PAGE_SIZE)), prev + 1)
+                    )
+                  }
+                >
+                  Siguiente
+                </button>
+              </div>
             )}
           </div>
           )}

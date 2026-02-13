@@ -34,6 +34,7 @@ const InventarioGeneralPage = () => {
   const [faseConteo, setFaseConteo] = useState('zona');
   const [ultimoScanOk, setUltimoScanOk] = useState(null);
   const [ultimoScanTexto, setUltimoScanTexto] = useState('');
+  const PRODUCTOS_PAGE_SIZE = 2000;
 
   const isNativeScannerAvailable = () =>
     typeof window !== 'undefined' &&
@@ -66,13 +67,15 @@ const InventarioGeneralPage = () => {
 
   const cargarProductos = useCallback(async () => {
     try {
-      const resp = await productosService.getAll();
-      setProductos(resp.data || []);
+      const resp = await productosService.getAll({ page: 1, limit: PRODUCTOS_PAGE_SIZE });
+      const data = resp?.data;
+      const items = Array.isArray(data) ? data : data?.items || [];
+      setProductos(items);
     } catch (err) {
       console.error('Error cargando productos:', err);
       setError('Error al cargar productos');
     }
-  }, []);
+  }, [PRODUCTOS_PAGE_SIZE]);
 
   const buscarProductoRemoto = useCallback(async (codigoValue) => {
     try {

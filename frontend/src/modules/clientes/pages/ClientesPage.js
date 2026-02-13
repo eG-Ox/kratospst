@@ -20,6 +20,7 @@ const ClientesPage = () => {
   const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [warning, setWarning] = useState('');
   const [mostrarModal, setMostrarModal] = useState(false);
   const [editandoCliente, setEditandoCliente] = useState(null);
   const [formData, setFormData] = useState(emptyForm);
@@ -145,12 +146,18 @@ const ClientesPage = () => {
   const handleGuardar = async (e) => {
     e.preventDefault();
     setError('');
+    setWarning('');
 
     try {
       if (editandoCliente) {
         await clientesService.update(editandoCliente.id, formData);
       } else {
-        await clientesService.create(formData);
+        const resp = await clientesService.create(formData);
+        const data = resp?.data || {};
+        if (data?.ya_existia) {
+          const vendedor = data?.vendedor_nombre ? `por ${data.vendedor_nombre}` : 'por otro vendedor';
+          setWarning(`Cliente ya registrado ${vendedor}. Se compartió contigo.`);
+        }
       }
       if (mountedRef.current) {
         setMostrarModal(false);
@@ -225,6 +232,7 @@ const ClientesPage = () => {
       </div>
 
       {error && <div className="error-message">{error}</div>}
+      {warning && <div className="warning-message">{warning}</div>}
 
       {loading ? (
         <div className="loading">Cargando clientes...</div>

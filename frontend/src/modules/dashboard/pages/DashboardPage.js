@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState, useEffect } from 'react';
-import { movimientosService, productosService, ventasService } from '../../../core/services/apiServices';
+import { marcasService, movimientosService, productosService, ventasService } from '../../../core/services/apiServices';
 import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/DashboardPage.css';
 
@@ -9,6 +9,7 @@ const DashboardPage = ({ usuario }) => {
   const [ultimosMovimientos, setUltimosMovimientos] = useState([]);
   const [ventas, setVentas] = useState([]);
   const [productos, setProductos] = useState([]);
+  const [marcas, setMarcas] = useState([]);
   const [tab, setTab] = useState('resumen');
   const [filtroVentas, setFiltroVentas] = useState('');
   const [fechaDesde, setFechaDesde] = useState('');
@@ -35,6 +36,9 @@ const DashboardPage = ({ usuario }) => {
       const respProductos = await productosService.getAll();
       if (!mountedRef.current) return;
       setProductos(respProductos.data || []);
+      const respMarcas = await marcasService.getAll();
+      if (!mountedRef.current) return;
+      setMarcas(respMarcas.data || []);
       setError('');
     } catch (error) {
       console.error('Error cargando dashboard:', error);
@@ -157,6 +161,29 @@ const DashboardPage = ({ usuario }) => {
   const productosBajoStock = useMemo(() => {
     return (productos || []).filter((p) => Number(p.stock || 0) <= stockMinimo);
   }, [productos, stockMinimo]);
+
+  const marcasCodigos = useMemo(() => {
+    const set = new Set();
+    (marcas || []).forEach((marca) => {
+      const code = String(marca.codigo || '').trim().toUpperCase();
+      if (code) {
+        set.add(code);
+      }
+    });
+    return set;
+  }, [marcas]);
+
+  const productosSinMarcaRegistrada = useMemo(() => {
+    return (productos || []).filter((p) => {
+      const marcaValue = String(p.marca || '').trim();
+      if (!marcaValue) return true;
+      const marcaCodigo = marcaValue.toUpperCase();
+      if (/^M\d{4}$/.test(marcaCodigo)) {
+        return !marcasCodigos.has(marcaCodigo);
+      }
+      return false;
+    });
+  }, [productos, marcasCodigos]);
 
   const ventasFiltradas = useMemo(() => {
     if (!filtroVentas.trim()) return ventasFiltradasPorFecha;
@@ -319,6 +346,13 @@ const DashboardPage = ({ usuario }) => {
               </div>
             </div>
             <div className="stat-card">
+              <div className="stat-icon">🏷️</div>
+              <div className="stat-content">
+                <h3>Productos sin marca registrada</h3>
+                <p className="stat-number">{productosSinMarcaRegistrada.length}</p>
+              </div>
+            </div>
+            <div className="stat-card">
               <div className="stat-icon">💸</div>
               <div className="stat-content">
                 <h3>Total Ventas</h3>
@@ -353,6 +387,31 @@ const DashboardPage = ({ usuario }) => {
                     </table>
                   ) : (
                     <p className="empty-message">Sin alertas de stock.</p>
+                  )}
+                </div>
+                <div className="dashboard-panel">
+                  <h2>Productos sin marca registrada</h2>
+                  {productosSinMarcaRegistrada.length > 0 ? (
+                    <table className="movements-table">
+                      <thead>
+                        <tr>
+                          <th>Codigo</th>
+                          <th>Producto</th>
+                          <th>Marca</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {productosSinMarcaRegistrada.slice(0, 20).map((prod) => (
+                          <tr key={`sin-marca-${prod.id}`}>
+                            <td>{prod.codigo}</td>
+                            <td>{prod.descripcion}</td>
+                            <td className="stock-alert">{prod.marca || 'Sin marca'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p className="empty-message">Todo ok con marcas registradas.</p>
                   )}
                 </div>
                 <div className="dashboard-panel">

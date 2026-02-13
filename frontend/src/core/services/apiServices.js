@@ -30,7 +30,7 @@ export const tiposMaquinasService = {
 
 // Servicios para Marcas
 export const marcasService = {
-  getAll: () => api.get('/marcas'),
+  getAll: (params = {}) => api.get('/marcas', { params }),
   getById: (id) => api.get(`/marcas/${id}`),
   create: (data) => api.post('/marcas', data),
   update: (id, data) => api.put(`/marcas/${id}`, data),

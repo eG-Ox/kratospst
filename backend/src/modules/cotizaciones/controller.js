@@ -36,7 +36,7 @@ const formatDateTime = (dateValue) => {
   return `${day}/${month}/${year} ${hours}:${minutes}`;
 };
 
-const padCorrelativo = (value) => String(value || 0).padStart(5, '0');
+const padCorrelativo = (value) => String(value || 0);
 
 const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, descuento, total, baseUrl }) => {
   const staticBase = `${baseUrl}/static`;
@@ -359,14 +359,16 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
       const finalImgHeight = imgHeight;
       pdf.addImage(imgData, 'PNG', xOffset, yOffset, finalImgWidth, finalImgHeight);
       const clienteNombre = '${escapeHtml(clienteDisplay)}'.trim();
-      const numeroDoc = '${escapeHtml(venta.serie || '')}-${correlativo}';
+      const serie = ('${escapeHtml(venta.serie || 'COT')}' || 'COT').toLowerCase();
+      const numeroDoc = serie + '-' + '${correlativo}';
       const clienteLimpio = clienteNombre
-        .replace(/[^a-zA-Z0-9\\s]/g, '')
-        .replace(/\\s+/g, '_')
-        .toUpperCase();
+        .replace(/[^a-zA-Z0-9\\s-]/g, '')
+        .replace(/\\s+/g, ' ')
+        .trim()
+        .toLowerCase();
       const filename = clienteLimpio
-        ? clienteLimpio + '_' + numeroDoc + '.pdf'
-        : 'COTIZACION_' + numeroDoc + '.pdf';
+        ? clienteLimpio + ' - ' + numeroDoc + '.pdf'
+        : numeroDoc + '.pdf';
       pdf.save(filename);
       controlButtons.style.display = '';
       button.textContent = '📄 Guardar como PDF';
@@ -415,7 +417,9 @@ const getNextSerieCorrelativo = async (connection, serie) => {
     [serie]
   );
   const max = rows[0]?.max_correlativo || 0;
-  return { serie, correlativo: Number(max) + 1 };
+  const start = 3550;
+  const next = max >= start ? Number(max) + 1 : start;
+  return { serie, correlativo: next };
 };
 
 const normalizarProductos = (body) => {
@@ -636,8 +640,10 @@ exports.crearCotizacion = async (req, res) => {
     return res.status(400).json({ error: 'Debe agregar productos a la cotizacion' });
   }
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
     const { serie, correlativo } = await getNextSerieCorrelativo(connection, 'COT');
     const { descuento, total } = calcularTotales(items);
 
@@ -683,11 +689,19 @@ exports.crearCotizacion = async (req, res) => {
       despues: { id: ventaId, total, descuento, cliente_id: cliente_id || null, items }
     });
 
+    await connection.commit();
     connection.release();
+    connection = null;
 
     res.status(201).json({ id: ventaId, serie, correlativo });
   } catch (error) {
     console.error('Error creando cotizacion:', error);
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (_) {}
+      connection.release();
+    }
     res.status(500).json({ error: 'Error al crear cotizacion' });
   }
 };
@@ -699,15 +713,18 @@ exports.editarCotizacion = async (req, res) => {
     return res.status(400).json({ error: 'Debe agregar productos a la cotizacion' });
   }
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [prevCot] = await connection.execute('SELECT * FROM cotizaciones WHERE id = ?', [
       req.params.id
     ]);
     if (!prevCot.length) {
       connection.release();
+      connection = null;
       return res.status(404).json({ error: 'Cotizacion no encontrada' });
     }
+    await connection.beginTransaction();
     const [prevDetalles] = await connection.execute(
       'SELECT * FROM detalle_cotizacion WHERE cotizacion_id = ?',
       [req.params.id]
@@ -753,10 +770,18 @@ exports.editarCotizacion = async (req, res) => {
       despues: { cotizacion: { ...prevCot[0], cliente_id: cliente_id || null, total, descuento, nota: notas || null }, detalles: items }
     });
 
+    await connection.commit();
     connection.release();
+    connection = null;
     res.json({ id: req.params.id });
   } catch (error) {
     console.error('Error editando cotizacion:', error);
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (_) {}
+      connection.release();
+    }
     res.status(500).json({ error: 'Error al editar cotizacion' });
   }
 };
