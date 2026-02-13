@@ -1,6 +1,6 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { clientesService, cotizacionesService, kitsService, usuariosService, ventasService } from '../../../core/services/apiServices';
+import { clientesService, cotizacionesService, kitsService, productosService, usuariosService, ventasService } from '../../../core/services/apiServices';
 import '../styles/VentasPage.css';
 
 const getToday = () => new Date().toISOString().slice(0, 10);
@@ -11,6 +11,14 @@ const normalizarClaveLocal = (value) =>
   String(value || '')
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '');
+
+const buildMatchKey = (item) => {
+  if (!item) return '';
+  const productoId = item.producto_id ?? item.productoId ?? null;
+  if (productoId) return `PID:${productoId}`;
+  const key = normalizarClaveLocal(item.codigo || item.descripcion);
+  return key ? `KEY:${key}` : '';
+};
 
 const agencias = ['SHALOM', 'MARVISUR', 'OLVA', 'OTROS', 'TIENDA'];
 
@@ -243,7 +251,8 @@ const VentasStepProductos = ({
   setRequerimientos,
   setRequerimiento,
   requerimiento,
-  sugerenciaRequerimiento
+  sugerenciaRequerimiento,
+  ajustarCantidadProductoStock
 }) => (
   <div className="ventas-step-panel">
     <div className="ventas-tab-buttons">
@@ -349,16 +358,12 @@ const VentasStepProductos = ({
                     <td>{item.descripcion}</td>
                     <td>{item.stock === null ? '-' : item.stock}</td>
                     <td>
-                      <input
-                        type="number"
-                        min="1"
-                        value={item.cantidad}
-                        onChange={(e) =>
-                          actualizarItem(setProductos, item.id, {
-                            cantidad: Number(e.target.value || 1)
-                          })
-                        }
-                      />
+                        <input
+                          type="number"
+                          min="1"
+                          value={item.cantidad}
+                          onChange={(e) => ajustarCantidadProductoStock(item.id, e.target.value)}
+                        />
                     </td>
                     <td>
                       <input
@@ -438,6 +443,7 @@ const VentasStepProductos = ({
                     onClick={() => {
                       setRequerimiento((prev) => ({
                         ...prev,
+                        productoId: producto.id,
                         codigo: producto.codigo || '',
                         descripcion: producto.descripcion || producto.codigo || prev.descripcion,
                         marca: producto.marca || '',
@@ -479,7 +485,11 @@ const VentasStepProductos = ({
               type="text"
               value={requerimiento.descripcion}
               onChange={(e) =>
-                setRequerimiento((prev) => ({ ...prev, descripcion: e.target.value }))
+                setRequerimiento((prev) => ({
+                  ...prev,
+                  productoId: null,
+                  descripcion: e.target.value
+                }))
               }
             />
             {requerimiento.codigo && (
@@ -636,7 +646,8 @@ const VentasStepRegalos = ({
   actualizarItem,
   quitarItem,
   formData,
-  setFormData
+  setFormData,
+  ajustarCantidadRegaloStock
 }) => (
   <div className="ventas-step-panel">
     <div className="ventas-split">
@@ -723,16 +734,12 @@ const VentasStepRegalos = ({
                     <td>{item.descripcion}</td>
                     <td>{item.stock === null ? '-' : item.stock}</td>
                     <td>
-                      <input
-                        type="number"
-                        min="1"
-                        value={item.cantidad}
-                        onChange={(e) =>
-                          actualizarItem(setRegalos, item.id, {
-                            cantidad: Number(e.target.value || 1)
-                          })
-                        }
-                      />
+                        <input
+                          type="number"
+                          min="1"
+                          value={item.cantidad}
+                          onChange={(e) => ajustarCantidadRegaloStock(item.id, e.target.value)}
+                        />
                     </td>
                     <td>
                       <input
@@ -799,6 +806,7 @@ const VentasStepRegalos = ({
                     onClick={() => {
                       setRegaloRequerimiento((prev) => ({
                         ...prev,
+                        productoId: producto.id,
                         codigo: producto.codigo || '',
                         descripcion: producto.descripcion || producto.codigo || prev.descripcion,
                         marca: producto.marca || '',
@@ -840,7 +848,11 @@ const VentasStepRegalos = ({
               type="text"
               value={regaloRequerimiento.descripcion}
               onChange={(e) =>
-                setRegaloRequerimiento((prev) => ({ ...prev, descripcion: e.target.value }))
+                setRegaloRequerimiento((prev) => ({
+                  ...prev,
+                  productoId: null,
+                  descripcion: e.target.value
+                }))
               }
             />
             {regaloRequerimiento.codigo && (
@@ -970,6 +982,7 @@ const VentasPage = () => {
   const mountedRef = useRef(true);
   const ventasLoadingRef = useRef(false);
   const ventasPaginaRef = useRef(1);
+  const ventasRequestRef = useRef(0);
   const [ventas, setVentas] = useState([]);
   const [ventasPagina, setVentasPagina] = useState(1);
   const [ventasHasMore, setVentasHasMore] = useState(true);
@@ -1031,6 +1044,7 @@ const VentasPage = () => {
   const [regaloRequerimientos, setRegaloRequerimientos] = useState([]);
 
   const [requerimiento, setRequerimiento] = useState({
+    productoId: null,
     codigo: '',
     descripcion: '',
     marca: '',
@@ -1040,6 +1054,7 @@ const VentasPage = () => {
   });
 
   const [regaloRequerimiento, setRegaloRequerimiento] = useState({
+    productoId: null,
     codigo: '',
     descripcion: '',
     marca: '',
@@ -1105,15 +1120,16 @@ const VentasPage = () => {
   }, [modalOpen]);
 
   const cargarVentas = useCallback(async (append = false) => {
+    if (append && ventasLoadingRef.current) return;
+    const requestId = ++ventasRequestRef.current;
     try {
-      if (ventasLoadingRef.current) return;
       ventasLoadingRef.current = true;
       setVentasLoading(true);
       const limite = 200;
       const pagina = append ? ventasPaginaRef.current + 1 : 1;
       const resp = await ventasService.listar({ limite, pagina });
       const data = resp.data || [];
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || requestId !== ventasRequestRef.current) return;
       if (append) {
         setVentas((prev) => [...prev, ...data]);
         setVentasPagina(pagina);
@@ -1127,7 +1143,7 @@ const VentasPage = () => {
     } catch (err) {
       console.error('Error cargando ventas:', err);
     } finally {
-      if (mountedRef.current) {
+      if (mountedRef.current && requestId === ventasRequestRef.current) {
         ventasLoadingRef.current = false;
         setVentasLoading(false);
       }
@@ -1317,6 +1333,119 @@ const VentasPage = () => {
     return stockRaw === null ? null : Number(stockRaw || 0);
   };
 
+  const ajustarCantidadProductoStock = (itemId, rawCantidad) => {
+    const desired = Math.max(1, Number(rawCantidad || 1));
+    const current = productos.find((item) => item.id === itemId);
+    if (!current) return;
+    const stockRaw = getStock(current);
+    const stock = stockRaw === null ? 0 : Math.max(0, Number(stockRaw || 0));
+    const qtyStock = stock > 0 ? Math.min(stock, desired) : 0;
+    const qtyReq = Math.max(desired - qtyStock, 0);
+
+    setProductos((prev) => {
+      const next = prev
+        .map((item) => (item.id === itemId ? { ...item, cantidad: qtyStock } : item))
+        .filter((item) => !(item.id === itemId && qtyStock <= 0));
+      return next;
+    });
+
+    setRequerimientos((prev) => {
+      const matchKey = buildMatchKey({ producto_id: current.producto_id ?? current.id, codigo: current.codigo, descripcion: current.descripcion });
+      const idx = prev.findIndex((item) => buildMatchKey(item) === matchKey);
+      if (qtyReq <= 0) {
+        if (idx === -1) return prev;
+        const next = [...prev];
+        next.splice(idx, 1);
+        return next;
+      }
+      const base = idx >= 0 ? prev[idx] : {};
+      const nuevo = {
+        ...base,
+        id: base.id || genId(),
+        tipo: 'compra',
+        producto_id: current.producto_id ?? current.id ?? base.producto_id ?? null,
+        codigo: current.codigo || base.codigo || '',
+        descripcion: current.descripcion || base.descripcion || '',
+        marca: current.marca || base.marca || '',
+        stock: stockRaw,
+        cantidad: qtyReq,
+        precioCompra: base.precioCompra ?? Number(current.precioCompra || current.precio_compra || 0),
+        precioVenta: base.precioVenta ?? Number(current.precioVenta || current.precio_venta || 0),
+        proveedor: base.proveedor || ''
+      };
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = nuevo;
+        return next;
+      }
+      return [...prev, nuevo];
+    });
+
+    if (qtyReq > 0) {
+      setAvisoStock(
+        `Stock insuficiente: ${current.codigo || current.descripcion}. ${qtyStock} en tienda y ${qtyReq} a requerimiento.`
+      );
+    } else {
+      setAvisoStock('');
+    }
+  };
+
+  const ajustarCantidadRegaloStock = (itemId, rawCantidad) => {
+    const desired = Math.max(1, Number(rawCantidad || 1));
+    const current = regalos.find((item) => item.id === itemId);
+    if (!current) return;
+    const stockRaw = getStock(current);
+    const stock = stockRaw === null ? 0 : Math.max(0, Number(stockRaw || 0));
+    const qtyStock = stock > 0 ? Math.min(stock, desired) : 0;
+    const qtyReq = Math.max(desired - qtyStock, 0);
+
+    setRegalos((prev) => {
+      const next = prev
+        .map((item) => (item.id === itemId ? { ...item, cantidad: qtyStock } : item))
+        .filter((item) => !(item.id === itemId && qtyStock <= 0));
+      return next;
+    });
+
+    setRegaloRequerimientos((prev) => {
+      const matchKey = buildMatchKey({ producto_id: current.producto_id ?? current.id, codigo: current.codigo, descripcion: current.descripcion });
+      const idx = prev.findIndex((item) => buildMatchKey(item) === matchKey);
+      if (qtyReq <= 0) {
+        if (idx === -1) return prev;
+        const next = [...prev];
+        next.splice(idx, 1);
+        return next;
+      }
+      const base = idx >= 0 ? prev[idx] : {};
+      const nuevo = {
+        ...base,
+        id: base.id || genId(),
+        tipo: 'compra',
+        producto_id: current.producto_id ?? current.id ?? base.producto_id ?? null,
+        codigo: current.codigo || base.codigo || '',
+        descripcion: current.descripcion || base.descripcion || '',
+        marca: current.marca || base.marca || '',
+        stock: stockRaw,
+        cantidad: qtyReq,
+        precioCompra: base.precioCompra ?? Number(current.precioCompra || current.precio_compra || 0),
+        proveedor: base.proveedor || ''
+      };
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = nuevo;
+        return next;
+      }
+      return [...prev, nuevo];
+    });
+
+    if (qtyReq > 0) {
+      setAvisoStock(
+        `Stock insuficiente: ${current.codigo || current.descripcion}. ${qtyStock} en tienda y ${qtyReq} a requerimiento.`
+      );
+    } else {
+      setAvisoStock('');
+    }
+  };
+
   const mapKitItemToProducto = (item) => ({
     id: genId(),
     tipo: 'stock',
@@ -1476,6 +1605,83 @@ const VentasPage = () => {
         return;
       }
     }
+    let productoMatch = null;
+    if (codigo) {
+      try {
+        if (requerimiento.productoId) {
+          const resp = await productosService.getById(requerimiento.productoId);
+          productoMatch = resp?.data || null;
+        } else {
+          const resp = await productosService.getByCodigo(codigo);
+          productoMatch = resp?.data || null;
+        }
+      } catch (_) {
+        productoMatch = null;
+      }
+    }
+
+    if (productoMatch) {
+      const stockRaw = getStock(productoMatch);
+      const stock = stockRaw === null ? 0 : Math.max(0, Number(stockRaw || 0));
+      const desiredQty = Math.max(1, Number(requerimiento.cantidad || 1));
+      const qtyStock = stock > 0 ? Math.min(stock, desiredQty) : 0;
+      const qtyReq = Math.max(desiredQty - qtyStock, 0);
+      const baseItem = {
+        id: genId(),
+        producto_id: productoMatch.id,
+        codigo: productoMatch.codigo || codigo,
+        descripcion: productoMatch.descripcion || descripcion || codigo,
+        marca: productoMatch.marca || requerimiento.marca || '',
+        stock: stockRaw,
+        proveedor: requerimiento.proveedor.trim()
+      };
+
+      if (qtyStock > 0) {
+        setProductos((prev) => [
+          ...prev,
+          {
+            ...baseItem,
+            tipo: 'stock',
+            cantidad: qtyStock,
+            precioVenta: Number(productoMatch.precio_venta || 0),
+            precioCompra: Number(productoMatch.precio_compra || 0)
+          }
+        ]);
+      }
+      if (qtyReq > 0) {
+        setRequerimientos((prev) => [
+          ...prev,
+          {
+            ...baseItem,
+            tipo: 'compra',
+            cantidad: qtyReq,
+            precioVenta: Number(productoMatch.precio_venta || 0),
+            precioCompra: Number(requerimiento.precioCompra || 0)
+          }
+        ]);
+      }
+      if (qtyReq > 0 && qtyStock > 0) {
+        setAvisoStock(
+          `Stock insuficiente: ${productoMatch.codigo || productoMatch.descripcion}. ${qtyStock} en tienda y ${qtyReq} a requerimiento.`
+        );
+      } else if (qtyReq > 0) {
+        setAvisoStock('Producto sin stock enviado a requerimiento de compra.');
+      } else {
+        setAvisoStock('');
+      }
+      setRequerimiento({
+        productoId: null,
+        codigo: '',
+        descripcion: '',
+        marca: '',
+        proveedor: '',
+        cantidad: 1,
+        precioCompra: ''
+      });
+      setBusquedaRequerimiento('');
+      setResultadosRequerimiento([]);
+      return;
+    }
     try {
       const resp = await ventasService.crearRequerimientoProducto({
         descripcion,
@@ -1510,6 +1716,7 @@ const VentasPage = () => {
       return;
     }
     setRequerimiento({
+      productoId: null,
       codigo: '',
       descripcion: '',
       marca: '',
@@ -1576,6 +1783,81 @@ const VentasPage = () => {
         return;
       }
     }
+    let productoMatch = null;
+    if (codigo) {
+      try {
+        if (regaloRequerimiento.productoId) {
+          const resp = await productosService.getById(regaloRequerimiento.productoId);
+          productoMatch = resp?.data || null;
+        } else {
+          const resp = await productosService.getByCodigo(codigo);
+          productoMatch = resp?.data || null;
+        }
+      } catch (_) {
+        productoMatch = null;
+      }
+    }
+
+    if (productoMatch) {
+      const stockRaw = getStock(productoMatch);
+      const stock = stockRaw === null ? 0 : Math.max(0, Number(stockRaw || 0));
+      const desiredQty = Math.max(1, Number(regaloRequerimiento.cantidad || 1));
+      const qtyStock = stock > 0 ? Math.min(stock, desiredQty) : 0;
+      const qtyReq = Math.max(desiredQty - qtyStock, 0);
+      const baseItem = {
+        id: genId(),
+        producto_id: productoMatch.id,
+        codigo: productoMatch.codigo || codigo,
+        descripcion: productoMatch.descripcion || descripcion || codigo,
+        marca: productoMatch.marca || regaloRequerimiento.marca || '',
+        stock: stockRaw,
+        proveedor: regaloRequerimiento.proveedor.trim()
+      };
+
+      if (qtyStock > 0) {
+        setRegalos((prev) => [
+          ...prev,
+          {
+            ...baseItem,
+            tipo: 'stock',
+            cantidad: qtyStock,
+            precioCompra: Number(productoMatch.precio_compra || 0)
+          }
+        ]);
+      }
+      if (qtyReq > 0) {
+        setRegaloRequerimientos((prev) => [
+          ...prev,
+          {
+            ...baseItem,
+            tipo: 'compra',
+            cantidad: qtyReq,
+            precioCompra: Number(regaloRequerimiento.precioCompra || 0)
+          }
+        ]);
+      }
+      if (qtyReq > 0 && qtyStock > 0) {
+        setAvisoStock(
+          `Stock insuficiente: ${productoMatch.codigo || productoMatch.descripcion}. ${qtyStock} en tienda y ${qtyReq} a requerimiento.`
+        );
+      } else if (qtyReq > 0) {
+        setAvisoStock('Regalo sin stock enviado a requerimiento de compra.');
+      } else {
+        setAvisoStock('');
+      }
+      setRegaloRequerimiento({
+        productoId: null,
+        codigo: '',
+        descripcion: '',
+        marca: '',
+        proveedor: '',
+        cantidad: 1,
+        precioCompra: ''
+      });
+      setBusquedaReqRegalo('');
+      setResultadosReqRegalo([]);
+      return;
+    }
     try {
       const resp = await ventasService.crearRequerimientoProducto({
         descripcion,
@@ -1609,6 +1891,7 @@ const VentasPage = () => {
       return;
     }
     setRegaloRequerimiento({
+      productoId: null,
       codigo: '',
       descripcion: '',
       marca: '',
@@ -1667,6 +1950,7 @@ const VentasPage = () => {
     setRegalos([]);
     setRegaloRequerimientos([]);
     setRequerimiento({
+      productoId: null,
       codigo: '',
       descripcion: '',
       marca: '',
@@ -2102,6 +2386,12 @@ const VentasPage = () => {
     }
   };
 
+  const patchVenta = (id, patch) => {
+    setVentas((prev) =>
+      (prev || []).map((item) => (item.id === id ? { ...item, ...patch } : item))
+    );
+  };
+
   const ventasListado = useMemo(() => ventas || [], [ventas]);
   const pendientesDia = useMemo(() => {
     return (ventas || []).filter((venta) => {
@@ -2218,20 +2508,30 @@ const VentasPage = () => {
                               return;
                             }
                             const now = getToday();
+                            const fechaDespacho =
+                              nuevoEstado === 'ENVIADO' || nuevoEstado === 'VISITA'
+                                ? venta.fechaDespacho || now
+                                : venta.fechaDespacho;
+                            const fechaCancelacion =
+                              nuevoEstado === 'CANCELADO'
+                                ? venta.fechaCancelacion || now
+                                : venta.fechaCancelacion;
+                            const rastreoEstado =
+                              nuevoEstado === 'CANCELADO' ? 'ENTREGADO' : venta.rastreoEstado;
                             const payload = {
                               estadoEnvio: nuevoEstado,
-                              fechaDespacho:
-                                nuevoEstado === 'ENVIADO' || nuevoEstado === 'VISITA'
-                                  ? venta.fechaDespacho || now
-                                  : venta.fechaDespacho,
-                              fechaCancelacion:
-                                nuevoEstado === 'CANCELADO'
-                                  ? venta.fechaCancelacion || now
-                                  : venta.fechaCancelacion,
-                              rastreoEstado:
-                                nuevoEstado === 'CANCELADO' ? 'ENTREGADO' : venta.rastreoEstado
+                              fechaDespacho,
+                              fechaCancelacion,
+                              rastreoEstado
                             };
-                            ventasService.actualizarEstado(venta.id, payload).then(cargarVentas);
+                            patchVenta(venta.id, payload);
+                            ventasService
+                              .actualizarEstado(venta.id, payload)
+                              .then(() => cargarVentas(false))
+                              .catch((err) => {
+                                console.error('Error actualizando estado de envio:', err);
+                                cargarVentas(false);
+                              });
                           }}
                         >
                           {estadosEnvio.map((estado) => (
@@ -2468,6 +2768,7 @@ const VentasPage = () => {
                   setRequerimiento={setRequerimiento}
                   requerimiento={requerimiento}
                   sugerenciaRequerimiento={sugerenciaRequerimiento}
+                  ajustarCantidadProductoStock={ajustarCantidadProductoStock}
                 />
               )}
               {step === 3 && (
@@ -2500,6 +2801,7 @@ const VentasPage = () => {
                   quitarItem={quitarItem}
                   formData={formData}
                   setFormData={setFormData}
+                  ajustarCantidadRegaloStock={ajustarCantidadRegaloStock}
                 />
               )}
           <VentasModalFooter

@@ -15,6 +15,21 @@ const PickingPage = () => {
   const [cameraActive, setCameraActive] = useState(false);
   const [scanActivo, setScanActivo] = useState(false);
 
+  const getTipoLabel = useCallback((tipo) => {
+    switch (String(tipo || '').toLowerCase()) {
+      case 'producto':
+        return 'Producto';
+      case 'regalo':
+        return 'Regalo';
+      case 'requerimiento':
+        return 'Requerimiento';
+      case 'regalo_requerimiento':
+        return 'Req. Regalo';
+      default:
+        return 'Item';
+    }
+  }, []);
+
   const isNativeScannerAvailable = () =>
     typeof window !== 'undefined' &&
     window.Android &&
@@ -123,10 +138,14 @@ const PickingPage = () => {
             };
           });
           const pendientesRestantes = items.filter((it) => it.pendiente > 0);
+          const sinStockPendiente = Number(venta.pendientesSinStock || 0);
           const actualizado = {
             ...venta,
             items,
-            estadoPedido: pendientesRestantes.length === 0 ? 'PEDIDO_LISTO' : venta.estadoPedido
+            estadoPedido:
+              pendientesRestantes.length === 0 && sinStockPendiente === 0
+                ? 'PEDIDO_LISTO'
+                : venta.estadoPedido
           };
           if (ventaSeleccionada?.ventaId === venta.ventaId) {
             setVentaSeleccionada(actualizado);
@@ -304,6 +323,12 @@ const PickingPage = () => {
     setItemSeleccionado(null);
   };
 
+  const pendientesVisibles = useMemo(
+    () => (ventaSeleccionada?.items || []).filter((item) => item.pendiente > 0),
+    [ventaSeleccionada]
+  );
+  const pendientesSinStock = Number(ventaSeleccionada?.pendientesSinStock || 0);
+
   const cerrarPedido = async () => {
     if (!ventaSeleccionada) return;
     try {
@@ -385,26 +410,37 @@ const PickingPage = () => {
 
         <div className="picking-card">
           <div className="picking-card__header">
-            <h3>Productos del pedido</h3>
+            <h3>Items del pedido</h3>
           </div>
           {!ventaSeleccionada ? (
             <div className="empty-message">Selecciona una venta para ver sus productos.</div>
           ) : (
             <div className="picking-items">
-              {(ventaSeleccionada.items || []).filter((item) => item.pendiente > 0).length === 0 ? (
+              {pendientesVisibles.length === 0 ? (
                 <div className="empty-message">
-                  Todos los productos fueron pickeados.
-                  <button type="button" className="btn-primary" onClick={cerrarPedido}>
-                    Cerrar pedido
-                  </button>
+                  {pendientesSinStock > 0 ? (
+                    <span>Sin stock para picking. Pendientes por compra: {pendientesSinStock}.</span>
+                  ) : (
+                    <>
+                      <span>Todos los items fueron pickeados.</span>
+                      <button type="button" className="btn-primary" onClick={cerrarPedido}>
+                        Cerrar pedido
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : null}
-              {(ventaSeleccionada.items || [])
-                .filter((item) => item.pendiente > 0)
-                .map((item) => (
+              {pendientesVisibles.map((item) => (
                 <div className="picking-item" key={item.detalleId}>
                   <div>
-                    <strong>{item.codigo}</strong>
+                    <div className="picking-item__title">
+                      <strong>{item.codigo}</strong>
+                      {item.tipo ? (
+                        <span className={`picking-tag picking-tag--${String(item.tipo).toLowerCase()}`}>
+                          {getTipoLabel(item.tipo)}
+                        </span>
+                      ) : null}
+                    </div>
                     <span>{item.descripcion}</span>
                   </div>
                   <div className="picking-item__stats">

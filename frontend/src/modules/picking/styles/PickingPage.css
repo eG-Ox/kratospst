@@ -88,6 +88,41 @@
   background: #f8fafc;
 }
 
+.picking-item__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.picking-tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.picking-tag--producto {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.picking-tag--regalo {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.picking-tag--requerimiento {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.picking-tag--regalo_requerimiento {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
 .picking-item span {
   display: block;
   font-size: 12px;

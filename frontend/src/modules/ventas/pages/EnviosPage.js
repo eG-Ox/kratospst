@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { usuariosService, ventasService } from '../../../core/services/apiServices';
 import '../styles/EnviosPage.css';
 
@@ -11,6 +11,8 @@ const estadosRastreo = ['EN TRANSITO', 'DESTINO', 'ENTREGADO'];
 const EnviosPage = () => {
   const [ventas, setVentas] = useState([]);
   const [usuariosVentas, setUsuariosVentas] = useState([]);
+  const [detalleVenta, setDetalleVenta] = useState(null);
+  const ventasRequestRef = useRef(0);
 
   useEffect(() => {
     const cargarUsuarios = async () => {
@@ -26,12 +28,20 @@ const EnviosPage = () => {
   }, []);
 
   const cargarVentas = async () => {
+    const requestId = ++ventasRequestRef.current;
     try {
       const resp = await ventasService.listar();
+      if (requestId !== ventasRequestRef.current) return;
       setVentas(resp.data || []);
     } catch (err) {
       console.error('Error cargando ventas:', err);
     }
+  };
+
+  const patchVenta = (id, patch) => {
+    setVentas((prev) =>
+      (prev || []).map((item) => (item.id === id ? { ...item, ...patch } : item))
+    );
   };
 
   useEffect(() => {
@@ -40,6 +50,7 @@ const EnviosPage = () => {
 
   const actualizarVenta = async (id, changes) => {
     try {
+      patchVenta(id, changes);
       await ventasService.actualizarEnvio(id, changes);
       await cargarVentas();
     } catch (err) {
@@ -65,7 +76,14 @@ const EnviosPage = () => {
       changes.rastreoEstado = 'ENTREGADO';
     }
 
-    ventasService.actualizarEstado(venta.id, changes).then(cargarVentas);
+    patchVenta(venta.id, changes);
+    ventasService
+      .actualizarEstado(venta.id, changes)
+      .then(() => cargarVentas())
+      .catch((err) => {
+        console.error('Error actualizando estado de envio:', err);
+        cargarVentas();
+      });
   };
 
   const ventasEnvio = useMemo(() => {
@@ -105,6 +123,7 @@ const EnviosPage = () => {
                 <th>Guia</th>
                 <th>Retiro</th>
                 <th>Estado rastreo</th>
+                <th>Detalle</th>
               </tr>
             </thead>
             <tbody>
@@ -184,6 +203,19 @@ const EnviosPage = () => {
                         ))}
                       </select>
                     </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="icon-btn icon-btn--view"
+                        onClick={() => setDetalleVenta(venta)}
+                        title="Detalle"
+                        aria-label="Detalle"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M12 5c4.5 0 8.3 2.7 10 6.5C20.3 15.3 16.5 18 12 18S3.7 15.3 2 11.5C3.7 7.7 7.5 5 12 5zm0 2c-3.2 0-6 1.7-7.6 4.5C6 14.3 8.8 16 12 16s6-1.7 7.6-4.5C18 8.7 15.2 7 12 7zm0 2.5a2.5 2.5 0 1 1 0 5a2.5 2.5 0 0 1 0-5z" />
+                        </svg>
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -191,6 +223,76 @@ const EnviosPage = () => {
           </table>
         )}
       </div>
+
+      {detalleVenta && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2>Detalle pedido #{detalleVenta.id}</h2>
+              <button
+                type="button"
+                className="btn-icon"
+                onClick={() => setDetalleVenta(null)}
+                aria-label="Cerrar"
+              >
+                X
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="envios-detalle-grid">
+                <div className="envios-detalle-card">
+                  <h3>Productos</h3>
+                  {(detalleVenta.productos || []).length === 0 ? (
+                    <div className="empty-message">Sin productos.</div>
+                  ) : (
+                    <ul className="envios-detalle-list">
+                      {(detalleVenta.productos || []).map((item) => (
+                        <li key={item.id}>
+                          {item.codigo} {item.descripcion} x{item.cantidad}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="envios-detalle-card">
+                  <h3>Requerimientos</h3>
+                  {(detalleVenta.requerimientos || []).length === 0 ? (
+                    <div className="empty-message">Sin requerimientos.</div>
+                  ) : (
+                    <ul className="envios-detalle-list">
+                      {(detalleVenta.requerimientos || []).map((item) => (
+                        <li key={item.id}>
+                          {item.codigo} {item.descripcion} x{item.cantidad}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="envios-detalle-card">
+                  <h3>Regalos</h3>
+                  {[
+                    ...(detalleVenta.regalos || []),
+                    ...(detalleVenta.regaloRequerimientos || [])
+                  ].length === 0 ? (
+                    <div className="empty-message">Sin regalos.</div>
+                  ) : (
+                    <ul className="envios-detalle-list">
+                      {[
+                        ...(detalleVenta.regalos || []),
+                        ...(detalleVenta.regaloRequerimientos || [])
+                      ].map((item) => (
+                        <li key={item.id}>
+                          {item.codigo} {item.descripcion} x{item.cantidad}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
