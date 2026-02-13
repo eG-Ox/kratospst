@@ -16,7 +16,7 @@ const LoginPage = ({ onLoginSuccess }) => {
       <div className="login-container">
         <div className="login-header">
           <h1>Sistema de Inventario</h1>
-          <p>Máquinas y Equipos</p>
+          <p>Maquinas y Equipos</p>
         </div>
         <LoginForm onLoginSuccess={handleLoginSuccess} />
       </div>
