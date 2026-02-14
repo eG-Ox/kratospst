@@ -4,7 +4,7 @@ import { authService } from '../services/api';
 import '../styles/LoginPage.css';
 
 const LoginPage = ({ onLoginSuccess }) => {
-  const [email, setEmail] = useState('admin@inventario.com');
+  const [email, setEmail] = useState('admin');
   const [contraseña, setContraseña] = useState('admin123');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -133,7 +133,7 @@ const LoginPage = ({ onLoginSuccess }) => {
 
             <div className="default-credentials">
               <p>Credenciales de prueba:</p>
-              <code>admin@inventario.com / admin123</code>
+              <code>admin / admin123</code>
             </div>
           </form>
         ) : (

@@ -924,9 +924,9 @@ async function inicializarBaseDatos() {
     try {
       await connection.execute(
         'INSERT INTO usuarios (nombre, email, telefono, contraseña, rol) VALUES (?, ?, ?, ?, ?)',
-        ['Administrador', 'admin@inventario.com', '000000000', contraseñaHasheada, 'admin']
+        ['Administrador', 'admin', '000000000', contraseñaHasheada, 'admin']
       );
-      console.log('✓ Usuario administrador creado: admin@inventario.com / admin123');
+      console.log('✓ Usuario administrador creado: admin / admin123');
     } catch (error) {
       if (error.code !== 'ER_DUP_ENTRY') {
         throw error;

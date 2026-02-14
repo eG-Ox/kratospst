@@ -278,7 +278,10 @@ const prepararRequerimientos = async (connection, items) => {
 };
 
 exports.listarVentas = async (req, res) => {
-  const { fecha_inicio, fecha_fin, limite = 200, pagina = 1 } = req.query;
+  const { fecha_inicio, fecha_fin, limite = 200, pagina = 1, include_detalle } = req.query;
+  const includeDetalle = !['0', 'false', 'no', 'off'].includes(
+    String(include_detalle ?? 'true').toLowerCase()
+  );
   try {
     const connection = await pool.getConnection();
     let query = `
@@ -306,6 +309,14 @@ exports.listarVentas = async (req, res) => {
       connection.release();
       return res.json([]);
     }
+    if (!includeDetalle) {
+      const ventas = rows.map((row) => ({
+        ...mapVentaRow(row),
+        detalleIncluido: false
+      }));
+      connection.release();
+      return res.json(ventas);
+    }
     const ventaIds = rows.map((row) => row.id);
     const placeholders = ventaIds.map(() => '?').join(',');
     const [detalleRows] = await connection.execute(
@@ -330,6 +341,7 @@ exports.listarVentas = async (req, res) => {
       venta.requerimientos = detalles.filter((item) => item.tipo === 'requerimiento');
       venta.regalos = detalles.filter((item) => item.tipo === 'regalo');
       venta.regaloRequerimientos = detalles.filter((item) => item.tipo === 'regalo_requerimiento');
+      venta.detalleIncluido = true;
       return venta;
     });
 
@@ -366,6 +378,7 @@ exports.obtenerVenta = async (req, res) => {
     venta.requerimientos = detalles.filter((item) => item.tipo === 'requerimiento');
     venta.regalos = detalles.filter((item) => item.tipo === 'regalo');
     venta.regaloRequerimientos = detalles.filter((item) => item.tipo === 'regalo_requerimiento');
+    venta.detalleIncluido = true;
     res.json(venta);
   } catch (error) {
     console.error('Error obteniendo venta:', error);

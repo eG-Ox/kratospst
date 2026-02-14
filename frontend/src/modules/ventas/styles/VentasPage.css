@@ -209,6 +209,10 @@
   box-shadow: var(--box-shadow-soft);
 }
 
+.ventas-card--full {
+  grid-column: 1 / -1;
+}
+
 .ventas-card h3 {
   margin-bottom: 14px;
 }

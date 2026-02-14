@@ -28,3 +28,7 @@ Thumbs.db
 # Runtime uploads
 backend/uploads/
 **/uploads/
+
+# Local infra / backups
+backups/
+caddyfile

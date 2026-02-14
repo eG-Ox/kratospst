@@ -31,7 +31,7 @@ const UsuariosPage = () => {
       setLoading(true);
       const resp = await usuariosService.listar();
       if (!mountedRef.current) return;
-      setUsuarios(resp.data || []);
+      setUsuarios((resp.data || []).filter((usuario) => usuario.activo));
       setError('');
     } catch (err) {
       console.error('Error cargando usuarios:', err);
@@ -112,6 +112,27 @@ const UsuariosPage = () => {
     }
   };
 
+  const handleToggleActivo = async (usuario) => {
+    const accion = usuario.activo ? 'desactivar' : 'activar';
+    const confirmar = window.confirm(`Deseas ${accion} a ${usuario.nombre}?`);
+    if (!confirmar) return;
+    try {
+      await usuariosService.actualizar(usuario.id, {
+        nombre: usuario.nombre,
+        email: usuario.email,
+        telefono: usuario.telefono || '',
+        rol: usuario.rol,
+        activo: !usuario.activo
+      });
+      await cargarUsuarios();
+    } catch (err) {
+      console.error('Error cambiando estado de usuario:', err);
+      if (mountedRef.current) {
+        setError(err.response?.data?.error || 'Error al actualizar usuario');
+      }
+    }
+  };
+
   const abrirCrear = () => {
     setNuevoUsuario({ nombre: '', usuario: '', contrasena: '', rol: 'ventas' });
     setCreando(true);
@@ -165,6 +186,7 @@ const UsuariosPage = () => {
                 <th>Nombre</th>
                 <th>Usuario</th>
                 <th>Rol</th>
+                <th>Estado</th>
                 <th className="icon-col" title="Acciones">
                   <span className="icon-label" aria-label="Acciones">...</span>
                 </th>
@@ -176,6 +198,7 @@ const UsuariosPage = () => {
                   <td>{usuario.nombre}</td>
                   <td>{usuario.email}</td>
                   <td>{usuario.rol}</td>
+                  <td>{usuario.activo ? 'Activo' : 'Inactivo'}</td>
                   <td>
                     <button
                       className="icon-btn icon-btn--edit"
@@ -186,6 +209,17 @@ const UsuariosPage = () => {
                       <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M4 17.5V20h2.5L17.9 8.6l-2.5-2.5L4 17.5z" />
                         <path d="M20.7 7.2a1 1 0 0 0 0-1.4l-2.5-2.5a1 1 0 0 0-1.4 0l-1.7 1.7 2.5 2.5 1.7-1.7z" />
+                      </svg>
+                    </button>
+                    <button
+                      className="icon-btn icon-btn--delete"
+                      onClick={() => handleToggleActivo(usuario)}
+                      title={usuario.activo ? 'Desactivar' : 'Activar'}
+                      aria-label={usuario.activo ? 'Desactivar' : 'Activar'}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M6 7h12l-1 14H7L6 7z" />
+                        <path d="M9 7V5h6v2h4v2H5V7h4z" />
                       </svg>
                     </button>
                   </td>
@@ -205,7 +239,7 @@ const UsuariosPage = () => {
             />
           </div>
           <div className="form-group">
-            <label>Usuario</label>
+            <label>Usuario (email opcional)</label>
             <input
               type="text"
               value={formData.email}
@@ -238,7 +272,7 @@ const UsuariosPage = () => {
                   />
                 </div>
                 <div className="form-group">
-                  <label>Usuario</label>
+                  <label>Usuario (email opcional)</label>
                   <input
                     type="text"
                     value={formData.email}
@@ -301,7 +335,7 @@ const UsuariosPage = () => {
                   />
                 </div>
                 <div className="form-group">
-                  <label>Usuario</label>
+                  <label>Usuario (email opcional)</label>
                   <input
                     type="text"
                     name="nuevo-usuario"
@@ -310,7 +344,7 @@ const UsuariosPage = () => {
                     onChange={(e) =>
                       setNuevoUsuario({ ...nuevoUsuario, usuario: e.target.value.trim() })
                     }
-                    placeholder="usuario"
+                    placeholder="usuario o email"
                   />
                 </div>
                 <div className="form-group">
