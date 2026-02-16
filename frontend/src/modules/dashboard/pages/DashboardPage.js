@@ -8,6 +8,9 @@ const DashboardPage = ({ usuario }) => {
   const [estadisticas, setEstadisticas] = useState(null);
   const [ultimosMovimientos, setUltimosMovimientos] = useState([]);
   const [ventas, setVentas] = useState([]);
+  const [detalleVentas, setDetalleVentas] = useState([]);
+  const [detalleVentasCargado, setDetalleVentasCargado] = useState(false);
+  const [loadingDetalleVentas, setLoadingDetalleVentas] = useState(false);
   const [productos, setProductos] = useState([]);
   const [marcas, setMarcas] = useState([]);
   const [tab, setTab] = useState('resumen');
@@ -20,24 +23,39 @@ const DashboardPage = ({ usuario }) => {
   const [error, setError] = useState('');
   const stockMinimo = 2;
 
+  const cargarDetalleVentas = useCallback(async () => {
+    if (detalleVentasCargado || loadingDetalleVentas) return;
+    try {
+      setLoadingDetalleVentas(true);
+      const respDetalle = await ventasService.detalle({ tipo: 'producto' });
+      if (!mountedRef.current) return;
+      setDetalleVentas(respDetalle.data || []);
+      setDetalleVentasCargado(true);
+    } catch (error) {
+      console.error('Error cargando detalle de ventas:', error);
+    } finally {
+      if (mountedRef.current) {
+        setLoadingDetalleVentas(false);
+      }
+    }
+  }, [detalleVentasCargado, loadingDetalleVentas, mountedRef]);
+
   const cargarDashboard = useCallback(async () => {
     try {
       setLoading(true);
-      const respEstad = await movimientosService.obtenerEstadisticas();
+      const [respEstad, respMovimientos, respVentas, respProductos, respMarcas] =
+        await Promise.all([
+          movimientosService.obtenerEstadisticas(),
+          movimientosService.obtener({ limite: 10, pagina: 1 }),
+          ventasService.listar({ include_detalle: false, limite: 500 }),
+          productosService.getAll(),
+          marcasService.getAll()
+        ]);
       if (!mountedRef.current) return;
       setEstadisticas(respEstad.data);
-
-      const respMovimientos = await movimientosService.obtener({ limite: 10, pagina: 1 });
-      if (!mountedRef.current) return;
-      setUltimosMovimientos(respMovimientos.data);
-      const respVentas = await ventasService.listar();
-      if (!mountedRef.current) return;
+      setUltimosMovimientos(respMovimientos.data || []);
       setVentas(respVentas.data || []);
-      const respProductos = await productosService.getAll();
-      if (!mountedRef.current) return;
       setProductos(respProductos.data || []);
-      const respMarcas = await marcasService.getAll();
-      if (!mountedRef.current) return;
       setMarcas(respMarcas.data || []);
       setError('');
     } catch (error) {
@@ -56,6 +74,12 @@ const DashboardPage = ({ usuario }) => {
     cargarDashboard();
   }, [cargarDashboard]);
 
+  useEffect(() => {
+    if (tab === 'inventario' && !detalleVentasCargado) {
+      cargarDetalleVentas();
+    }
+  }, [tab, detalleVentasCargado, cargarDetalleVentas]);
+
   const ventasFiltradasPorFecha = useMemo(() => {
     if (!fechaDesde && !fechaHasta) return ventas;
     return ventas.filter((v) => {
@@ -65,6 +89,11 @@ const DashboardPage = ({ usuario }) => {
       return true;
     });
   }, [ventas, fechaDesde, fechaHasta]);
+
+  const ventasFiltradasIds = useMemo(
+    () => new Set((ventasFiltradasPorFecha || []).map((venta) => Number(venta.id))),
+    [ventasFiltradasPorFecha]
+  );
 
   const resumenVentas = useMemo(() => {
     const hoy = new Date().toISOString().slice(0, 10);
@@ -108,18 +137,19 @@ const DashboardPage = ({ usuario }) => {
 
   const ventasPorProducto = useMemo(() => {
     const map = new Map();
-    ventasFiltradasPorFecha.forEach((v) => {
-      (v.productos || []).forEach((item) => {
-        const key = `${item.codigo || ''} ${item.descripcion || ''}`.trim() || 'Sin codigo';
-        const subtotal = Number(item.precioVenta || 0) * Number(item.cantidad || 0);
-        map.set(key, (map.get(key) || 0) + subtotal);
-      });
+    (detalleVentas || []).forEach((item) => {
+      if (ventasFiltradasIds.size > 0 && !ventasFiltradasIds.has(Number(item.ventaId))) {
+        return;
+      }
+      const key = `${item.codigo || ''} ${item.descripcion || ''}`.trim() || 'Sin codigo';
+      const subtotal = Number(item.precioVenta || 0) * Number(item.cantidad || 0);
+      map.set(key, (map.get(key) || 0) + subtotal);
     });
     return Array.from(map.entries())
       .map(([label, total]) => ({ label, total }))
       .sort((a, b) => b.total - a.total)
       .slice(0, 8);
-  }, [ventasFiltradasPorFecha]);
+  }, [detalleVentas, ventasFiltradasIds]);
 
   const aplicarRango = (tipo) => {
     const hoy = new Date();

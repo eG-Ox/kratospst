@@ -1,19 +1,19 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { authService } from '../services/api';
-import '../styles/LoginPage.css';
+import { authService } from '../../services/api';
+import '../../styles/LoginPage.css';
 
 const LoginPage = ({ onLoginSuccess }) => {
-  const [email, setEmail] = useState('admin');
-  const [contraseña, setContraseña] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [contrasena, setContrasena] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [mostrarRegistro, setMostrarRegistro] = useState(false);
   const [registroData, setRegistroData] = useState({
     nombre: '',
     email: '',
-    contraseña: '',
-    confirmarContraseña: ''
+    contrasena: '',
+    confirmarContrasena: ''
   });
 
   const navigate = useNavigate();
@@ -22,20 +22,19 @@ const LoginPage = ({ onLoginSuccess }) => {
     e.preventDefault();
     setError('');
 
-    if (!email || !contraseña) {
-      setError('Email y contraseña requeridos');
+    if (!email || !contrasena) {
+      setError('Email y contrasena requeridos');
       return;
     }
 
     try {
       setLoading(true);
-      const response = await authService.login(email, contraseña);
-      localStorage.setItem('token', response.data.token);
+      const response = await authService.login(email, contrasena);
       localStorage.setItem('usuario', JSON.stringify(response.data.usuario));
       onLoginSuccess(response.data.usuario);
       navigate('/dashboard');
-    } catch (error) {
-      setError(error.response?.data?.error || 'Error al iniciar sesión');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Error al iniciar sesion');
     } finally {
       setLoading(false);
     }
@@ -45,13 +44,13 @@ const LoginPage = ({ onLoginSuccess }) => {
     e.preventDefault();
     setError('');
 
-    if (!registroData.nombre || !registroData.email || !registroData.contraseña) {
+    if (!registroData.nombre || !registroData.email || !registroData.contrasena) {
       setError('Todos los campos son requeridos');
       return;
     }
 
-    if (registroData.contraseña !== registroData.confirmarContraseña) {
-      setError('Las contraseñas no coinciden');
+    if (registroData.contrasena !== registroData.confirmarContrasena) {
+      setError('Las contrasenas no coinciden');
       return;
     }
 
@@ -60,14 +59,13 @@ const LoginPage = ({ onLoginSuccess }) => {
       const response = await authService.registro(
         registroData.nombre,
         registroData.email,
-        registroData.contraseña
+        registroData.contrasena
       );
-      localStorage.setItem('token', response.data.token);
       localStorage.setItem('usuario', JSON.stringify(response.data.usuario));
       onLoginSuccess(response.data.usuario);
       navigate('/dashboard');
-    } catch (error) {
-      setError(error.response?.data?.error || 'Error al registrar');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Error al registrar');
     } finally {
       setLoading(false);
     }
@@ -75,7 +73,7 @@ const LoginPage = ({ onLoginSuccess }) => {
 
   const handleRegistroChange = (e) => {
     const { name, value } = e.target;
-    setRegistroData({ ...registroData, [name]: value });
+    setRegistroData((prev) => ({ ...prev, [name]: value }));
   };
 
   return (
@@ -83,14 +81,14 @@ const LoginPage = ({ onLoginSuccess }) => {
       <div className="login-card">
         <div className="login-header">
           <h1>Sistema de Inventario</h1>
-          <p>Gestión de Máquinas y Productos</p>
+          <p>Gestion de Maquinas y Productos</p>
         </div>
 
         {error && <div className="error-message">{error}</div>}
 
         {!mostrarRegistro ? (
           <form onSubmit={handleLogin} className="login-form">
-            <h2>Iniciar Sesión</h2>
+            <h2>Iniciar Sesion</h2>
 
             <div className="form-group">
               <label htmlFor="email">Email</label>
@@ -105,23 +103,23 @@ const LoginPage = ({ onLoginSuccess }) => {
             </div>
 
             <div className="form-group">
-              <label htmlFor="contraseña">Contraseña</label>
+              <label htmlFor="contrasena">Contrasena</label>
               <input
                 type="password"
-                id="contraseña"
-                value={contraseña}
-                onChange={(e) => setContraseña(e.target.value)}
-                placeholder="Contraseña"
+                id="contrasena"
+                value={contrasena}
+                onChange={(e) => setContrasena(e.target.value)}
+                placeholder="Contrasena"
                 required
               />
             </div>
 
             <button type="submit" className="btn-login" disabled={loading}>
-              {loading ? 'Iniciando sesión...' : 'Iniciar Sesión'}
+              {loading ? 'Iniciando sesion...' : 'Iniciar Sesion'}
             </button>
 
             <p className="toggle-form">
-              ¿No tienes cuenta?{' '}
+              No tienes cuenta?{' '}
               <button
                 type="button"
                 onClick={() => setMostrarRegistro(true)}
@@ -130,11 +128,6 @@ const LoginPage = ({ onLoginSuccess }) => {
                 Registrarse
               </button>
             </p>
-
-            <div className="default-credentials">
-              <p>Credenciales de prueba:</p>
-              <code>admin / admin123</code>
-            </div>
           </form>
         ) : (
           <form onSubmit={handleRegistro} className="login-form">
@@ -167,27 +160,27 @@ const LoginPage = ({ onLoginSuccess }) => {
             </div>
 
             <div className="form-group">
-              <label htmlFor="registroContraseña">Contraseña</label>
+              <label htmlFor="registroContrasena">Contrasena</label>
               <input
                 type="password"
-                id="registroContraseña"
-                name="contraseña"
-                value={registroData.contraseña}
+                id="registroContrasena"
+                name="contrasena"
+                value={registroData.contrasena}
                 onChange={handleRegistroChange}
-                placeholder="Contraseña"
+                placeholder="Contrasena"
                 required
               />
             </div>
 
             <div className="form-group">
-              <label htmlFor="confirmarContraseña">Confirmar Contraseña</label>
+              <label htmlFor="confirmarContrasena">Confirmar Contrasena</label>
               <input
                 type="password"
-                id="confirmarContraseña"
-                name="confirmarContraseña"
-                value={registroData.confirmarContraseña}
+                id="confirmarContrasena"
+                name="confirmarContrasena"
+                value={registroData.confirmarContrasena}
                 onChange={handleRegistroChange}
-                placeholder="Confirmar contraseña"
+                placeholder="Confirmar contrasena"
                 required
               />
             </div>
@@ -197,13 +190,13 @@ const LoginPage = ({ onLoginSuccess }) => {
             </button>
 
             <p className="toggle-form">
-              ¿Ya tienes cuenta?{' '}
+              Ya tienes cuenta?{' '}
               <button
                 type="button"
                 onClick={() => setMostrarRegistro(false)}
                 className="link-button"
               >
-                Iniciar Sesión
+                Iniciar Sesion
               </button>
             </p>
           </form>

@@ -148,7 +148,7 @@ const CotizacionesPage = () => {
     const term = clienteSearch.trim().toLowerCase();
     if (!term) return clientes;
     return clientes.filter((cliente) => {
-      const nombre = cliente.tipo_cliente === 'natural'
+      const nombre = cliente.tipo_cliente === 'natural' || cliente.tipo_cliente === 'ce'
         ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim()
         : cliente.razon_social || '';
       const documento = cliente.dni || cliente.ruc || '';
@@ -443,6 +443,15 @@ const CotizacionesPage = () => {
       return;
     }
 
+    if (clienteForm.tipo_cliente === 'ce') {
+      if (!/^\d{9}$/.test(clienteForm.dni || '')) {
+        setConsultaMensaje('El CE debe tener 9 digitos.');
+        return;
+      }
+      setConsultaMensaje('Para CE registra nombre y apellido manualmente.');
+      return;
+    }
+
     if (!/^\d{11}$/.test(clienteForm.ruc || '')) {
       setConsultaMensaje('El RUC debe tener 11 digitos.');
       return;
@@ -724,7 +733,7 @@ const CotizacionesPage = () => {
                     <option value="">Selecciona un cliente</option>
                     {clientesFiltrados.map((cliente) => (
                       <option key={cliente.id} value={cliente.id}>
-                        {cliente.tipo_cliente === 'natural'
+                        {cliente.tipo_cliente === 'natural' || cliente.tipo_cliente === 'ce'
                           ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim()
                           : cliente.razon_social}{' '}
                         ({cliente.dni || cliente.ruc})
@@ -734,7 +743,7 @@ const CotizacionesPage = () => {
                   {clienteSearch.trim().length > 0 && (
                     <div className="cliente-resultados">
                       {clientesFiltrados.slice(0, 10).map((cliente) => {
-                        const label = cliente.tipo_cliente === 'natural'
+                        const label = cliente.tipo_cliente === 'natural' || cliente.tipo_cliente === 'ce'
                           ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim()
                           : cliente.razon_social;
                         const doc = cliente.dni || cliente.ruc || '';
@@ -834,29 +843,33 @@ const CotizacionesPage = () => {
                 >
                   <option value="natural">Natural</option>
                   <option value="juridico">Juridico</option>
+                  <option value="ce">Carnet de extranjeria</option>
                 </select>
               </div>
 
-              {clienteForm.tipo_cliente === 'natural' ? (
+              {clienteForm.tipo_cliente === 'natural' || clienteForm.tipo_cliente === 'ce' ? (
                 <>
                   <div className="form-group">
-                    <label>DNI</label>
+                    <label>{clienteForm.tipo_cliente === 'ce' ? 'CE' : 'DNI'}</label>
                     <div className="consulta-row">
                       <input
                         type="text"
+                        maxLength={clienteForm.tipo_cliente === 'ce' ? 9 : 8}
                         value={clienteForm.dni}
                         onChange={(e) =>
                           setClienteForm({ ...clienteForm, dni: e.target.value.trim() })
                         }
                       />
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={consultarDocumento}
-                        disabled={consultando}
-                      >
-                        {consultando ? 'Consultando...' : 'Consultar'}
-                      </button>
+                      {clienteForm.tipo_cliente === 'natural' && (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={consultarDocumento}
+                          disabled={consultando}
+                        >
+                          {consultando ? 'Consultando...' : 'Consultar'}
+                        </button>
+                      )}
                     </div>
                   </div>
                   <div className="form-row">

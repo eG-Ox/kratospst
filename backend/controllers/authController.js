@@ -2,7 +2,7 @@ const pool = require('../config/database');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'tu_secreto_aqui';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Login
 exports.login = async (req, res) => {

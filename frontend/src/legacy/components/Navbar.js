@@ -1,13 +1,21 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import '../styles/Navbar.css';
+import { authService } from '../../services/api';
+import '../../styles/Navbar.css';
 
 const Navbar = ({ usuario, onLogout }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const [loggingOut, setLoggingOut] = useState(false);
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await authService.logout();
+    } catch (error) {
+      // Even if backend logout fails, clear local session for UX consistency.
+    }
     localStorage.removeItem('usuario');
     onLogout();
     navigate('/login');
@@ -61,7 +69,7 @@ const Navbar = ({ usuario, onLogout }) => {
             👤 {usuario?.nombre || 'Usuario'}
             <small>{usuario?.rol === 'admin' ? '(Admin)' : '(Operario)'}</small>
           </span>
-          <button className="btn-logout" onClick={handleLogout}>
+          <button className="btn-logout" onClick={handleLogout} disabled={loggingOut}>
             Logout
           </button>
         </div>

@@ -9,6 +9,24 @@ const parsePositiveInt = (value, fallback) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+const releaseConnection = (connection) => {
+  if (!connection) return;
+  try {
+    connection.release();
+  } catch (_) {
+    // no-op
+  }
+};
+
+const rollbackSilently = async (connection) => {
+  if (!connection) return;
+  try {
+    await connection.rollback();
+  } catch (_) {
+    // no-op
+  }
+};
+
 const generarCodigoMarca = async (connection) => {
   const [rows] = await connection.execute(
     "SELECT MAX(CAST(SUBSTRING(codigo, 2) AS UNSIGNED)) AS max_codigo FROM marcas WHERE codigo REGEXP '^M[0-9]+'"
@@ -74,15 +92,32 @@ exports.crearMarca = async (req, res) => {
     return res.status(400).json({ error: 'El nombre es requerido' });
   }
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
-    if (!codigo) {
-      codigo = await generarCodigoMarca(connection);
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    const codigoFijo = !!codigo;
+    let result;
+    const maxAttempts = 5;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      if (!codigoFijo) {
+        codigo = await generarCodigoMarca(connection);
+      }
+      try {
+        [result] = await connection.execute(
+          'INSERT INTO marcas (codigo, nombre, descripcion) VALUES (?, ?, ?)',
+          [codigo, nombre, descripcion || null]
+        );
+        break;
+      } catch (error) {
+        if (error.code !== 'ER_DUP_ENTRY') {
+          throw error;
+        }
+        if (codigoFijo || attempt === maxAttempts - 1) {
+          throw error;
+        }
+      }
     }
-    const [result] = await connection.execute(
-      'INSERT INTO marcas (codigo, nombre, descripcion) VALUES (?, ?, ?)',
-      [codigo, nombre, descripcion || null]
-    );
     await connection.execute(
       'UPDATE maquinas SET marca = ? WHERE UPPER(marca) = ?',
       [nombre, codigo]
@@ -96,14 +131,17 @@ exports.crearMarca = async (req, res) => {
       antes: null,
       despues: { id: result.insertId, codigo, nombre, descripcion: descripcion || null }
     });
-    connection.release();
-    res.status(201).json({ id: result.insertId, codigo, nombre, descripcion });
+    await connection.commit();
+    return res.status(201).json({ id: result.insertId, codigo, nombre, descripcion });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error creando marca:', error);
     if (error.code === 'ER_DUP_ENTRY') {
       return res.status(400).json({ error: 'Codigo o nombre de marca ya existe' });
     }
-    res.status(500).json({ error: 'Error al crear marca' });
+    return res.status(500).json({ error: 'Error al crear marca' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -119,13 +157,15 @@ exports.actualizarMarca = async (req, res) => {
     return res.status(400).json({ error: 'El nombre es requerido' });
   }
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
     const [prevRows] = await connection.execute('SELECT * FROM marcas WHERE id = ?', [
       req.params.id
     ]);
     if (!prevRows.length) {
-      connection.release();
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Marca no encontrada' });
     }
     await connection.execute(
@@ -145,23 +185,32 @@ exports.actualizarMarca = async (req, res) => {
       antes: prevRows[0],
       despues: { id: Number(req.params.id), codigo, nombre, descripcion: descripcion || null }
     });
-    connection.release();
-    res.json({ id: req.params.id, codigo, nombre, descripcion: descripcion || null });
+    await connection.commit();
+    return res.json({ id: req.params.id, codigo, nombre, descripcion: descripcion || null });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error actualizando marca:', error);
     if (error.code === 'ER_DUP_ENTRY') {
       return res.status(400).json({ error: 'Codigo o nombre de marca ya existe' });
     }
-    res.status(500).json({ error: 'Error al actualizar marca' });
+    return res.status(500).json({ error: 'Error al actualizar marca' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.eliminarMarca = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
     const [prevRows] = await connection.execute('SELECT * FROM marcas WHERE id = ?', [
       req.params.id
     ]);
+    if (!prevRows.length) {
+      await rollbackSilently(connection);
+      return res.status(404).json({ error: 'Marca no encontrada' });
+    }
     const [result] = await connection.execute('DELETE FROM marcas WHERE id = ?', [
       req.params.id
     ]);
@@ -174,13 +223,17 @@ exports.eliminarMarca = async (req, res) => {
       antes: prevRows[0] || null,
       despues: null
     });
-    connection.release();
     if (result.affectedRows === 0) {
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Marca no encontrada' });
     }
-    res.json({ mensaje: 'Marca eliminada correctamente' });
+    await connection.commit();
+    return res.json({ mensaje: 'Marca eliminada correctamente' });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error eliminando marca:', error);
-    res.status(500).json({ error: 'Error al eliminar marca' });
+    return res.status(500).json({ error: 'Error al eliminar marca' });
+  } finally {
+    releaseConnection(connection);
   }
 };

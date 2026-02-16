@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { marcasService, tiposMaquinasService } from '../../../core/services/apiServices';
 import '../styles/TiposMaquinasPage.css';
 
@@ -25,12 +25,7 @@ const TiposMaquinasPage = () => {
   });
   const MARCAS_PAGE_SIZE = 30;
 
-  useEffect(() => {
-    cargarTipos();
-    cargarMarcas(1);
-  }, []);
-
-  const cargarTipos = async () => {
+  const cargarTipos = useCallback(async () => {
     try {
       setLoading(true);
       const response = await tiposMaquinasService.getAll();
@@ -42,9 +37,9 @@ const TiposMaquinasPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const cargarMarcas = async (pageValue = marcasPage) => {
+  const cargarMarcas = useCallback(async (pageValue = 1) => {
     try {
       const response = await marcasService.getAll({ page: pageValue, limit: MARCAS_PAGE_SIZE });
       const data = response.data;
@@ -57,13 +52,18 @@ const TiposMaquinasPage = () => {
       console.error('Error cargando marcas:', err);
       setError('Error al cargar marcas');
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    cargarTipos();
+    cargarMarcas(1);
+  }, [cargarTipos, cargarMarcas]);
 
   useEffect(() => {
     if (vista === 'marcas') {
       cargarMarcas(marcasPage);
     }
-  }, [vista, marcasPage]);
+  }, [vista, marcasPage, cargarMarcas]);
 
   const resetForm = () => {
     setFormData({ nombre: '', descripcion: '' });

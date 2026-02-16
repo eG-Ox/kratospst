@@ -1,6 +1,19 @@
 const pool = require('../../core/config/database');
 const { isNonNegative } = require('../../shared/utils/validation');
 const { registrarHistorial } = require('../../shared/utils/historial');
+const isDuplicateKeyError = (error) => error?.code === 'ER_DUP_ENTRY';
+
+const MAX_HISTORIAL_LIMIT = 500;
+const MAX_PRODUCTOS_BUSQUEDA = 100;
+
+const releaseConnection = (connection) => {
+  if (!connection) return;
+  try {
+    connection.release();
+  } catch (_) {
+    // no-op
+  }
+};
 
 const escapeHtml = (value) => {
   if (value === null || value === undefined) {
@@ -104,13 +117,10 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${documentType} #${venta.id || 'N/A'} - KRATOS MAQUINARIAS</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
     @page { size: A4; margin: 6mm 8mm; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'Inter', sans-serif; line-height: 1.1; color: #1f2937; background: #fff; font-size: 0.7rem; }
+    body { font-family: Arial, sans-serif; line-height: 1.1; color: #1f2937; background: #fff; font-size: 0.7rem; }
     .control-buttons { position: fixed; top: 15px; right: 15px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
     .pdf-download-btn, .brand-toggle-btn, .pdf-print-btn { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; box-shadow: 0 3px 8px rgba(15, 23, 42, 0.25); font-size: 0.7rem; }
     .brand-toggle-btn.active { background: linear-gradient(135deg, #064e3b 0%, #065f46 100%); }
@@ -189,13 +199,12 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
     }
     .header, .info-section, .products-table, .observations-section, .payment-info, .summary-section, .footer { background: white; position: relative; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 </head>
 <body>
 <div class="control-buttons">
-  <button class="pdf-download-btn" onclick="downloadPDF()">📄 Guardar como PDF</button>
-  <button class="pdf-print-btn" onclick="printPDF()">🖨️ Imprimir</button>
-  <button class="brand-toggle-btn" onclick="toggleBrandColumn()">🏷️ Ocultar Marca</button>
+  <button class="pdf-download-btn" onclick="downloadPDF()">Guardar como PDF</button>
+  <button class="pdf-print-btn" onclick="printPDF()">Imprimir</button>
+  <button class="brand-toggle-btn" onclick="toggleBrandColumn()">Ocultar Marca</button>
 </div>
 
 <div class="invoice-container" id="invoice-content">
@@ -318,76 +327,25 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
     const button = document.querySelector('.brand-toggle-btn');
     if (table.classList.contains('hide-brand')) {
       table.classList.remove('hide-brand');
-      button.textContent = '🏷️ Ocultar Marca';
+      button.textContent = 'Ocultar Marca';
       button.classList.remove('active');
     } else {
       table.classList.add('hide-brand');
-      button.textContent = '🏷️ Mostrar Marca';
+      button.textContent = 'Mostrar Marca';
       button.classList.add('active');
     }
   }
 
-  async function downloadPDF() {
-    try {
-      const button = document.querySelector('.pdf-download-btn');
-      button.textContent = '⏳ Generando PDF...';
-      button.disabled = true;
-      const controlButtons = document.querySelector('.control-buttons');
-      controlButtons.style.display = 'none';
-      const element = document.getElementById('invoice-content');
-      const canvas = await html2canvas(element, {
-        scale: 1.8,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#ffffff',
-        width: element.offsetWidth,
-        height: element.scrollHeight,
-        scrollX: 0,
-        scrollY: 0,
-        logging: false,
-        imageTimeout: 0,
-        removeContainer: true
-      });
-      const { jsPDF } = window.jspdf;
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgData = canvas.toDataURL('image/png', 1.0);
-      const imgWidth = 210;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      const xOffset = 5;
-      const yOffset = 5;
-      const finalImgWidth = imgWidth - 10;
-      const finalImgHeight = imgHeight;
-      pdf.addImage(imgData, 'PNG', xOffset, yOffset, finalImgWidth, finalImgHeight);
-      const clienteNombre = '${escapeHtml(clienteDisplay)}'.trim();
-      const serie = ('${escapeHtml(venta.serie || 'COT')}' || 'COT').toLowerCase();
-      const numeroDoc = serie + '-' + '${correlativo}';
-      const clienteLimpio = clienteNombre
-        .replace(/[^a-zA-Z0-9\\s-]/g, '')
-        .replace(/\\s+/g, ' ')
-        .trim()
-        .toLowerCase();
-      const filename = clienteLimpio
-        ? clienteLimpio + ' - ' + numeroDoc + '.pdf'
-        : numeroDoc + '.pdf';
-      pdf.save(filename);
-      controlButtons.style.display = '';
-      button.textContent = '📄 Guardar como PDF';
-      button.disabled = false;
-    } catch (error) {
-      const controlButtons = document.querySelector('.control-buttons');
-      const button = document.querySelector('.pdf-download-btn');
-      controlButtons.style.display = '';
-      button.textContent = '📄 Guardar como PDF';
-      button.disabled = false;
-      alert('Error al generar el PDF. Por favor, intente nuevamente.');
-    }
+  function downloadPDF() {
+    // Sin dependencias externas: usar impresion nativa para guardar PDF.
+    printPDF();
   }
 
   function printPDF() {
     const button = document.querySelector('.pdf-print-btn');
     const controlButtons = document.querySelector('.control-buttons');
     if (button) {
-      button.textContent = '🖨️ Imprimiendo...';
+      button.textContent = 'Imprimiendo...';
       button.disabled = true;
     }
     if (controlButtons) {
@@ -398,7 +356,7 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
         controlButtons.style.display = '';
       }
       if (button) {
-        button.textContent = '🖨️ Imprimir';
+        button.textContent = 'Imprimir';
         button.disabled = false;
       }
       window.removeEventListener('afterprint', restore);
@@ -420,6 +378,35 @@ const getNextSerieCorrelativo = async (connection, serie) => {
   const start = 3550;
   const next = max >= start ? Number(max) + 1 : start;
   return { serie, correlativo: next };
+};
+
+const parsePositiveInt = (value, fallback) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const crearCotizacionCabeceraConRetry = async (connection, payload) => {
+  const { usuarioId, clienteId, total, descuento, notas, serie = 'COT' } = payload;
+  const maxAttempts = 5;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const { correlativo } = await getNextSerieCorrelativo(connection, serie);
+    try {
+      const [result] = await connection.execute(
+        `INSERT INTO cotizaciones
+         (usuario_id, cliente_id, total, descuento, nota, serie, correlativo, estado)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pendiente')`,
+        [usuarioId, clienteId || null, total, descuento, notas || null, serie, correlativo]
+      );
+      return { id: result.insertId, serie, correlativo };
+    } catch (error) {
+      if (!isDuplicateKeyError(error) || attempt === maxAttempts - 1) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error('No se pudo generar correlativo unico');
 };
 
 const normalizarProductos = (body) => {
@@ -482,8 +469,9 @@ const calcularTotales = (items) => {
 };
 
 exports.formularioCotizaciones = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [clientes] = await connection.execute(
       `SELECT id, tipo_cliente, dni, ruc, nombre, apellido, razon_social
        FROM clientes ORDER BY id DESC`
@@ -496,19 +484,21 @@ exports.formularioCotizaciones = async (req, res) => {
        FROM cotizaciones
        ORDER BY id DESC LIMIT 10`
     );
-    connection.release();
 
     res.json({ clientes, tipos, ultimas });
   } catch (error) {
     console.error('Error obteniendo formulario:', error);
     res.status(500).json({ error: 'Error al obtener datos de cotizacion' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.listarCotizaciones = async (req, res) => {
   const { cliente_id, usuario_id, fecha_inicio, fecha_fin } = req.query;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     let query = `
       SELECT c.id, c.fecha, c.total, c.descuento, c.serie, c.correlativo,
         c.usuario_id, c.cliente_id,
@@ -536,24 +526,26 @@ exports.listarCotizaciones = async (req, res) => {
     }
     query += ' ORDER BY c.fecha DESC';
     const [rows] = await connection.execute(query, params);
-    connection.release();
     res.json(rows);
   } catch (error) {
     console.error('Error listando cotizaciones:', error);
     res.status(500).json({ error: 'Error al listar cotizaciones' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.listarHistorialCotizaciones = async (req, res) => {
   const { cliente_id, usuario_id, fecha_inicio, fecha_fin, limite = 50, pagina = 1 } = req.query;
-  const limitValue = Number.parseInt(limite, 10);
-  const pageValue = Number.parseInt(pagina, 10);
-  const safeLimit = Number.isFinite(limitValue) && limitValue > 0 ? limitValue : 50;
-  const safePage = Number.isFinite(pageValue) && pageValue > 0 ? pageValue : 1;
+  const limitValue = parsePositiveInt(limite, 50);
+  const pageValue = parsePositiveInt(pagina, 1);
+  const safeLimit = Math.min(limitValue, MAX_HISTORIAL_LIMIT);
+  const safePage = pageValue;
   const offset = (safePage - 1) * safeLimit;
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     let query = `
       SELECT
         h.id,
@@ -598,23 +590,24 @@ exports.listarHistorialCotizaciones = async (req, res) => {
 
     query += ` ORDER BY h.created_at DESC LIMIT ${safeLimit} OFFSET ${offset}`;
     const [rows] = await connection.execute(query, params);
-    connection.release();
     res.json(rows);
   } catch (error) {
     console.error('Error listando historial de cotizaciones:', error);
     res.status(500).json({ error: 'Error al obtener historial de cotizaciones' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.obtenerCotizacion = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [cotizaciones] = await connection.execute(
       'SELECT * FROM cotizaciones WHERE id = ?',
       [req.params.id]
     );
     if (!cotizaciones.length) {
-      connection.release();
       return res.status(404).json({ error: 'Cotizacion no encontrada' });
     }
     const [detalles] = await connection.execute(
@@ -624,11 +617,12 @@ exports.obtenerCotizacion = async (req, res) => {
        WHERE d.cotizacion_id = ?`,
       [req.params.id]
     );
-    connection.release();
     res.json({ cotizacion: cotizaciones[0], detalles });
   } catch (error) {
     console.error('Error obteniendo cotizacion:', error);
     res.status(500).json({ error: 'Error al obtener cotizacion' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -644,17 +638,15 @@ exports.crearCotizacion = async (req, res) => {
   try {
     connection = await pool.getConnection();
     await connection.beginTransaction();
-    const { serie, correlativo } = await getNextSerieCorrelativo(connection, 'COT');
     const { descuento, total } = calcularTotales(items);
-
-    const [ventaResult] = await connection.execute(
-      `INSERT INTO cotizaciones
-       (usuario_id, cliente_id, total, descuento, nota, serie, correlativo, estado)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pendiente')`,
-      [req.usuario.id, cliente_id || null, total, descuento, notas || null, serie, correlativo]
-    );
-
-    const ventaId = ventaResult.insertId;
+    const { id: ventaId, serie, correlativo } = await crearCotizacionCabeceraConRetry(connection, {
+      usuarioId: req.usuario.id,
+      clienteId: cliente_id || null,
+      total,
+      descuento,
+      notas,
+      serie: 'COT'
+    });
     for (const item of items) {
       const subtotal = Number(item.precio_unitario || 0) * Number(item.cantidad || 0);
       await connection.execute(
@@ -690,8 +682,6 @@ exports.crearCotizacion = async (req, res) => {
     });
 
     await connection.commit();
-    connection.release();
-    connection = null;
 
     res.status(201).json({ id: ventaId, serie, correlativo });
   } catch (error) {
@@ -700,9 +690,10 @@ exports.crearCotizacion = async (req, res) => {
       try {
         await connection.rollback();
       } catch (_) {}
-      connection.release();
     }
     res.status(500).json({ error: 'Error al crear cotizacion' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -720,8 +711,6 @@ exports.editarCotizacion = async (req, res) => {
       req.params.id
     ]);
     if (!prevCot.length) {
-      connection.release();
-      connection = null;
       return res.status(404).json({ error: 'Cotizacion no encontrada' });
     }
     await connection.beginTransaction();
@@ -771,8 +760,6 @@ exports.editarCotizacion = async (req, res) => {
     });
 
     await connection.commit();
-    connection.release();
-    connection = null;
     res.json({ id: req.params.id });
   } catch (error) {
     console.error('Error editando cotizacion:', error);
@@ -780,15 +767,17 @@ exports.editarCotizacion = async (req, res) => {
       try {
         await connection.rollback();
       } catch (_) {}
-      connection.release();
     }
     res.status(500).json({ error: 'Error al editar cotizacion' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.verCotizacion = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [ventas] = await connection.execute(
       `SELECT v.*, c.tipo_cliente, c.dni as cliente_dni, c.ruc as cliente_ruc,
         c.nombre as cliente_nombre, c.apellido as cliente_apellido, c.razon_social,
@@ -803,7 +792,6 @@ exports.verCotizacion = async (req, res) => {
     );
 
     if (!ventas.length) {
-      connection.release();
       return res.status(404).json({ error: 'Cotizacion no encontrada' });
     }
 
@@ -814,7 +802,6 @@ exports.verCotizacion = async (req, res) => {
        WHERE d.cotizacion_id = ?`,
       [req.params.id]
     );
-    connection.release();
 
     const venta = ventas[0];
     const esCotizacion = true;
@@ -844,12 +831,15 @@ exports.verCotizacion = async (req, res) => {
   } catch (error) {
     console.error('Error obteniendo cotizacion:', error);
     res.status(500).json({ error: 'Error al obtener cotizacion' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.pdfCotizacion = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [ventas] = await connection.execute(
       `SELECT v.*, c.tipo_cliente, c.dni as cliente_dni, c.ruc as cliente_ruc,
         c.nombre as cliente_nombre, c.apellido as cliente_apellido, c.razon_social,
@@ -864,7 +854,6 @@ exports.pdfCotizacion = async (req, res) => {
     );
 
     if (!ventas.length) {
-      connection.release();
       return res.status(404).json({ error: 'Cotizacion no encontrada' });
     }
 
@@ -875,7 +864,6 @@ exports.pdfCotizacion = async (req, res) => {
        WHERE d.cotizacion_id = ?`,
       [req.params.id]
     );
-    connection.release();
 
     const venta = ventas[0];
     const esCotizacion = true;
@@ -905,17 +893,20 @@ exports.pdfCotizacion = async (req, res) => {
   } catch (error) {
     console.error('Error generando pdf:', error);
     res.status(500).json({ error: 'Error al generar pdf' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.buscarProductos = async (req, res) => {
   const { q = '', limit = 20 } = req.query;
   const term = `%${q}%`;
-  const limitValue = Number.parseInt(limit, 10);
-  const safeLimit = Number.isFinite(limitValue) && limitValue > 0 ? limitValue : 20;
+  const limitValue = parsePositiveInt(limit, 20);
+  const safeLimit = Math.min(limitValue, MAX_PRODUCTOS_BUSQUEDA);
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(
       `SELECT id, codigo, descripcion, marca, precio_venta, stock
       FROM maquinas
@@ -924,23 +915,24 @@ exports.buscarProductos = async (req, res) => {
        LIMIT ${safeLimit}`,
       [term, term, term]
     );
-    connection.release();
     res.json(rows);
   } catch (error) {
     console.error('Error buscando productos:', error);
     res.status(500).json({ error: 'Error al buscar productos' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.obtenerProducto = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(
       `SELECT id, codigo, descripcion, marca, precio_venta, stock
        FROM maquinas WHERE id = ? AND activo = TRUE`,
       [req.params.id]
     );
-    connection.release();
 
     if (!rows.length) {
       return res.status(404).json({ error: 'Producto no encontrado' });
@@ -950,14 +942,17 @@ exports.obtenerProducto = async (req, res) => {
   } catch (error) {
     console.error('Error obteniendo producto:', error);
     res.status(500).json({ error: 'Error al obtener producto' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.filtrosCotizacion = async (req, res) => {
   const { tipo } = req.query;
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     let query = `SELECT DISTINCT marca FROM maquinas WHERE activo = TRUE AND marca IS NOT NULL AND marca <> ''`;
     const params = [];
     if (tipo) {
@@ -966,20 +961,22 @@ exports.filtrosCotizacion = async (req, res) => {
     }
     query += ' ORDER BY marca';
     const [rows] = await connection.execute(query, params);
-    connection.release();
 
     res.json(rows.map((row) => row.marca));
   } catch (error) {
     console.error('Error obteniendo marcas:', error);
     res.status(500).json({ error: 'Error al obtener marcas' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.productosCotizacion = async (req, res) => {
   const { tipo, marca } = req.query;
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     let query = `SELECT id, codigo, descripcion, marca, precio_venta, stock
       FROM maquinas WHERE 1=1`;
     const params = [];
@@ -993,11 +990,12 @@ exports.productosCotizacion = async (req, res) => {
     }
     query += ' ORDER BY descripcion';
     const [rows] = await connection.execute(query, params);
-    connection.release();
 
     res.json(rows);
   } catch (error) {
     console.error('Error obteniendo productos:', error);
     res.status(500).json({ error: 'Error al obtener productos' });
+  } finally {
+    releaseConnection(connection);
   }
 };

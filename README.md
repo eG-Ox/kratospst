@@ -9,7 +9,7 @@ Sistema completo de inventario desarrollado con **Node.js/Express** (Backend), *
 - **Gestor de Inventario**: Ingresos/Salidas en un solo módulo.
 - **Escaneo de códigos**: Soporte con cámara (BarcodeDetector + ZXing) y modo “escanear una vez”.
 - **Stock y alertas**: Indicadores de stock bajo y manejo de movimientos.
-- **Autenticación**: Login con JWT y usuario admin por defecto.
+- **Autenticación**: Login con JWT y soporte de sesión por cookie httpOnly.
 - **Interfaz moderna**: Diseño responsivo y optimizado.
 
 ## 📋 Requisitos
@@ -38,6 +38,11 @@ DB_PORT=3306
 PORT=5000
 NODE_ENV=development
 JWT_SECRET=tu_secreto_super_seguro_aqui
+TRUST_PROXY=0
+SEED_DEFAULT_ADMIN=false
+ADMIN_EMAIL=admin
+ADMIN_PASSWORD=define_un_password_seguro
+AUTH_COOKIE_SECURE=false
 ```
 
 Inicializar la base de datos:
@@ -82,6 +87,11 @@ Para cámara en móviles es obligatorio HTTPS.
 1) Frontend build con API relativa:
 ```env
 REACT_APP_API_URL=/api
+```
+
+Backend `.env` recomendado en LAN con Caddy:
+```env
+TRUST_PROXY=1
 ```
 
 ```bash

@@ -1,9 +1,37 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 
+const AUTH_COOKIE_NAME = 'kratos_token';
+
+const parseCookies = (cookieHeader = '') => {
+  const parsed = {};
+  String(cookieHeader || '')
+    .split(';')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .forEach((pair) => {
+      const separator = pair.indexOf('=');
+      if (separator <= 0) return;
+      const key = pair.slice(0, separator).trim();
+      const value = pair.slice(separator + 1).trim();
+      if (!key) return;
+      try {
+        parsed[key] = decodeURIComponent(value);
+      } catch (_) {
+        parsed[key] = value;
+      }
+    });
+  return parsed;
+};
+
 const obtenerToken = (req) => {
   const headerToken = req.headers.authorization?.split(' ')[1];
   if (headerToken) return headerToken;
+  const cookieHeader = req.headers.cookie || '';
+  const cookies = parseCookies(cookieHeader);
+  if (cookies[AUTH_COOKIE_NAME]) {
+    return cookies[AUTH_COOKIE_NAME];
+  }
   return null;
 };
 
@@ -35,7 +63,7 @@ const autenticar = async (req, res, next) => {
     if (!token) {
       return res.status(401).json({ error: 'Token no proporcionado' });
     }
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'tu_secreto_aqui');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.usuario = decoded;
     const permisos = await cargarPermisos(decoded.rol);
     if (permisos) {
@@ -75,4 +103,13 @@ const autorizar = (clave) => (req, res, next) => {
   return next();
 };
 
-module.exports = { autenticar, soloAdmin, autorizar, tienePermiso };
+module.exports = {
+  AUTH_COOKIE_NAME,
+  autenticar,
+  soloAdmin,
+  autorizar,
+  tienePermiso,
+  // Expuesto para pruebas unitarias.
+  parseCookies,
+  obtenerToken
+};

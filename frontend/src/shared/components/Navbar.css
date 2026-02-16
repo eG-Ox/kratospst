@@ -1,17 +1,17 @@
 .navbar {
-  background: rgba(255, 255, 255, 0.82);
+  background: #ffffff;
   color: #0f172a;
   padding: 12px 18px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
   border-bottom: 1px solid rgba(15, 23, 42, 0.08);
   position: sticky;
   top: 0;
   z-index: 1000;
-  backdrop-filter: blur(16px);
+  backdrop-filter: none;
 }
 
 .menu-toggle {
@@ -20,7 +20,7 @@
   border-radius: 12px;
   border: 1px solid rgba(52, 152, 219, 0.35);
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(52, 152, 219, 0.08));
-  box-shadow: 0 10px 18px rgba(44, 62, 80, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  box-shadow: 0 3px 8px rgba(44, 62, 80, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.7);
   display: inline-flex;
   flex-direction: column;
   justify-content: center;
@@ -44,8 +44,8 @@
 
 .menu-toggle:hover {
   border-color: rgba(52, 152, 219, 0.55);
-  box-shadow: 0 14px 24px rgba(52, 152, 219, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(52, 152, 219, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  transform: none;
 }
 
 .menu-toggle:active {
@@ -287,7 +287,7 @@
   height: auto;
   background: rgba(2, 6, 23, 0.4);
   z-index: 1100;
-  backdrop-filter: blur(3px);
+  backdrop-filter: none;
 }
 
 @media (max-width: 640px) {

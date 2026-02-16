@@ -34,15 +34,21 @@ const useVentaImpresion = ({
 
   const abrirRotulo = (venta) => {
     if (!venta) return;
-    const agenciaDestino = `${venta.agencia || '-'}` + (venta.destino ? ` - ${venta.destino}` : '');
-    const agenciaOtro = venta.agencia === 'OTROS' && venta.agenciaOtro ? venta.agenciaOtro : '';
+    const agenciaDestinoRaw = `${venta.agencia || '-'}` + (venta.destino ? ` - ${venta.destino}` : '');
+    const agenciaOtroRaw = venta.agencia === 'OTROS' && venta.agenciaOtro ? venta.agenciaOtro : '';
+    const documentoTipo = escapeHtml((venta.documentoTipo || 'dni').toUpperCase());
+    const documento = escapeHtml(venta.documento || '-');
+    const clienteNombre = escapeHtml(venta.clienteNombre || '-');
+    const agenciaDestino = escapeHtml(agenciaDestinoRaw);
+    const agenciaOtro = escapeHtml(agenciaOtroRaw);
+    const ventaId = escapeHtml(venta.id);
 
     const html = `
       <!doctype html>
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>Rotulo Venta #${venta.id}</title>
+          <title>Rotulo Venta #${ventaId}</title>
           <style>
             @page { size: A4 landscape; margin: 0; }
             * { box-sizing: border-box; }
@@ -114,9 +120,9 @@ const useVentaImpresion = ({
             <img src="/static/img/KRATOS_LOGO.PNG" class="logo" alt="Kratos" />
             <div class="content" id="rotuloContent">
               <div class="header">
-                <div class="dni" data-base="22">${(venta.documentoTipo || 'dni').toUpperCase()} ${venta.documento || '-'}</div>
+                <div class="dni" data-base="22">${documentoTipo} ${documento}</div>
               </div>
-              <div class="nombre" data-base="30">${venta.clienteNombre || '-'}</div>
+              <div class="nombre" data-base="30">${clienteNombre}</div>
               <div class="destino" data-base="20">${agenciaDestino}</div>
               ${agenciaOtro ? `<div class="agencia" data-base="18">${agenciaOtro}</div>` : ''}
             </div>

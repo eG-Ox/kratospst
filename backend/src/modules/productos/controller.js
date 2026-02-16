@@ -360,6 +360,7 @@ exports.crearMaquina = async (req, res) => {
     }
 
     connection = await pool.getConnection();
+    await connection.beginTransaction();
 
     // Verificar que el tipo de maquina existe
     const [tipo] = await connection.execute(
@@ -368,6 +369,7 @@ exports.crearMaquina = async (req, res) => {
     );
 
     if (tipo.length === 0) {
+      await connection.rollback();
       connection.release();
       connection = null;
       return res.status(400).json({ error: 'El tipo de maquina no existe' });
@@ -436,6 +438,7 @@ exports.crearMaquina = async (req, res) => {
           activo: 1
         }
       });
+      await connection.commit();
       connection.release();
       connection = null;
       return res.status(200).json({
@@ -506,6 +509,7 @@ exports.crearMaquina = async (req, res) => {
         precio_minimo: precioMinimoNum
       }
     });
+    await connection.commit();
     connection.release();
     connection = null;
 
@@ -530,6 +534,9 @@ exports.crearMaquina = async (req, res) => {
       fs.unlink(req.file.path, () => {});
     }
     if (connection) {
+      try {
+        await connection.rollback();
+      } catch (_) {}
       connection.release();
       connection = null;
     }
@@ -564,6 +571,7 @@ exports.actualizarMaquina = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
+    await connection.beginTransaction();
 
     // Obtener la maquina actual
     const [maquinaActual] = await connection.execute(
@@ -572,6 +580,7 @@ exports.actualizarMaquina = async (req, res) => {
     );
 
     if (maquinaActual.length === 0) {
+      await connection.rollback();
       connection.release();
       connection = null;
       return res.status(404).json({ error: 'Maquina no encontrada' });
@@ -604,16 +613,19 @@ exports.actualizarMaquina = async (req, res) => {
     const descripcionBusqueda = normalizarBusqueda(descripcion);
 
     if (!isNonNegative(precioCompraNum) || !isNonNegative(precioVentaNum)) {
+      await connection.rollback();
       connection.release();
       connection = null;
       return res.status(400).json({ error: 'Precio de compra/venta invalido' });
     }
     if (!isNonNegative(stockNum)) {
+      await connection.rollback();
       connection.release();
       connection = null;
       return res.status(400).json({ error: 'Stock invalido' });
     }
     if (precioCompraNum > precioVentaNum) {
+      await connection.rollback();
       connection.release();
       connection = null;
       return res
@@ -621,6 +633,7 @@ exports.actualizarMaquina = async (req, res) => {
         .json({ error: 'Precio de compra no puede ser mayor que precio de venta' });
     }
     if (precioMinimoNum > precioVentaNum) {
+      await connection.rollback();
       connection.release();
       connection = null;
       return res
@@ -644,6 +657,7 @@ exports.actualizarMaquina = async (req, res) => {
         ubicacion_numero
       });
       if (parsed.error) {
+        await connection.rollback();
         connection.release();
         connection = null;
         return res.status(400).json({ error: parsed.error });
@@ -714,6 +728,7 @@ exports.actualizarMaquina = async (req, res) => {
         precio_minimo: precioMinimoNum
       }
     });
+    await connection.commit();
     connection.release();
     connection = null;
 
@@ -738,6 +753,9 @@ exports.actualizarMaquina = async (req, res) => {
       fs.unlink(req.file.path, () => {});
     }
     if (connection) {
+      try {
+        await connection.rollback();
+      } catch (_) {}
       connection.release();
       connection = null;
     }

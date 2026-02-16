@@ -8,7 +8,7 @@ const autenticar = (req, res, next) => {
       return res.status(401).json({ error: 'Token no proporcionado' });
     }
     
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'tu_secreto_aqui');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.usuario = decoded;
     next();
   } catch (error) {

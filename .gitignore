@@ -4,6 +4,7 @@ node_modules/
 
 # Build outputs
 frontend/build/
+frontend/build2/
 **/dist/
 **/build/
 

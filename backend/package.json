@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "init-db": "node scripts/initDB.js"
+    "init-db": "node scripts/initDB.js",
+    "test": "node tests/run-tests.js"
   },
   "keywords": [
     "inventario",

@@ -1,6 +1,14 @@
 const pool = require('../../core/config/database');
 const { ExcelJS, addSheetFromObjects, workbookToBuffer } = require('../../shared/utils/excel');
 const { registrarHistorial } = require('../../shared/utils/historial');
+const releaseConnection = (connection) => {
+  if (!connection) return;
+  try {
+    connection.release();
+  } catch (_) {
+    // no-op
+  }
+};
 
 const UBICACION_VALIDAS = new Set(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']);
 
@@ -49,8 +57,9 @@ const obtenerInventario = async (connection, id) => {
 
 exports.crearInventario = async (req, res) => {
   const { observaciones } = req.body;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [result] = await connection.execute(
       `INSERT INTO inventarios (usuario_id, estado, observaciones)
        VALUES (?, 'abierto', ?)`,
@@ -65,18 +74,20 @@ exports.crearInventario = async (req, res) => {
       antes: null,
       despues: { id: result.insertId, estado: 'abierto' }
     });
-    connection.release();
     res.status(201).json({ id: result.insertId, estado: 'abierto' });
   } catch (error) {
     console.error('Error creando inventario:', error);
     res.status(500).json({ error: 'Error al crear inventario' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.listarInventarios = async (req, res) => {
   const { fecha_inicio, fecha_fin } = req.query;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     let query = `
       SELECT i.*, u.nombre as usuario_nombre,
         (SELECT COUNT(*) FROM inventario_detalle d WHERE d.inventario_id = i.id) as total_items
@@ -95,17 +106,19 @@ exports.listarInventarios = async (req, res) => {
     }
     query += ' ORDER BY i.created_at DESC';
     const [rows] = await connection.execute(query, params);
-    connection.release();
     res.json(rows);
   } catch (error) {
     console.error('Error listando inventarios:', error);
     res.status(500).json({ error: 'Error al listar inventarios' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.obtenerInventario = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [inventarios] = await connection.execute(
       `SELECT i.*, u.nombre as usuario_nombre
        FROM inventarios i
@@ -115,7 +128,6 @@ exports.obtenerInventario = async (req, res) => {
     );
     const inventario = inventarios[0] || null;
     if (!inventario) {
-      connection.release();
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
     const [detalles] = await connection.execute(
@@ -127,11 +139,12 @@ exports.obtenerInventario = async (req, res) => {
        WHERE d.inventario_id = ?`,
       [req.params.id]
     );
-    connection.release();
     res.json({ inventario, detalles: detalles.map(mapDetalle) });
   } catch (error) {
     console.error('Error obteniendo inventario:', error);
     res.status(500).json({ error: 'Error al obtener inventario' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -140,15 +153,14 @@ exports.eliminarDetalle = async (req, res) => {
   if (!producto_id && !detalle_id) {
     return res.status(400).json({ error: 'producto_id o detalle_id requerido' });
   }
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const inventario = await obtenerInventario(connection, req.params.id);
     if (!inventario) {
-      connection.release();
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
     if (inventario.estado !== 'abierto') {
-      connection.release();
       return res.status(400).json({ error: 'Inventario no esta abierto' });
     }
     if (detalle_id) {
@@ -162,11 +174,12 @@ exports.eliminarDetalle = async (req, res) => {
         [req.params.id, producto_id]
       );
     }
-    connection.release();
     res.json({ mensaje: 'Detalle eliminado' });
   } catch (error) {
     console.error('Error eliminando detalle:', error);
     res.status(500).json({ error: 'Error al eliminar detalle' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -176,6 +189,7 @@ exports.agregarConteo = async (req, res) => {
     return res.status(400).json({ error: 'Codigo requerido' });
   }
 
+  let connection;
   try {
     const rawCodigo = String(codigo || '').trim();
     const tokenCodigo = rawCodigo
@@ -191,14 +205,12 @@ exports.agregarConteo = async (req, res) => {
       return res.status(400).json({ error: ubicacionParse.error });
     }
 
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const inventario = await obtenerInventario(connection, req.params.id);
     if (!inventario) {
-      connection.release();
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
     if (inventario.estado !== 'abierto') {
-      connection.release();
       return res.status(400).json({ error: 'Inventario no esta abierto' });
     }
 
@@ -207,7 +219,6 @@ exports.agregarConteo = async (req, res) => {
       [codigoFinal]
     );
     if (!productos.length) {
-      connection.release();
       return res.status(404).json({ error: 'Producto no encontrado' });
     }
 
@@ -232,11 +243,12 @@ exports.agregarConteo = async (req, res) => {
       ]
     );
 
-    connection.release();
     res.json({ mensaje: 'Conteo actualizado' });
   } catch (error) {
     console.error('Error agregando conteo:', error);
     res.status(500).json({ error: 'Error al agregar conteo' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -245,15 +257,14 @@ exports.ajustarConteo = async (req, res) => {
   if (!producto_id && !detalle_id) {
     return res.status(400).json({ error: 'producto_id o detalle_id requerido' });
   }
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const inventario = await obtenerInventario(connection, req.params.id);
     if (!inventario) {
-      connection.release();
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
     if (inventario.estado !== 'abierto') {
-      connection.release();
       return res.status(400).json({ error: 'Inventario no esta abierto' });
     }
 
@@ -264,7 +275,6 @@ exports.ajustarConteo = async (req, res) => {
       [req.params.id, detalle_id || producto_id]
     );
     if (!detalles.length) {
-      connection.release();
       return res.status(404).json({ error: 'Detalle no encontrado' });
     }
     const nuevoConteo = Number(conteo || 0);
@@ -275,24 +285,24 @@ exports.ajustarConteo = async (req, res) => {
        WHERE id = ?`,
       [nuevoConteo, diferencia, detalles[0].id]
     );
-    connection.release();
     res.json({ mensaje: 'Conteo ajustado' });
   } catch (error) {
     console.error('Error ajustando conteo:', error);
     res.status(500).json({ error: 'Error al ajustar conteo' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.cerrarInventario = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const inventario = await obtenerInventario(connection, req.params.id);
     if (!inventario) {
-      connection.release();
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
     if (inventario.estado !== 'abierto') {
-      connection.release();
       return res.status(400).json({ error: 'Inventario ya esta cerrado' });
     }
     await connection.execute(
@@ -308,11 +318,12 @@ exports.cerrarInventario = async (req, res) => {
       antes: { estado: inventario.estado },
       despues: { estado: 'cerrado' }
     });
-    connection.release();
     res.json({ mensaje: 'Inventario cerrado' });
   } catch (error) {
     console.error('Error cerrando inventario:', error);
     res.status(500).json({ error: 'Error al cerrar inventario' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -322,11 +333,9 @@ exports.eliminarInventario = async (req, res) => {
     connection = await pool.getConnection();
     const inventario = await obtenerInventario(connection, req.params.id);
     if (!inventario) {
-      connection.release();
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
     if (inventario.estado !== 'abierto') {
-      connection.release();
       return res.status(400).json({ error: 'Solo se puede eliminar inventarios abiertos' });
     }
 
@@ -348,19 +357,19 @@ exports.eliminarInventario = async (req, res) => {
     });
 
     await connection.commit();
-    connection.release();
     res.json({ mensaje: 'Inventario eliminado' });
   } catch (error) {
     console.error('Error eliminando inventario:', error);
     if (connection) {
       try {
         await connection.rollback();
-        connection.release();
       } catch (rollbackError) {
         console.error('Error en rollback inventario:', rollbackError);
       }
     }
     res.status(500).json({ error: 'Error al eliminar inventario' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -372,7 +381,6 @@ exports.aplicarStock = async (req, res) => {
     const inventario = await obtenerInventario(connection, req.params.id);
     if (!inventario) {
       await connection.rollback();
-      connection.release();
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
     const [ultimoRows] = await connection.execute(
@@ -381,24 +389,20 @@ exports.aplicarStock = async (req, res) => {
     const ultimoId = ultimoRows[0]?.id;
     if (ultimoId && Number(ultimoId) !== Number(req.params.id)) {
       await connection.rollback();
-      connection.release();
       return res.status(400).json({ error: 'Solo se puede aplicar el ultimo inventario' });
     }
     if (inventario.estado !== 'cerrado') {
       await connection.rollback();
-      connection.release();
       return res.status(400).json({ error: 'Inventario debe estar cerrado' });
     }
     const hoy = new Date().toISOString().slice(0, 10);
     const fechaInventario = new Date(inventario.created_at).toISOString().slice(0, 10);
     if (hoy !== fechaInventario) {
       await connection.rollback();
-      connection.release();
       return res.status(400).json({ error: 'Solo se puede aplicar stock el mismo dia' });
     }
     if (inventario.aplicado_at) {
       await connection.rollback();
-      connection.release();
       return res.status(400).json({ error: 'Inventario ya aplicado' });
     }
 
@@ -526,26 +530,26 @@ exports.aplicarStock = async (req, res) => {
     });
 
     await connection.commit();
-    connection.release();
     res.json({ mensaje: 'Stock actualizado' });
   } catch (error) {
     console.error('Error aplicando stock:', error);
     if (connection) {
       try {
         await connection.rollback();
-        connection.release();
       } catch (_) {}
     }
     res.status(500).json({ error: 'Error al aplicar stock' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.exportarInventario = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const inventario = await obtenerInventario(connection, req.params.id);
     if (!inventario) {
-      connection.release();
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
 
@@ -556,7 +560,6 @@ exports.exportarInventario = async (req, res) => {
        WHERE d.inventario_id = ?`,
       [req.params.id]
     );
-    connection.release();
 
     const data = detalles.map((row) => ({
       codigo: row.codigo || '',
@@ -583,5 +586,7 @@ exports.exportarInventario = async (req, res) => {
   } catch (error) {
     console.error('Error exportando inventario:', error);
     res.status(500).json({ error: 'Error al exportar inventario' });
+  } finally {
+    releaseConnection(connection);
   }
 };

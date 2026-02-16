@@ -1,4 +1,4 @@
-const pool = require('../config/database');
+﻿const pool = require('../config/database');
 
 const normalizarBusqueda = (value) =>
   String(value || '')
@@ -86,6 +86,27 @@ const sincronizarUbicacionesBase = async (connection) => {
   }
 };
 
+const foreignKeyExists = async (connection, tableName, constraintName) => {
+  const [rows] = await connection.execute(
+    `SELECT 1
+     FROM information_schema.TABLE_CONSTRAINTS
+     WHERE CONSTRAINT_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND CONSTRAINT_NAME = ?
+       AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+     LIMIT 1`,
+    [tableName, constraintName]
+  );
+  return rows.length > 0;
+};
+
+const addForeignKeyIfMissing = async (connection, tableName, constraintName, statement) => {
+  if (await foreignKeyExists(connection, tableName, constraintName)) {
+    return;
+  }
+  await connection.execute(statement);
+};
+
 // Crear tabla de usuarios
 const crearUsuarios = `
 CREATE TABLE IF NOT EXISTS usuarios (
@@ -93,7 +114,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   nombre VARCHAR(100) NOT NULL,
   email VARCHAR(100) NOT NULL UNIQUE,
   telefono VARCHAR(30),
-  contraseña VARCHAR(255) NOT NULL,
+  contraseÃ±a VARCHAR(255) NOT NULL,
   rol ENUM('admin', 'ventas', 'logistica') NOT NULL DEFAULT 'ventas',
   activo BOOLEAN DEFAULT TRUE,
   fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -102,7 +123,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
 );
 `;
 
-// Crear tabla de tipos de máquinas
+// Crear tabla de tipos de mÃ¡quinas
 const crearTiposMaquinas = `
 CREATE TABLE IF NOT EXISTS tipos_maquinas (
   id INT PRIMARY KEY AUTO_INCREMENT,
@@ -125,7 +146,7 @@ CREATE TABLE IF NOT EXISTS marcas (
 );
 `;
 
-// Crear tabla de máquinas
+// Crear tabla de mÃ¡quinas
 const crearMaquinas = `
 CREATE TABLE IF NOT EXISTS maquinas (
   id INT PRIMARY KEY AUTO_INCREMENT,
@@ -151,6 +172,7 @@ CREATE TABLE IF NOT EXISTS maquinas (
   INDEX idx_codigo_busqueda (codigo_busqueda),
   INDEX idx_desc_busqueda (descripcion_busqueda),
   INDEX idx_tipo (tipo_maquina_id),
+  INDEX idx_tipo_stock (tipo_maquina_id, stock),
   INDEX idx_marca (marca),
   INDEX idx_activo (activo),
   INDEX idx_stock (stock)
@@ -170,8 +192,10 @@ CREATE TABLE IF NOT EXISTS ingresos_salidas (
   FOREIGN KEY (maquina_id) REFERENCES maquinas(id) ON DELETE RESTRICT,
   FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE RESTRICT,
   INDEX idx_maquina (maquina_id),
+  INDEX idx_maquina_fecha (maquina_id, fecha),
   INDEX idx_usuario (usuario_id),
-  INDEX idx_fecha (fecha)
+  INDEX idx_fecha (fecha),
+  INDEX idx_fecha_tipo (fecha, tipo)
 );
 `;
 
@@ -189,6 +213,8 @@ CREATE TABLE IF NOT EXISTS cotizaciones (
   estado VARCHAR(30) DEFAULT 'pendiente',
   serie VARCHAR(10),
   correlativo INT,
+  UNIQUE KEY uniq_cotizacion_serie_correlativo (serie, correlativo),
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE RESTRICT,
   INDEX idx_usuario (usuario_id),
   INDEX idx_cliente (cliente_id)
 );
@@ -205,6 +231,8 @@ CREATE TABLE IF NOT EXISTS detalle_cotizacion (
   precio_regular DECIMAL(10, 2) NOT NULL,
   subtotal DECIMAL(10, 2) NOT NULL,
   almacen_origen VARCHAR(30) DEFAULT 'productos',
+  FOREIGN KEY (cotizacion_id) REFERENCES cotizaciones(id) ON DELETE CASCADE,
+  FOREIGN KEY (producto_id) REFERENCES maquinas(id) ON DELETE RESTRICT,
   INDEX idx_cotizacion (cotizacion_id),
   INDEX idx_producto (producto_id)
 );
@@ -219,6 +247,8 @@ CREATE TABLE IF NOT EXISTS historial_cotizaciones (
   accion VARCHAR(50) NOT NULL,
   descripcion TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (cotizacion_id) REFERENCES cotizaciones(id) ON DELETE CASCADE,
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE RESTRICT,
   INDEX idx_cotizacion (cotizacion_id),
   INDEX idx_usuario (usuario_id)
 );
@@ -234,6 +264,7 @@ CREATE TABLE IF NOT EXISTS kits (
   precio_total DECIMAL(10, 2) NOT NULL DEFAULT 0,
   activo BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE RESTRICT,
   INDEX idx_usuario (usuario_id),
   INDEX idx_activo (activo)
 );
@@ -250,6 +281,8 @@ CREATE TABLE IF NOT EXISTS kit_productos (
   precio_final DECIMAL(10, 2) NOT NULL,
   subtotal DECIMAL(10, 2) NOT NULL,
   almacen_origen VARCHAR(30) DEFAULT 'productos',
+  FOREIGN KEY (kit_id) REFERENCES kits(id) ON DELETE CASCADE,
+  FOREIGN KEY (producto_id) REFERENCES maquinas(id) ON DELETE RESTRICT,
   INDEX idx_kit (kit_id),
   INDEX idx_producto (producto_id)
 );
@@ -360,7 +393,7 @@ const crearClientes = `
 CREATE TABLE IF NOT EXISTS clientes (
   id INT PRIMARY KEY AUTO_INCREMENT,
   usuario_id INT,
-  tipo_cliente ENUM('natural', 'juridico') NOT NULL,
+  tipo_cliente ENUM('natural', 'juridico', 'ce') NOT NULL,
   dni VARCHAR(8) UNIQUE,
   ruc VARCHAR(11) UNIQUE,
   nombre VARCHAR(100),
@@ -444,6 +477,7 @@ CREATE TABLE IF NOT EXISTS ventas_detalle (
   FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
   INDEX idx_venta_detalle (venta_id),
   INDEX idx_venta_tipo (tipo),
+  INDEX idx_venta_tipo_picked (venta_id, tipo, cantidad_picked),
   INDEX idx_detalle_codigo (codigo),
   INDEX idx_detalle_desc (descripcion(100))
 );
@@ -455,9 +489,9 @@ async function inicializarBaseDatos() {
     
     console.log('Creando tabla usuarios...');
     await connection.execute(crearUsuarios);
-    console.log('✓ Tabla usuarios creada exitosamente');
+    console.log('âœ“ Tabla usuarios creada exitosamente');
 
-    // Asegurar columna telefono en usuarios (por si ya existía sin esa columna)
+    // Asegurar columna telefono en usuarios (por si ya existÃ­a sin esa columna)
     try {
       await connection.execute('ALTER TABLE usuarios ADD COLUMN telefono VARCHAR(30) NULL AFTER email');
     } catch (error) {
@@ -467,7 +501,7 @@ async function inicializarBaseDatos() {
     }
 
 
-    // Actualizar enum de roles si ya existÃ­a
+    // Actualizar enum de roles si ya existÃƒÂ­a
     try {
       await connection.execute(
         "ALTER TABLE usuarios MODIFY COLUMN rol ENUM('admin','ventas','logistica') NOT NULL DEFAULT 'ventas'"
@@ -485,13 +519,13 @@ async function inicializarBaseDatos() {
     
     console.log('Creando tabla tipos_maquinas...');
     await connection.execute(crearTiposMaquinas);
-    console.log('✓ Tabla tipos_maquinas creada exitosamente');
+    console.log('âœ“ Tabla tipos_maquinas creada exitosamente');
 
     console.log('Creando tabla marcas...');
     await connection.execute(crearMarcas);
-    console.log('✓ Tabla marcas creada exitosamente');
+    console.log('âœ“ Tabla marcas creada exitosamente');
 
-    // Insertar marcas iniciales si la tabla está vacía
+    // Insertar marcas iniciales si la tabla estÃ¡ vacÃ­a
     try {
       const [marcaCountRows] = await connection.execute('SELECT COUNT(*) as total FROM marcas');
       const marcaCount = marcaCountRows?.[0]?.total || 0;
@@ -534,7 +568,7 @@ async function inicializarBaseDatos() {
             [marca.codigo, marca.nombre, null]
           );
         }
-        console.log('✓ Marcas iniciales insertadas');
+        console.log('âœ“ Marcas iniciales insertadas');
       }
     } catch (error) {
       console.log('Aviso insertando marcas iniciales:', error.message);
@@ -542,7 +576,7 @@ async function inicializarBaseDatos() {
     
     console.log('Creando tabla maquinas...');
     await connection.execute(crearMaquinas);
-    console.log('✓ Tabla maquinas creada exitosamente');
+    console.log('âœ“ Tabla maquinas creada exitosamente');
 
     // Asegurar columnas de ubicacion en maquinas
     try {
@@ -617,6 +651,13 @@ async function inicializarBaseDatos() {
         throw error;
       }
     }
+    try {
+      await connection.execute('CREATE INDEX idx_tipo_stock ON maquinas (tipo_maquina_id, stock)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
 
     try {
       await actualizarBusquedaMaquinas(connection);
@@ -626,35 +667,63 @@ async function inicializarBaseDatos() {
     
     console.log('Creando tabla ingresos_salidas...');
     await connection.execute(crearIngresouSalidas);
-    console.log('✓ Tabla ingresos_salidas creada exitosamente');
+    try {
+      await connection.execute('CREATE INDEX idx_fecha_tipo ON ingresos_salidas (fecha, tipo)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute('CREATE INDEX idx_maquina_fecha ON ingresos_salidas (maquina_id, fecha)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
+    console.log('âœ“ Tabla ingresos_salidas creada exitosamente');
 
     console.log('Creando tabla cotizaciones...');
     await connection.execute(crearCotizaciones);
-    console.log('✓ Tabla cotizaciones creada exitosamente');
+    try {
+      await connection.execute(
+        'CREATE UNIQUE INDEX uniq_cotizacion_serie_correlativo ON cotizaciones (serie, correlativo)'
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME' && error.code !== 'ER_DUP_ENTRY') {
+        throw error;
+      }
+      if (error.code === 'ER_DUP_ENTRY') {
+        console.log(
+          'Aviso: existen cotizaciones duplicadas en (serie, correlativo). No se pudo crear indice unico.'
+        );
+      }
+    }
+    console.log('âœ“ Tabla cotizaciones creada exitosamente');
 
     console.log('Creando tabla detalle_cotizacion...');
     await connection.execute(crearDetalleCotizacion);
-    console.log('✓ Tabla detalle_cotizacion creada exitosamente');
+    console.log('âœ“ Tabla detalle_cotizacion creada exitosamente');
 
     console.log('Creando tabla historial_cotizaciones...');
     await connection.execute(crearHistorialCotizaciones);
-    console.log('✓ Tabla historial_cotizaciones creada exitosamente');
+    console.log('âœ“ Tabla historial_cotizaciones creada exitosamente');
 
     console.log('Creando tabla kits...');
     await connection.execute(crearKits);
-    console.log('✓ Tabla kits creada exitosamente');
+    console.log('âœ“ Tabla kits creada exitosamente');
 
     console.log('Creando tabla kit_productos...');
     await connection.execute(crearKitProductos);
-    console.log('✓ Tabla kit_productos creada exitosamente');
+    console.log('âœ“ Tabla kit_productos creada exitosamente');
 
     console.log('Creando tabla clientes...');
     await connection.execute(crearClientes);
-    console.log('✓ Tabla clientes creada exitosamente');
+    console.log('âœ“ Tabla clientes creada exitosamente');
 
     console.log('Creando tabla clientes_usuarios...');
     await connection.execute(crearClientesUsuarios);
-    console.log('✓ Tabla clientes_usuarios creada exitosamente');
+    console.log('âœ“ Tabla clientes_usuarios creada exitosamente');
 
     console.log('Creando tabla ventas...');
     await connection.execute(crearVentas);
@@ -665,7 +734,7 @@ async function inicializarBaseDatos() {
         throw error;
       }
     }
-    console.log('✓ Tabla ventas creada exitosamente');
+    console.log('âœ“ Tabla ventas creada exitosamente');
 
     console.log('Creando tabla ventas_detalle...');
     await connection.execute(crearVentasDetalle);
@@ -683,6 +752,15 @@ async function inicializarBaseDatos() {
         throw error;
       }
     }
+    try {
+      await connection.execute(
+        'CREATE INDEX idx_venta_tipo_picked ON ventas_detalle (venta_id, tipo, cantidad_picked)'
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
 
     // Asegurar columna cantidad_picked en ventas_detalle
     try {
@@ -694,7 +772,7 @@ async function inicializarBaseDatos() {
         throw error;
       }
     }
-    console.log('✓ Tabla ventas_detalle creada exitosamente');
+    console.log('âœ“ Tabla ventas_detalle creada exitosamente');
 
     // Asegurar columnas en ventas si ya existia con esquema anterior
     const columnasVentas = [
@@ -755,14 +833,14 @@ async function inicializarBaseDatos() {
 
     console.log('Creando tabla inventarios...');
     await connection.execute(crearInventarios);
-    console.log('✓ Tabla inventarios creada exitosamente');
+    console.log('âœ“ Tabla inventarios creada exitosamente');
 
     console.log('Creando tabla inventario_detalle...');
     await connection.execute(crearInventarioDetalle);
     console.log('Creando tabla maquinas_ubicaciones...');
     await connection.execute(crearMaquinasUbicaciones);
-    console.log('✓ Tabla maquinas_ubicaciones creada exitosamente');
-    console.log('✓ Tabla inventario_detalle creada exitosamente');
+    console.log('âœ“ Tabla maquinas_ubicaciones creada exitosamente');
+    console.log('âœ“ Tabla inventario_detalle creada exitosamente');
     await sincronizarUbicacionesBase(connection);
 
     // Asegurar columnas de ubicacion en inventario_detalle
@@ -791,7 +869,7 @@ async function inicializarBaseDatos() {
     }
 
 
-    // Asegurar columna usuario_id en clientes si ya existía sin esa columna
+    // Asegurar columna usuario_id en clientes si ya existÃ­a sin esa columna
     try {
       await connection.execute('ALTER TABLE clientes ADD COLUMN usuario_id INT NULL');
       await connection.execute('CREATE INDEX idx_usuario ON clientes (usuario_id)');
@@ -800,22 +878,158 @@ async function inicializarBaseDatos() {
         throw error;
       }
     }
+    try {
+      await connection.execute(
+        "ALTER TABLE clientes MODIFY COLUMN tipo_cliente ENUM('natural','juridico','ce') NOT NULL"
+      );
+    } catch (error) {
+      console.log('Aviso actualizando enum tipo_cliente:', error.message);
+    }
+
+    // Limpiar huÃƒÂ©rfanos para poder asegurar llaves foraneas sin fallar en bases existentes.
+    try {
+      await connection.execute(
+        `DELETE c FROM cotizaciones c
+         LEFT JOIN usuarios u ON u.id = c.usuario_id
+         WHERE u.id IS NULL`
+      );
+      await connection.execute(
+        `UPDATE cotizaciones c
+         LEFT JOIN clientes cl ON cl.id = c.cliente_id
+         SET c.cliente_id = NULL
+         WHERE c.cliente_id IS NOT NULL AND cl.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE d FROM detalle_cotizacion d
+         LEFT JOIN cotizaciones c ON c.id = d.cotizacion_id
+         WHERE c.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE d FROM detalle_cotizacion d
+         LEFT JOIN maquinas m ON m.id = d.producto_id
+         WHERE m.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE h FROM historial_cotizaciones h
+         LEFT JOIN cotizaciones c ON c.id = h.cotizacion_id
+         WHERE c.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE h FROM historial_cotizaciones h
+         LEFT JOIN usuarios u ON u.id = h.usuario_id
+         WHERE u.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE k FROM kits k
+         LEFT JOIN usuarios u ON u.id = k.usuario_id
+         WHERE u.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE kp FROM kit_productos kp
+         LEFT JOIN kits k ON k.id = kp.kit_id
+         WHERE k.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE kp FROM kit_productos kp
+         LEFT JOIN maquinas m ON m.id = kp.producto_id
+         WHERE m.id IS NULL`
+      );
+    } catch (error) {
+      console.log('Aviso limpiando huÃƒÂ©rfanos para llaves foraneas:', error.message);
+    }
+
+    try {
+      await addForeignKeyIfMissing(
+        connection,
+        'cotizaciones',
+        'fk_cotizaciones_cliente',
+        `ALTER TABLE cotizaciones
+         ADD CONSTRAINT fk_cotizaciones_cliente
+         FOREIGN KEY (cliente_id) REFERENCES clientes(id)
+         ON DELETE SET NULL`
+      );
+      await addForeignKeyIfMissing(
+        connection,
+        'detalle_cotizacion',
+        'fk_detalle_cotizacion_cotizacion',
+        `ALTER TABLE detalle_cotizacion
+         ADD CONSTRAINT fk_detalle_cotizacion_cotizacion
+         FOREIGN KEY (cotizacion_id) REFERENCES cotizaciones(id)
+         ON DELETE CASCADE`
+      );
+      await addForeignKeyIfMissing(
+        connection,
+        'detalle_cotizacion',
+        'fk_detalle_cotizacion_producto',
+        `ALTER TABLE detalle_cotizacion
+         ADD CONSTRAINT fk_detalle_cotizacion_producto
+         FOREIGN KEY (producto_id) REFERENCES maquinas(id)
+         ON DELETE RESTRICT`
+      );
+      await addForeignKeyIfMissing(
+        connection,
+        'historial_cotizaciones',
+        'fk_historial_cotizaciones_cotizacion',
+        `ALTER TABLE historial_cotizaciones
+         ADD CONSTRAINT fk_historial_cotizaciones_cotizacion
+         FOREIGN KEY (cotizacion_id) REFERENCES cotizaciones(id)
+         ON DELETE CASCADE`
+      );
+      await addForeignKeyIfMissing(
+        connection,
+        'historial_cotizaciones',
+        'fk_historial_cotizaciones_usuario',
+        `ALTER TABLE historial_cotizaciones
+         ADD CONSTRAINT fk_historial_cotizaciones_usuario
+         FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+         ON DELETE RESTRICT`
+      );
+      await addForeignKeyIfMissing(
+        connection,
+        'kits',
+        'fk_kits_usuario',
+        `ALTER TABLE kits
+         ADD CONSTRAINT fk_kits_usuario
+         FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+         ON DELETE RESTRICT`
+      );
+      await addForeignKeyIfMissing(
+        connection,
+        'kit_productos',
+        'fk_kit_productos_kit',
+        `ALTER TABLE kit_productos
+         ADD CONSTRAINT fk_kit_productos_kit
+         FOREIGN KEY (kit_id) REFERENCES kits(id)
+         ON DELETE CASCADE`
+      );
+      await addForeignKeyIfMissing(
+        connection,
+        'kit_productos',
+        'fk_kit_productos_producto',
+        `ALTER TABLE kit_productos
+         ADD CONSTRAINT fk_kit_productos_producto
+         FOREIGN KEY (producto_id) REFERENCES maquinas(id)
+         ON DELETE RESTRICT`
+      );
+    } catch (error) {
+      console.log('Aviso asegurando llaves foraneas:', error.message);
+    }
 
     console.log('Creando tabla historial_acciones...');
     await connection.execute(crearHistorialAcciones);
-    console.log('✓ Tabla historial_acciones creada exitosamente');
+    console.log('âœ“ Tabla historial_acciones creada exitosamente');
 
     console.log('Creando tabla roles...');
     await connection.execute(crearRoles);
-    console.log('✓ Tabla roles creada exitosamente');
+    console.log('âœ“ Tabla roles creada exitosamente');
 
     console.log('Creando tabla permisos...');
     await connection.execute(crearPermisos);
-    console.log('✓ Tabla permisos creada exitosamente');
+    console.log('âœ“ Tabla permisos creada exitosamente');
 
     console.log('Creando tabla rol_permisos...');
     await connection.execute(crearRolPermisos);
-    console.log('✓ Tabla rol_permisos creada exitosamente');
+    console.log('âœ“ Tabla rol_permisos creada exitosamente');
 
     // Insertar roles por defecto
     const rolesBase = ['admin', 'ventas', 'logistica'];
@@ -892,16 +1106,16 @@ async function inicializarBaseDatos() {
       }
     }
     
-    // Insertar algunos tipos de máquinas iniciales
+    // Insertar algunos tipos de mÃ¡quinas iniciales
     const tiposIniciales = [
-      ['Torno', 'Máquinas para trabajo de metal'],
-      ['Fresadora', 'Máquinas fresadoras para trabajo de precisión'],
-      ['Soldadora', 'Equipos de soldadura eléctrica'],
+      ['Torno', 'MÃ¡quinas para trabajo de metal'],
+      ['Fresadora', 'MÃ¡quinas fresadoras para trabajo de precisiÃ³n'],
+      ['Soldadora', 'Equipos de soldadura elÃ©ctrica'],
       ['Compresor', 'Compresores de aire'],
-      ['Generador', 'Generadores eléctricos']
+      ['Generador', 'Generadores elÃ©ctricos']
     ];
     
-    console.log('Insertando tipos de máquinas iniciales...');
+    console.log('Insertando tipos de mÃ¡quinas iniciales...');
     for (const [nombre, descripcion] of tiposIniciales) {
       try {
         await connection.execute(
@@ -914,28 +1128,43 @@ async function inicializarBaseDatos() {
         }
       }
     }
-    console.log('✓ Datos iniciales insertados');
+    console.log('âœ“ Datos iniciales insertados');
     
-    // Insertar usuario administrador por defecto
-    const bcrypt = require('bcryptjs');
-    const salt = await bcrypt.genSalt(10);
-    const contraseñaHasheada = await bcrypt.hash('admin123', salt);
-    
-    try {
-      await connection.execute(
-        'INSERT INTO usuarios (nombre, email, telefono, contraseña, rol) VALUES (?, ?, ?, ?, ?)',
-        ['Administrador', 'admin', '000000000', contraseñaHasheada, 'admin']
-      );
-      console.log('✓ Usuario administrador creado: admin / admin123');
-    } catch (error) {
-      if (error.code !== 'ER_DUP_ENTRY') {
-        throw error;
+    // Crear admin solo cuando se habilita explicitamente por ENV.
+    const seedDefaultAdmin = ['1', 'true', 'yes', 'on'].includes(
+      String(process.env.SEED_DEFAULT_ADMIN || '').toLowerCase()
+    );
+    if (seedDefaultAdmin) {
+      const adminPassword = String(process.env.ADMIN_PASSWORD || '').trim();
+      if (adminPassword.length < 12) {
+        console.log('Aviso: ADMIN_PASSWORD debe tener al menos 12 caracteres. No se creo admin.');
+      } else {
+        const bcrypt = require('bcryptjs');
+        const salt = await bcrypt.genSalt(10);
+        const passwordHash = await bcrypt.hash(adminPassword, salt);
+        const adminNombre = String(process.env.ADMIN_NOMBRE || 'Administrador').trim() || 'Administrador';
+        const adminEmail = String(process.env.ADMIN_EMAIL || 'admin').trim() || 'admin';
+        const adminTelefono = String(process.env.ADMIN_TELEFONO || '000000000').trim() || null;
+
+        try {
+          await connection.execute(
+            'INSERT INTO usuarios (nombre, email, telefono, contraseÃ±a, rol) VALUES (?, ?, ?, ?, ?)',
+            [adminNombre, adminEmail, adminTelefono, passwordHash, 'admin']
+          );
+          console.log(`âœ“ Usuario admin creado: ${adminEmail}`);
+        } catch (error) {
+          if (error.code !== 'ER_DUP_ENTRY') {
+            throw error;
+          }
+          console.log('âœ“ Usuario admin ya existe, se omite creacion');
+        }
       }
-      console.log('✓ Usuario administrador ya existe');
+    } else {
+      console.log('Aviso: SEED_DEFAULT_ADMIN no habilitado. No se creo usuario administrador.');
     }
-    
+
     connection.release();
-    console.log('✓ Base de datos inicializada exitosamente');
+    console.log('âœ“ Base de datos inicializada exitosamente');
     process.exit(0);
   } catch (error) {
     console.error('Error inicializando base de datos:', error);

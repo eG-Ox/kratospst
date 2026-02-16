@@ -39,7 +39,7 @@ const formatTimestamp = (date = new Date()) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
 };
 
-const buildDumpArgs = () => {
+const buildDumpConfig = () => {
   const host = process.env.DB_HOST || 'localhost';
   const user = process.env.DB_USER || 'root';
   const password = process.env.DB_PASSWORD || '';
@@ -53,11 +53,8 @@ const buildDumpArgs = () => {
     `--user=${user}`,
     `--port=${port}`,
   ];
-  if (password) {
-    args.push(`--password=${password}`);
-  }
   args.push(database);
-  return args;
+  return { args, password };
 };
 
 const ejecutarBackup = async () => {
@@ -65,7 +62,7 @@ const ejecutarBackup = async () => {
   fs.mkdirSync(backupDir, { recursive: true });
   const filename = `backup_${formatTimestamp()}.sql`;
   const filepath = path.join(backupDir, filename);
-  const args = buildDumpArgs();
+  const { args, password } = buildDumpConfig();
   const dumpPath = getMysqlDumpPath();
   if (dumpPath !== 'mysqldump' && !fs.existsSync(dumpPath)) {
     throw new Error('MYSQLDUMP_PATH invalido. Configura la ruta al ejecutable mysqldump.exe');
@@ -73,7 +70,12 @@ const ejecutarBackup = async () => {
 
   await new Promise((resolve, reject) => {
     const out = fs.createWriteStream(filepath, { encoding: 'utf8' });
-    const proc = spawn(dumpPath, args, { windowsHide: true });
+    const env = { ...process.env };
+    if (password) {
+      // Evita exponer la contraseña en la linea de comandos.
+      env.MYSQL_PWD = password;
+    }
+    const proc = spawn(dumpPath, args, { windowsHide: true, env });
     let stderr = '';
 
     proc.stdout.pipe(out);

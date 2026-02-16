@@ -49,6 +49,24 @@ const buildClienteFromRow = (row) => ({
   fecha_actualizacion: row.fecha_actualizacion
 });
 
+const releaseConnection = (connection) => {
+  if (!connection) return;
+  try {
+    connection.release();
+  } catch (_) {
+    // no-op
+  }
+};
+
+const rollbackSilently = async (connection) => {
+  if (!connection) return;
+  try {
+    await connection.rollback();
+  } catch (_) {
+    // no-op
+  }
+};
+
 exports.getClientes = async (req, res) => {
   const { tipo, documento, search } = req.query;
 
@@ -172,17 +190,19 @@ exports.crearCliente = async (req, res) => {
     }
   }
 
-
   if (correo && !isEmail(String(correo))) {
     return res.status(400).json({ error: 'Correo invalido' });
   }
   if (telefono && !PHONE_REGEX.test(String(telefono))) {
     return res.status(400).json({ error: 'Telefono invalido' });
   }
+
+  let connection;
   try {
-    const connection = await pool.getConnection();
-    const docValue =
-      tipo_cliente === 'juridico' ? normalizeString(ruc) : normalizeString(dni);
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const docValue = tipo_cliente === 'juridico' ? normalizeString(ruc) : normalizeString(dni);
     if (docValue) {
       const [existentes] = await connection.execute(
         'SELECT * FROM clientes WHERE dni = ? OR ruc = ? LIMIT 1',
@@ -192,10 +212,9 @@ exports.crearCliente = async (req, res) => {
         const clienteExistente = existentes[0];
         let vendedorNombre = null;
         if (clienteExistente.usuario_id) {
-          const [usuarios] = await connection.execute(
-            'SELECT nombre FROM usuarios WHERE id = ?',
-            [clienteExistente.usuario_id]
-          );
+          const [usuarios] = await connection.execute('SELECT nombre FROM usuarios WHERE id = ?', [
+            clienteExistente.usuario_id
+          ]);
           vendedorNombre = usuarios?.[0]?.nombre || null;
         }
         if (req.usuario?.id) {
@@ -204,7 +223,7 @@ exports.crearCliente = async (req, res) => {
             [clienteExistente.id, req.usuario.id]
           );
         }
-        connection.release();
+        await connection.commit();
         return res.status(200).json({
           id: clienteExistente.id,
           usuario_id: clienteExistente.usuario_id,
@@ -269,9 +288,9 @@ exports.crearCliente = async (req, res) => {
         correo: correo || null
       }
     });
-    connection.release();
 
-    res.status(201).json({
+    await connection.commit();
+    return res.status(201).json({
       id: result.insertId,
       usuario_id: req.usuario?.id || null,
       tipo_cliente,
@@ -285,11 +304,14 @@ exports.crearCliente = async (req, res) => {
       correo: correo || null
     });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error creando cliente:', error);
     if (error.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'DNI o RUC ya existe' });
     }
-    res.status(500).json({ error: 'Error al crear cliente' });
+    return res.status(500).json({ error: 'Error al crear cliente' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -337,13 +359,14 @@ exports.actualizarCliente = async (req, res) => {
     }
   }
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
-    const [existing] = await connection.execute('SELECT * FROM clientes WHERE id = ?', [
-      req.params.id
-    ]);
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [existing] = await connection.execute('SELECT * FROM clientes WHERE id = ?', [req.params.id]);
     if (existing.length === 0) {
-      connection.release();
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Cliente no encontrado' });
     }
 
@@ -353,7 +376,7 @@ exports.actualizarCliente = async (req, res) => {
         [req.params.id, req.usuario.id]
       );
       if (existing[0].usuario_id !== req.usuario.id && !rel.length) {
-        connection.release();
+        await rollbackSilently(connection);
         return res.status(403).json({ error: 'Acceso denegado' });
       }
     }
@@ -397,9 +420,9 @@ exports.actualizarCliente = async (req, res) => {
         correo: correo || null
       }
     });
-    connection.release();
 
-    res.json({
+    await connection.commit();
+    return res.json({
       id: req.params.id,
       tipo_cliente,
       dni: tipo_cliente === 'natural' || tipo_cliente === 'ce' ? dni : null,
@@ -412,33 +435,44 @@ exports.actualizarCliente = async (req, res) => {
       correo: correo || null
     });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error actualizando cliente:', error);
     if (error.code === 'ER_DUP_ENTRY') {
       return res.status(400).json({ error: 'DNI o RUC ya existe' });
     }
-    res.status(500).json({ error: 'Error al actualizar cliente' });
+    return res.status(500).json({ error: 'Error al actualizar cliente' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.eliminarCliente = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
-    const [existing] = await connection.execute('SELECT * FROM clientes WHERE id = ?', [
-      req.params.id
-    ]);
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [existing] = await connection.execute('SELECT * FROM clientes WHERE id = ?', [req.params.id]);
     if (!existing.length) {
-      connection.release();
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Cliente no encontrado' });
     }
+
     if (req.usuario?.rol !== 'admin') {
       await connection.execute(
         'DELETE FROM clientes_usuarios WHERE cliente_id = ? AND usuario_id = ?',
         [req.params.id, req.usuario.id]
       );
-      connection.release();
+      await connection.commit();
       return res.json({ mensaje: 'Cliente removido de tu cartera' });
     }
+
     const [result] = await connection.execute('DELETE FROM clientes WHERE id = ?', [req.params.id]);
+    if (result.affectedRows === 0) {
+      await rollbackSilently(connection);
+      return res.status(404).json({ error: 'Cliente no encontrado' });
+    }
+
     await registrarHistorial(connection, {
       entidad: 'clientes',
       entidad_id: req.params.id,
@@ -448,16 +482,15 @@ exports.eliminarCliente = async (req, res) => {
       antes: existing[0],
       despues: null
     });
-    connection.release();
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Cliente no encontrado' });
-    }
-
-    res.json({ mensaje: 'Cliente eliminado exitosamente' });
+    await connection.commit();
+    return res.json({ mensaje: 'Cliente eliminado exitosamente' });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error eliminando cliente:', error);
-    res.status(500).json({ error: 'Error al eliminar cliente' });
+    return res.status(500).json({ error: 'Error al eliminar cliente' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 

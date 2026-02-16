@@ -6,6 +6,8 @@ const permisosBase = [
   { clave: 'productos.precio_compra.ver', descripcion: 'Ver precio de compra', grupo: 'Inventario' },
   { clave: 'tipos_maquinas.ver', descripcion: 'Ver tipos de maquinas', grupo: 'Inventario' },
   { clave: 'tipos_maquinas.editar', descripcion: 'Editar tipos de maquinas', grupo: 'Inventario' },
+  { clave: 'marcas.ver', descripcion: 'Ver marcas', grupo: 'Inventario' },
+  { clave: 'marcas.editar', descripcion: 'Editar marcas', grupo: 'Inventario' },
   { clave: 'movimientos.ver', descripcion: 'Ver movimientos', grupo: 'Inventario' },
   { clave: 'movimientos.registrar', descripcion: 'Registrar movimientos', grupo: 'Inventario' },
   { clave: 'historial.ver', descripcion: 'Ver historial general', grupo: 'Inventario' },
@@ -21,10 +23,33 @@ const permisosBase = [
   { clave: 'clientes.editar', descripcion: 'Crear/Editar clientes', grupo: 'Clientes' },
   { clave: 'usuarios.ver', descripcion: 'Ver usuarios', grupo: 'Cuentas' },
   { clave: 'usuarios.editar', descripcion: 'Editar usuarios', grupo: 'Cuentas' },
-  { clave: 'permisos.editar', descripcion: 'Editar permisos por rol', grupo: 'Cuentas' }
+  { clave: 'permisos.editar', descripcion: 'Editar permisos por rol', grupo: 'Cuentas' },
+  { clave: 'ventas.ver', descripcion: 'Ver ventas', grupo: 'Ventas' },
+  { clave: 'ventas.editar', descripcion: 'Crear/Editar ventas', grupo: 'Ventas' },
+  { clave: 'ventas.eliminar', descripcion: 'Eliminar ventas', grupo: 'Ventas' },
+  { clave: 'picking.ver', descripcion: 'Ver picking de ventas', grupo: 'Ventas' },
+  { clave: 'picking.editar', descripcion: 'Registrar picking de ventas', grupo: 'Ventas' }
 ];
 
 const rolesBase = ['admin', 'ventas', 'logistica'];
+
+const releaseConnection = (connection) => {
+  if (!connection) return;
+  try {
+    connection.release();
+  } catch (_) {
+    // no-op
+  }
+};
+
+const rollbackSilently = async (connection) => {
+  if (!connection) return;
+  try {
+    await connection.rollback();
+  } catch (_) {
+    // no-op
+  }
+};
 
 let permisosInitPromise = null;
 const asegurarPermisos = async (connection) => {
@@ -108,12 +133,14 @@ exports.actualizarPermisosRol = async (req, res) => {
   const { rol } = req.params;
   const { permisos = [] } = req.body;
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
     await asegurarPermisos(connection);
     const [roles] = await connection.execute('SELECT id FROM roles WHERE nombre = ?', [rol]);
     if (!roles.length) {
-      connection.release();
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Rol no encontrado' });
     }
     const rolId = roles[0].id;
@@ -133,11 +160,14 @@ exports.actualizarPermisosRol = async (req, res) => {
       );
     }
 
-    connection.release();
-    res.json({ mensaje: 'Permisos actualizados' });
+    await connection.commit();
+    return res.json({ mensaje: 'Permisos actualizados' });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error actualizando permisos:', error);
-    res.status(500).json({ error: 'Error al actualizar permisos' });
+    return res.status(500).json({ error: 'Error al actualizar permisos' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 

@@ -1,5 +1,4 @@
 import React, { createContext, useState, useEffect } from 'react';
-import { authService } from '../services/apiServices';
 
 export const AuthContext = createContext();
 
@@ -9,9 +8,8 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
     const usuarioGuardado = localStorage.getItem('usuario');
-    if (token && usuarioGuardado && usuarioGuardado !== 'undefined') {
+    if (usuarioGuardado && usuarioGuardado !== 'undefined') {
       try {
         const usuarioParsed = JSON.parse(usuarioGuardado);
         setIsAuthenticated(true);
@@ -31,7 +29,6 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     setIsAuthenticated(false);
     setUsuario(null);
-    localStorage.removeItem('token');
     localStorage.removeItem('usuario');
   };
 

@@ -1,46 +1,116 @@
-const pool = require('../../core/config/database');
+﻿const pool = require('../../core/config/database');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { isEmail, isNonEmptyString, normalizeString } = require('../../shared/utils/validation');
+const { AUTH_COOKIE_NAME } = require('../../core/middleware/auth');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'tu_secreto_aqui';
+const JWT_SECRET = process.env.JWT_SECRET;
+const TOKEN_TTL_SECONDS = 24 * 60 * 60;
+let passwordColumnCache = null;
 
-/**
- * Módulo de Autenticación
- * Maneja: Login, Registro, Obtención de usuario actual
- */
+const parseBoolean = (value, fallback = false) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+};
+
+const getCookieOptions = () => {
+  const sameSite = String(process.env.AUTH_COOKIE_SAMESITE || 'lax').toLowerCase();
+  const secure = parseBoolean(process.env.AUTH_COOKIE_SECURE, process.env.NODE_ENV === 'production');
+  return {
+    httpOnly: true,
+    secure,
+    sameSite: sameSite === 'none' || sameSite === 'strict' ? sameSite : 'lax',
+    maxAge: TOKEN_TTL_SECONDS * 1000,
+    path: '/'
+  };
+};
+
+const attachAuthCookie = (res, token) => {
+  res.cookie(AUTH_COOKIE_NAME, token, getCookieOptions());
+};
+
+const clearAuthCookie = (res) => {
+  res.clearCookie(AUTH_COOKIE_NAME, {
+    ...getCookieOptions(),
+    maxAge: undefined,
+    expires: new Date(0)
+  });
+};
+
+const releaseConnection = (connection) => {
+  if (!connection) return;
+  try {
+    connection.release();
+  } catch (_) {
+    // no-op
+  }
+};
+
+const rollbackSilently = async (connection) => {
+  if (!connection) return;
+  try {
+    await connection.rollback();
+  } catch (_) {
+    // no-op
+  }
+};
+
+const extractPassword = (body) => {
+  if (!body || typeof body !== 'object') return '';
+  return String(body['contraseña'] ?? body['contraseÃ±a'] ?? body.contrasena ?? '').trim();
+};
+
+const resolvePasswordColumn = async (connection) => {
+  if (passwordColumnCache) return passwordColumnCache;
+  const [columns] = await connection.execute('SHOW COLUMNS FROM usuarios');
+  const names = new Set((columns || []).map((item) => item.Field));
+  if (names.has('contraseña')) {
+    passwordColumnCache = 'contraseña';
+    return passwordColumnCache;
+  }
+  if (names.has('contraseÃ±a')) {
+    passwordColumnCache = 'contraseÃ±a';
+    return passwordColumnCache;
+  }
+  passwordColumnCache = 'contraseña';
+  return passwordColumnCache;
+};
 
 // Login
 exports.login = async (req, res) => {
-  const { email, contraseña } = req.body;
+  const { email } = req.body || {};
+  const password = extractPassword(req.body);
   const identificador = String(email || '').trim();
 
-  if (!identificador || !contraseña) {
-    return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
+  if (!identificador || !password) {
+    return res.status(400).json({ error: 'Usuario/email y contraseña requeridos' });
   }
   if (identificador.includes('@') && !isEmail(identificador)) {
     return res.status(400).json({ error: 'Email invalido' });
   }
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    const passwordColumn = await resolvePasswordColumn(connection);
     let usuarios = [];
     if (identificador.includes('@')) {
       const [rows] = await connection.execute(
-        'SELECT id, nombre, email, telefono, contraseña, rol FROM usuarios WHERE email = ? AND activo = TRUE',
+        `SELECT id, nombre, email, telefono, \`${passwordColumn}\` AS contrasena, rol
+         FROM usuarios
+         WHERE email = ? AND activo = TRUE`,
         [identificador]
       );
       usuarios = rows;
     } else {
       const [rows] = await connection.execute(
-        `SELECT id, nombre, email, telefono, contraseña, rol
+        `SELECT id, nombre, email, telefono, \`${passwordColumn}\` AS contrasena, rol
          FROM usuarios
          WHERE (email = ? OR email LIKE ? OR nombre = ?) AND activo = TRUE`,
         [identificador, `${identificador}@%`, identificador]
       );
       usuarios = rows;
     }
-    connection.release();
 
     if (usuarios.length === 0) {
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
@@ -50,7 +120,7 @@ exports.login = async (req, res) => {
     }
 
     const usuario = usuarios[0];
-    const validPassword = await bcrypt.compare(contraseña, usuario.contraseña);
+    const validPassword = await bcrypt.compare(password, usuario.contrasena);
 
     if (!validPassword) {
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
@@ -65,12 +135,13 @@ exports.login = async (req, res) => {
         telefono: usuario.telefono || null
       },
       JWT_SECRET,
-      { expiresIn: '24h' }
+      { expiresIn: TOKEN_TTL_SECONDS }
     );
+
+    attachAuthCookie(res, token);
 
     res.json({
       mensaje: 'Login exitoso',
-      token,
       usuario: {
         id: usuario.id,
         nombre: usuario.nombre,
@@ -81,64 +152,79 @@ exports.login = async (req, res) => {
     });
   } catch (error) {
     console.error('Error en login:', error);
-    res.status(500).json({ error: 'Error al iniciar sesión' });
+    res.status(500).json({ error: 'Error al iniciar sesion' });
+  } finally {
+    releaseConnection(connection);
   }
 };
+
 // Registro
 exports.registro = async (req, res) => {
-  const { nombre, email, telefono, contraseña, rol = 'ventas' } = req.body;
+  const { nombre, email, telefono, rol = 'ventas' } = req.body || {};
+  const password = extractPassword(req.body);
   const rolesValidos = ['admin', 'ventas', 'logistica'];
 
-  if (!nombre || !email || !contraseña) {
-    return res.status(400).json({ error: 'Nombre, usuario y contraseña requeridos' });
+  if (!nombre || !email || !password) {
+    return res.status(400).json({ error: 'Nombre, email y contraseña requeridos' });
   }
-  if (!isNonEmptyString(contraseña) || contraseña.length < 8) {
+  if (!isEmail(normalizeString(email))) {
+    return res.status(400).json({ error: 'Email invalido' });
+  }
+  if (!isNonEmptyString(password) || password.length < 8) {
     return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
   }
   if (rol && !rolesValidos.includes(rol)) {
     return res.status(400).json({ error: 'Rol no valido' });
   }
 
+  let connection;
   try {
     const salt = await bcrypt.genSalt(10);
-    const contraseñaHasheada = await bcrypt.hash(contraseña, salt);
+    const passwordHash = await bcrypt.hash(password, salt);
 
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    const passwordColumn = await resolvePasswordColumn(connection);
+    await connection.beginTransaction();
     const [result] = await connection.execute(
-      'INSERT INTO usuarios (nombre, email, telefono, contraseña, rol) VALUES (?, ?, ?, ?, ?)',
-      [normalizeString(nombre), normalizeString(email), normalizeString(telefono) || null, contraseñaHasheada, rol]
+      `INSERT INTO usuarios (nombre, email, telefono, \`${passwordColumn}\`, rol) VALUES (?, ?, ?, ?, ?)`,
+      [normalizeString(nombre), normalizeString(email), normalizeString(telefono) || null, passwordHash, rol]
     );
-    connection.release();
+    await connection.commit();
 
-    const token = jwt.sign(
-      { id: result.insertId, nombre, email, rol, telefono: telefono || null },
-      JWT_SECRET,
-      { expiresIn: '24h' }
-    );
+    if (!req.skipAuthCookie) {
+      const token = jwt.sign(
+        { id: result.insertId, nombre, email, rol, telefono: telefono || null },
+        JWT_SECRET,
+        { expiresIn: TOKEN_TTL_SECONDS }
+      );
+      attachAuthCookie(res, token);
+    }
 
     res.status(201).json({
       mensaje: 'Usuario registrado exitosamente',
-      token,
       usuario: { id: result.insertId, nombre, email, rol, telefono: telefono || null }
     });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error en registro:', error);
     if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ error: 'El usuario ya está registrado' });
+      return res.status(400).json({ error: 'El usuario ya esta registrado' });
     }
     res.status(500).json({ error: 'Error al registrar usuario' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 // Obtener usuario actual
 exports.obtenerUsuarioActual = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [usuarios] = await connection.execute(
       'SELECT id, nombre, email, telefono, rol FROM usuarios WHERE id = ?',
       [req.usuario.id]
     );
-    connection.release();
 
     if (usuarios.length === 0) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
@@ -148,10 +234,12 @@ exports.obtenerUsuarioActual = async (req, res) => {
   } catch (error) {
     console.error('Error obteniendo usuario:', error);
     res.status(500).json({ error: 'Error al obtener usuario' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
-// Logout (simplemente eliminar token en frontend)
 exports.logout = (req, res) => {
+  clearAuthCookie(res);
   res.json({ mensaje: 'Logout exitoso' });
 };

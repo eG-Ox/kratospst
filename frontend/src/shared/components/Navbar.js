@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { authService } from '../../core/services/apiServices';
 import './Navbar.css';
 
 const Navbar = ({ usuario, onLogout }) => {
@@ -54,8 +55,12 @@ const Navbar = ({ usuario, onLogout }) => {
     },
   ];
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
+  const handleLogout = async () => {
+    try {
+      await authService.logout();
+    } catch (_) {
+      // no-op
+    }
     localStorage.removeItem('usuario');
     onLogout();
     navigate('/login');

@@ -14,6 +14,7 @@ const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+const isDuplicateKeyError = (error) => error?.code === 'ER_DUP_ENTRY';
 
 const mapVentaRow = (row) => ({
   id: row.id,
@@ -63,7 +64,8 @@ const buildDetalleRows = (ventaId, items, tipo) =>
     descripcion: item.descripcion || null,
     marca: item.marca || null,
     cantidad: Number(item.cantidad || 0),
-    cantidad_picked: Number(item.cantidadPicked || item.cantidad_picked || 0),
+    // La cantidad pickeada se controla exclusivamente en el flujo de picking.
+    cantidad_picked: 0,
     precio_venta: Number(item.precioVenta || item.precio_venta || 0),
     precio_compra: Number(item.precioCompra || item.precio_compra || 0),
     proveedor: item.proveedor || null,
@@ -81,6 +83,24 @@ const parseArray = (value) => {
     }
   }
   return [];
+};
+
+const releaseConnection = (connection) => {
+  if (!connection) return;
+  try {
+    connection.release();
+  } catch (_) {
+    // no-op
+  }
+};
+
+const rollbackSilently = async (connection) => {
+  if (!connection) return;
+  try {
+    await connection.rollback();
+  } catch (_) {
+    // no-op
+  }
 };
 
 
@@ -190,41 +210,94 @@ const buscarProductoRequerimiento = async (connection, item) => {
 const crearProductoDesdeRequerimiento = async (connection, item) => {
   const tipoId = await obtenerTipoRequerimientoId(connection);
   const codigoPreferido = normalizarTexto(item.codigo);
-  const codigo = codigoPreferido || (await generarCodigoRequerimiento(connection));
   const descripcion = normalizarTexto(item.descripcion) || 'Requerimiento';
   const marca = normalizarTexto(item.marca) || 'REQUERIMIENTO';
   const precioCompra = Number(item.precioCompra || item.precio_compra || 0);
   const precioVenta = Number(item.precioVenta || item.precio_venta || 0);
   const precioMinimo = Number(item.precioMinimo || item.precio_minimo || precioVenta || 0);
-  const codigoBusqueda = normalizarClave(codigo);
   const descripcionBusqueda = normalizarClave(descripcion);
+  const maxAttempts = 5;
 
-  const [result] = await connection.execute(
-    `INSERT INTO maquinas
-      (codigo, tipo_maquina_id, marca, descripcion, codigo_busqueda, descripcion_busqueda,
-       ubicacion_letra, ubicacion_numero, stock, precio_compra, precio_venta, precio_minimo)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      codigo,
-      tipoId,
-      marca,
-      descripcion,
-      codigoBusqueda,
-      descripcionBusqueda,
-      null,
-      null,
-      0,
-      precioCompra,
-      precioVenta,
-      precioMinimo
-    ]
-  );
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const codigo = codigoPreferido || (await generarCodigoRequerimiento(connection));
+    const codigoBusqueda = normalizarClave(codigo);
+    try {
+      const [result] = await connection.execute(
+        `INSERT INTO maquinas
+          (codigo, tipo_maquina_id, marca, descripcion, codigo_busqueda, descripcion_busqueda,
+           ubicacion_letra, ubicacion_numero, stock, precio_compra, precio_venta, precio_minimo)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          codigo,
+          tipoId,
+          marca,
+          descripcion,
+          codigoBusqueda,
+          descripcionBusqueda,
+          null,
+          null,
+          0,
+          precioCompra,
+          precioVenta,
+          precioMinimo
+        ]
+      );
+      return { id: result.insertId, codigo, marca, descripcion };
+    } catch (error) {
+      if (!isDuplicateKeyError(error)) {
+        throw error;
+      }
 
-  return { id: result.insertId, codigo, marca, descripcion };
+      if (codigoPreferido) {
+        const existente = await buscarProductoPorCodigo(connection, codigoPreferido);
+        if (existente) {
+          return {
+            id: existente.id,
+            codigo: existente.codigo,
+            marca: existente.marca || marca,
+            descripcion: existente.descripcion || descripcion
+          };
+        }
+        throw error;
+      }
+
+      if (attempt === maxAttempts - 1) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error('No se pudo generar codigo de requerimiento unico');
 };
 
 const buscarDetallePendientePorCodigo = async (connection, codigo, ventaId) => {
   const normalizada = normalizarClave(codigo);
+  const codigoExacto = normalizarTexto(codigo);
+  if (!normalizada && !codigoExacto) return null;
+
+  const whereVentaId = ventaId ? ' AND d.venta_id = ?' : '';
+
+  if (codigoExacto) {
+    const exactParams = [codigoExacto];
+    let exactQuery = `
+      SELECT d.*, v.estado_pedido
+      FROM ventas_detalle d
+      JOIN ventas v ON d.venta_id = v.id
+      WHERE d.tipo = 'producto'
+        AND d.cantidad_picked < d.cantidad
+        AND d.codigo = ?
+    `;
+    if (ventaId) {
+      exactQuery += ' AND d.venta_id = ?';
+      exactParams.push(ventaId);
+    }
+    exactQuery += ' ORDER BY v.created_at ASC, d.id ASC LIMIT 1 FOR UPDATE';
+    const [exactRows] = await connection.execute(exactQuery, exactParams);
+    if (exactRows[0]) {
+      return exactRows[0];
+    }
+  }
+
   if (!normalizada) return null;
   let query = `
     SELECT d.*, v.estado_pedido
@@ -233,10 +306,10 @@ const buscarDetallePendientePorCodigo = async (connection, codigo, ventaId) => {
     WHERE d.tipo = 'producto'
       AND d.cantidad_picked < d.cantidad
       AND REPLACE(REPLACE(REPLACE(UPPER(d.codigo), ' ', ''), '-', ''), '/', '') = ?
+      ${whereVentaId}
   `;
   const params = [normalizada];
   if (ventaId) {
-    query += ' AND d.venta_id = ?';
     params.push(ventaId);
   }
   query += ' ORDER BY v.created_at ASC, d.id ASC LIMIT 1 FOR UPDATE';
@@ -282,8 +355,9 @@ exports.listarVentas = async (req, res) => {
   const includeDetalle = !['0', 'false', 'no', 'off'].includes(
     String(include_detalle ?? 'true').toLowerCase()
   );
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     let query = `
       SELECT v.*, u.nombre as vendedor_nombre
       FROM ventas v
@@ -306,7 +380,6 @@ exports.listarVentas = async (req, res) => {
     query += ` ORDER BY v.created_at DESC LIMIT ${safeLimit} OFFSET ${offset}`;
     const [rows] = await connection.execute(query, params);
     if (rows.length === 0) {
-      connection.release();
       return res.json([]);
     }
     if (!includeDetalle) {
@@ -314,7 +387,6 @@ exports.listarVentas = async (req, res) => {
         ...mapVentaRow(row),
         detalleIncluido: false
       }));
-      connection.release();
       return res.json(ventas);
     }
     const ventaIds = rows.map((row) => row.id);
@@ -323,7 +395,6 @@ exports.listarVentas = async (req, res) => {
       `SELECT * FROM ventas_detalle WHERE venta_id IN (${placeholders})`,
       ventaIds
     );
-    connection.release();
 
     const detallePorVenta = new Map();
     detalleRows.forEach((row) => {
@@ -345,16 +416,19 @@ exports.listarVentas = async (req, res) => {
       return venta;
     });
 
-    res.json(ventas);
+    return res.json(ventas);
   } catch (error) {
     console.error('Error listando ventas:', error);
-    res.status(500).json({ error: 'Error al obtener ventas' });
+    return res.status(500).json({ error: 'Error al obtener ventas' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.obtenerVenta = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(
       `SELECT v.*, u.nombre as vendedor_nombre
        FROM ventas v
@@ -363,14 +437,12 @@ exports.obtenerVenta = async (req, res) => {
       [req.params.id]
     );
     if (rows.length === 0) {
-      connection.release();
       return res.status(404).json({ error: 'Venta no encontrada' });
     }
     const [detalleRows] = await connection.execute(
       'SELECT * FROM ventas_detalle WHERE venta_id = ?',
       [req.params.id]
     );
-    connection.release();
 
     const venta = mapVentaRow(rows[0]);
     const detalles = detalleRows.map(mapDetalleRow);
@@ -379,10 +451,12 @@ exports.obtenerVenta = async (req, res) => {
     venta.regalos = detalles.filter((item) => item.tipo === 'regalo');
     venta.regaloRequerimientos = detalles.filter((item) => item.tipo === 'regalo_requerimiento');
     venta.detalleIncluido = true;
-    res.json(venta);
+    return res.json(venta);
   } catch (error) {
     console.error('Error obteniendo venta:', error);
-    res.status(500).json({ error: 'Error al obtener venta' });
+    return res.status(500).json({ error: 'Error al obtener venta' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -575,6 +649,36 @@ exports.editarVenta = async (req, res) => {
     const connection = await pool.getConnection();
     await connection.beginTransaction();
     try {
+      const [ventaRows] = await connection.execute(
+        'SELECT id, estado_envio FROM ventas WHERE id = ? FOR UPDATE',
+        [req.params.id]
+      );
+      if (!ventaRows.length) {
+        await connection.rollback();
+        return res.status(404).json({ error: 'Venta no encontrada' });
+      }
+
+      if (['ENVIADO', 'CANCELADO'].includes(String(ventaRows[0].estado_envio || ''))) {
+        await connection.rollback();
+        return res.status(409).json({
+          error: 'No se puede editar una venta enviada o cancelada.'
+        });
+      }
+
+      const [pickedRows] = await connection.execute(
+        `SELECT COALESCE(SUM(cantidad_picked), 0) AS total_picked
+         FROM ventas_detalle
+         WHERE venta_id = ? AND tipo = 'producto'`,
+        [req.params.id]
+      );
+      const totalPicked = Number(pickedRows?.[0]?.total_picked || 0);
+      if (totalPicked > 0) {
+        await connection.rollback();
+        return res.status(409).json({
+          error: 'No se puede editar una venta con picking iniciado. Cree una nueva venta.'
+        });
+      }
+
       await connection.execute(
         `UPDATE ventas SET
           documento_tipo = ?, documento = ?, cliente_nombre = ?, cliente_telefono = ?,
@@ -661,15 +765,15 @@ exports.editarVenta = async (req, res) => {
 
 exports.actualizarEstadoVenta = async (req, res) => {
   const { estadoEnvio, fechaDespacho, fechaCancelacion, rastreoEstado } = req.body;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     if (['ENVIADO', 'CANCELADO'].includes(estadoEnvio)) {
       const [rows] = await connection.execute('SELECT estado_pedido FROM ventas WHERE id = ?', [
         req.params.id
       ]);
       const estadoPedido = rows[0]?.estado_pedido;
       if (estadoPedido && estadoPedido !== 'PEDIDO_LISTO') {
-        connection.release();
         return res.status(400).json({
           error: 'El pedido debe estar en PEDIDO_LISTO para enviar o cancelar.'
         });
@@ -690,48 +794,88 @@ exports.actualizarEstadoVenta = async (req, res) => {
         req.params.id
       ]
     );
-    connection.release();
-    res.json({ ok: true });
+    return res.json({ ok: true });
   } catch (error) {
     console.error('Error actualizando estado de venta:', error);
-    res.status(500).json({ error: 'Error al actualizar estado' });
+    return res.status(500).json({ error: 'Error al actualizar estado' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.actualizarEnvioVenta = async (req, res) => {
   const { ticket, guia, retiro, rastreoEstado } = req.body;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     await connection.execute(
       `UPDATE ventas
        SET ticket = ?, guia = ?, retiro = ?, rastreo_estado = ?
        WHERE id = ?`,
       [ticket || null, guia || null, retiro || null, rastreoEstado || null, req.params.id]
     );
-    connection.release();
-    res.json({ ok: true });
+    return res.json({ ok: true });
   } catch (error) {
     console.error('Error actualizando envio:', error);
-    res.status(500).json({ error: 'Error al actualizar envio' });
+    return res.status(500).json({ error: 'Error al actualizar envio' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.eliminarVenta = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [ventaRows] = await connection.execute(
+      'SELECT id, estado_envio FROM ventas WHERE id = ? FOR UPDATE',
+      [req.params.id]
+    );
+    if (!ventaRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Venta no encontrada' });
+    }
+
+    if (['ENVIADO', 'CANCELADO'].includes(String(ventaRows[0].estado_envio || ''))) {
+      await connection.rollback();
+      return res.status(409).json({
+        error: 'No se puede eliminar una venta enviada o cancelada.'
+      });
+    }
+
+    const [pickedRows] = await connection.execute(
+      `SELECT COALESCE(SUM(cantidad_picked), 0) AS total_picked
+       FROM ventas_detalle
+       WHERE venta_id = ? AND tipo = 'producto'`,
+      [req.params.id]
+    );
+    const totalPicked = Number(pickedRows?.[0]?.total_picked || 0);
+    if (totalPicked > 0) {
+      await connection.rollback();
+      return res.status(409).json({
+        error: 'No se puede eliminar una venta con picking iniciado.'
+      });
+    }
+
     await connection.execute('DELETE FROM ventas WHERE id = ?', [req.params.id]);
-    connection.release();
-    res.json({ ok: true });
+    await connection.commit();
+    return res.json({ ok: true });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error eliminando venta:', error);
-    res.status(500).json({ error: 'Error al eliminar venta' });
+    return res.status(500).json({ error: 'Error al eliminar venta' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.listarDetalleVentas = async (req, res) => {
   const { venta_id, q, tipo } = req.query;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     let query = `
       SELECT d.*, v.fecha_venta, v.created_at, v.usuario_id
       FROM ventas_detalle d
@@ -753,8 +897,7 @@ exports.listarDetalleVentas = async (req, res) => {
     }
     query += ' ORDER BY v.created_at DESC, d.id DESC LIMIT 500';
     const [rows] = await connection.execute(query, params);
-    connection.release();
-    res.json(
+    return res.json(
       rows.map((row) => ({
         ventaId: row.venta_id,
         tipo: row.tipo,
@@ -770,14 +913,17 @@ exports.listarDetalleVentas = async (req, res) => {
     );
   } catch (error) {
     console.error('Error listando detalle ventas:', error);
-    res.status(500).json({ error: 'Error al obtener detalle' });
+    return res.status(500).json({ error: 'Error al obtener detalle' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.historialRequerimientos = async (req, res) => {
   const { q = '' } = req.query;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(
       `
       SELECT d.codigo, d.descripcion, d.proveedor, d.precio_compra, d.precio_venta
@@ -789,8 +935,7 @@ exports.historialRequerimientos = async (req, res) => {
       `,
       [`%${q}%`, `%${q}%`]
     );
-    connection.release();
-    res.json(
+    return res.json(
       rows.map((row) => ({
         codigo: row.codigo,
         descripcion: row.descripcion,
@@ -801,14 +946,17 @@ exports.historialRequerimientos = async (req, res) => {
     );
   } catch (error) {
     console.error('Error historial requerimientos:', error);
-    res.status(500).json({ error: 'Error al obtener historial' });
+    return res.status(500).json({ error: 'Error al obtener historial' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.listarRequerimientosPendientes = async (req, res) => {
   const { q, limite = 200, pagina = 1 } = req.query;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     let query = `
       SELECT d.*, v.cliente_nombre, v.documento, v.fecha_venta, v.created_at, v.estado_envio
       FROM ventas_detalle d
@@ -827,8 +975,7 @@ exports.listarRequerimientosPendientes = async (req, res) => {
     const offset = (pageValue - 1) * safeLimit;
     query += ` ORDER BY v.created_at DESC, d.id DESC LIMIT ${safeLimit} OFFSET ${offset}`;
     const [rows] = await connection.execute(query, params);
-    connection.release();
-    res.json(
+    return res.json(
       rows.map((row) => ({
         id: row.id,
         ventaId: row.venta_id,
@@ -847,14 +994,17 @@ exports.listarRequerimientosPendientes = async (req, res) => {
     );
   } catch (error) {
     console.error('Error listando requerimientos pendientes:', error);
-    res.status(500).json({ error: 'Error al obtener requerimientos pendientes' });
+    return res.status(500).json({ error: 'Error al obtener requerimientos pendientes' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.actualizarRequerimiento = async (req, res) => {
   const { proveedor, precioCompra, precioVenta } = req.body;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     await connection.execute(
       `UPDATE ventas_detalle
        SET proveedor = ?, precio_compra = ?, precio_venta = ?
@@ -866,11 +1016,12 @@ exports.actualizarRequerimiento = async (req, res) => {
         req.params.id
       ]
     );
-    connection.release();
-    res.json({ ok: true });
+    return res.json({ ok: true });
   } catch (error) {
     console.error('Error actualizando requerimiento:', error);
-    res.status(500).json({ error: 'Error al actualizar requerimiento' });
+    return res.status(500).json({ error: 'Error al actualizar requerimiento' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -942,8 +1093,9 @@ exports.crearRequerimientoProducto = async (req, res) => {
 
 exports.exportarVentas = async (req, res) => {
   const { fecha_inicio, fecha_fin, limite = 5000 } = req.query;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     let query = `
       SELECT v.*, u.nombre as vendedor_nombre
       FROM ventas v
@@ -964,7 +1116,6 @@ exports.exportarVentas = async (req, res) => {
     query += ` ORDER BY v.created_at DESC LIMIT ${safeLimit}`;
     const [ventasRows] = await connection.execute(query, params);
     if (ventasRows.length === 0) {
-      connection.release();
       const workbook = new ExcelJS.Workbook();
       addSheetFromObjects(workbook, 'Ventas', []);
       const buffer = await workbookToBuffer(workbook);
@@ -981,7 +1132,6 @@ exports.exportarVentas = async (req, res) => {
       `SELECT * FROM ventas_detalle WHERE venta_id IN (${placeholders})`,
       ventaIds
     );
-    connection.release();
 
     const ventasData = ventasRows.map((row) => ({
       id: row.id,
@@ -1025,17 +1175,20 @@ exports.exportarVentas = async (req, res) => {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     );
     res.setHeader('Content-Disposition', 'attachment; filename="ventas.xlsx"');
-    res.send(buffer);
+    return res.send(buffer);
   } catch (error) {
     console.error('Error exportando ventas:', error);
-    res.status(500).json({ error: 'Error al exportar ventas' });
+    return res.status(500).json({ error: 'Error al exportar ventas' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.listarPickingPendientes = async (req, res) => {
   const { codigo, venta_id } = req.query;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     let query = `
       SELECT 
         d.id as detalle_id, d.venta_id, d.codigo, d.descripcion, d.marca,
@@ -1060,7 +1213,6 @@ exports.listarPickingPendientes = async (req, res) => {
     }
     query += ' ORDER BY v.created_at ASC, d.id ASC';
     const [rows] = await connection.execute(query, params);
-    connection.release();
 
     const ventasMap = new Map();
     rows.forEach((row) => {
@@ -1091,10 +1243,12 @@ exports.listarPickingPendientes = async (req, res) => {
       });
     });
 
-    res.json(Array.from(ventasMap.values()));
+    return res.json(Array.from(ventasMap.values()));
   } catch (error) {
     console.error('Error listando picking pendientes:', error);
-    res.status(500).json({ error: 'Error al obtener picking pendientes' });
+    return res.status(500).json({ error: 'Error al obtener picking pendientes' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -1108,8 +1262,9 @@ exports.confirmarPicking = async (req, res) => {
   if (!Number.isFinite(cantidadNum) || cantidadNum <= 0) {
     return res.status(400).json({ error: 'Cantidad invalida.' });
   }
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     await connection.beginTransaction();
 
     let detalle = null;
@@ -1128,18 +1283,15 @@ exports.confirmarPicking = async (req, res) => {
     }
     if (!detalle) {
       await connection.rollback();
-      connection.release();
       return res.status(404).json({ error: 'Detalle no encontrado.' });
     }
     if (detalle.tipo !== 'producto') {
       await connection.rollback();
-      connection.release();
       return res.status(400).json({ error: 'Solo se puede pickear productos.' });
     }
     const pendiente = Number(detalle.cantidad || 0) - Number(detalle.cantidad_picked || 0);
     if (cantidadNum > pendiente) {
       await connection.rollback();
-      connection.release();
       return res.status(400).json({ error: 'Cantidad supera lo pendiente.' });
     }
 
@@ -1149,13 +1301,11 @@ exports.confirmarPicking = async (req, res) => {
     );
     if (maquinas.length === 0) {
       await connection.rollback();
-      connection.release();
       return res.status(404).json({ error: 'Producto no encontrado en maquinas.' });
     }
     const maquina = maquinas[0];
     if (Number(maquina.stock || 0) < cantidadNum) {
       await connection.rollback();
-      connection.release();
       return res.status(400).json({ error: 'Stock insuficiente para salida.' });
     }
 
@@ -1196,11 +1346,13 @@ exports.confirmarPicking = async (req, res) => {
     }
 
     await connection.commit();
-    connection.release();
-    res.json({ ok: true });
+    return res.json({ ok: true });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error confirmando picking:', error);
-    res.status(500).json({ error: 'Error al confirmar picking' });
+    return res.status(500).json({ error: 'Error al confirmar picking' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -1209,8 +1361,9 @@ exports.cerrarPedido = async (req, res) => {
   if (!ventaId) {
     return res.status(400).json({ error: 'ventaId es obligatorio.' });
   }
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     await connection.beginTransaction();
 
     const [pendientes] = await connection.execute(
@@ -1222,7 +1375,6 @@ exports.cerrarPedido = async (req, res) => {
 
     if (pendientes[0]?.total > 0) {
       await connection.rollback();
-      connection.release();
       return res.status(400).json({ error: 'Aun hay productos pendientes de picking.' });
     }
 
@@ -1231,10 +1383,12 @@ exports.cerrarPedido = async (req, res) => {
     ]);
 
     await connection.commit();
-    connection.release();
-    res.json({ ok: true });
+    return res.json({ ok: true });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error cerrando pedido:', error);
-    res.status(500).json({ error: 'Error al cerrar pedido' });
+    return res.status(500).json({ error: 'Error al cerrar pedido' });
+  } finally {
+    releaseConnection(connection);
   }
 };

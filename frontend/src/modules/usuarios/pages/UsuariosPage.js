@@ -18,7 +18,7 @@ const UsuariosPage = () => {
   });
   const [nuevoUsuario, setNuevoUsuario] = useState({
     nombre: '',
-    usuario: '',
+    email: '',
     contrasena: '',
     rol: 'ventas'
   });
@@ -134,7 +134,7 @@ const UsuariosPage = () => {
   };
 
   const abrirCrear = () => {
-    setNuevoUsuario({ nombre: '', usuario: '', contrasena: '', rol: 'ventas' });
+    setNuevoUsuario({ nombre: '', email: '', contrasena: '', rol: 'ventas' });
     setCreando(true);
   };
 
@@ -144,7 +144,7 @@ const UsuariosPage = () => {
     try {
       await authService.registro({
         nombre: nuevoUsuario.nombre,
-        email: nuevoUsuario.usuario,
+        email: nuevoUsuario.email,
         contrasena: nuevoUsuario.contrasena,
         rol: nuevoUsuario.rol
       });
@@ -239,7 +239,7 @@ const UsuariosPage = () => {
             />
           </div>
           <div className="form-group">
-            <label>Usuario (email opcional)</label>
+            <label>Email</label>
             <input
               type="text"
               value={formData.email}
@@ -272,7 +272,7 @@ const UsuariosPage = () => {
                   />
                 </div>
                 <div className="form-group">
-                  <label>Usuario (email opcional)</label>
+                  <label>Email</label>
                   <input
                     type="text"
                     value={formData.email}
@@ -335,16 +335,17 @@ const UsuariosPage = () => {
                   />
                 </div>
                 <div className="form-group">
-                  <label>Usuario (email opcional)</label>
+                  <label>Email *</label>
                   <input
-                    type="text"
-                    name="nuevo-usuario"
-                    autoComplete="off"
-                    value={nuevoUsuario.usuario}
+                    type="email"
+                    name="nuevo-email"
+                    autoComplete="email"
+                    required
+                    value={nuevoUsuario.email}
                     onChange={(e) =>
-                      setNuevoUsuario({ ...nuevoUsuario, usuario: e.target.value.trim() })
+                      setNuevoUsuario({ ...nuevoUsuario, email: e.target.value.trim() })
                     }
-                    placeholder="usuario o email"
+                    placeholder="usuario@dominio.com"
                   />
                 </div>
                 <div className="form-group">

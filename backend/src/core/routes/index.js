@@ -41,25 +41,38 @@ router.use('/backups', backupsRoutes);
 router.get('/tipos_por_almacen', autenticar, async (req, res) => {
   const { filtrar_stock = 'false' } = req.query;
   const filtrarStock = String(filtrar_stock).toLowerCase() === 'true';
+  let connection;
 
   try {
-    const connection = await pool.getConnection();
-    let query = `SELECT DISTINCT t.id, t.nombre
-      FROM maquinas m
-      JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id`;
-    const params = [];
-    if (filtrarStock) {
-      query += ' WHERE m.stock > 0';
-    }
-    query += ' ORDER BY t.nombre';
+    connection = await pool.getConnection();
+    const query = filtrarStock
+      ? `SELECT t.id, t.nombre
+         FROM tipos_maquinas t
+         WHERE EXISTS (
+           SELECT 1
+           FROM maquinas m
+           WHERE m.tipo_maquina_id = t.id
+             AND m.stock > 0
+         )
+         ORDER BY t.nombre`
+      : `SELECT t.id, t.nombre
+         FROM tipos_maquinas t
+         WHERE EXISTS (
+           SELECT 1
+           FROM maquinas m
+           WHERE m.tipo_maquina_id = t.id
+         )
+         ORDER BY t.nombre`;
 
-    const [rows] = await connection.execute(query, params);
-    connection.release();
-
-    res.json(rows);
+    const [rows] = await connection.execute(query);
+    return res.json(rows);
   } catch (error) {
     console.error('Error obteniendo tipos:', error);
-    res.status(500).json({ error: 'Error al obtener tipos' });
+    return res.status(500).json({ error: 'Error al obtener tipos' });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 });
 

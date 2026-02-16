@@ -14,12 +14,48 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 16) {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const defaultCorsOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+const allowedOrigins = new Set(
+  (process.env.CORS_ORIGINS || defaultCorsOrigins.join(','))
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
+const parseTrustProxy = (rawValue) => {
+  if (rawValue === undefined || rawValue === null || rawValue === '') {
+    return false;
+  }
+  const value = String(rawValue).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(value)) {
+    return 1;
+  }
+  if (['0', 'false', 'no', 'off'].includes(value)) {
+    return false;
+  }
+  const numeric = Number.parseInt(value, 10);
+  if (Number.isFinite(numeric) && numeric >= 0) {
+    return numeric;
+  }
+  return rawValue;
+};
 
 // Middlewares
-// Confiar en el proxy (Caddy) para X-Forwarded-For
-app.set('trust proxy', 1);
+// Configurable: activar solo cuando el backend este detras de proxy (Caddy/Nginx).
+app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
 app.set('etag', false);
-app.use(cors());
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Permitir requests sin Origin (apps nativas, curl, healthchecks)
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+      callback(null, allowedOrigins.has(origin));
+    },
+    credentials: true
+  })
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -31,7 +67,6 @@ const loginLimiter = rateLimit({
 });
 
 // Servir archivos estáticos
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/static', express.static(path.join(__dirname, 'static')));
 
 // Montar todas las rutas de API

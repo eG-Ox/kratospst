@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usuariosService, ventasService } from '../../../core/services/apiServices';
 import '../styles/EnviosPage.css';
 
@@ -12,7 +12,9 @@ const EnviosPage = () => {
   const [ventas, setVentas] = useState([]);
   const [usuariosVentas, setUsuariosVentas] = useState([]);
   const [detalleVenta, setDetalleVenta] = useState(null);
+  const [detalleCargando, setDetalleCargando] = useState(false);
   const ventasRequestRef = useRef(0);
+  const detalleRequestRef = useRef(0);
 
   useEffect(() => {
     const cargarUsuarios = async () => {
@@ -27,38 +29,47 @@ const EnviosPage = () => {
     cargarUsuarios();
   }, []);
 
-  const cargarVentas = async () => {
+  const cargarVentas = useCallback(async () => {
     const requestId = ++ventasRequestRef.current;
     try {
-      const resp = await ventasService.listar();
+      const resp = await ventasService.listar({ include_detalle: false, limite: 400 });
       if (requestId !== ventasRequestRef.current) return;
       setVentas(resp.data || []);
     } catch (err) {
       console.error('Error cargando ventas:', err);
     }
-  };
+  }, []);
 
-  const patchVenta = (id, patch) => {
+  const patchVenta = useCallback((id, patch) => {
     setVentas((prev) =>
       (prev || []).map((item) => (item.id === id ? { ...item, ...patch } : item))
     );
-  };
+    setDetalleVenta((prev) => (prev && prev.id === id ? { ...prev, ...patch } : prev));
+  }, []);
 
   useEffect(() => {
     cargarVentas();
-  }, []);
+  }, [cargarVentas]);
 
-  const actualizarVenta = async (id, changes) => {
-    try {
-      patchVenta(id, changes);
-      await ventasService.actualizarEnvio(id, changes);
-      await cargarVentas();
-    } catch (err) {
-      console.error('Error actualizando envio:', err);
-    }
-  };
+  const persistirCamposEnvio = useCallback(
+    async (venta) => {
+      if (!venta?.id) return;
+      try {
+        await ventasService.actualizarEnvio(venta.id, {
+          ticket: venta.ticket || '',
+          guia: venta.guia || '',
+          retiro: venta.retiro || '',
+          rastreoEstado: venta.rastreoEstado || 'EN TRANSITO'
+        });
+      } catch (err) {
+        console.error('Error actualizando envio:', err);
+        cargarVentas();
+      }
+    },
+    [cargarVentas]
+  );
 
-  const handleEstadoEnvio = (venta, nuevoEstado) => {
+  const handleEstadoEnvio = useCallback((venta, nuevoEstado) => {
     const pedidoListo = (venta.estadoPedido || 'PICKING') === 'PEDIDO_LISTO';
     if (!pedidoListo && (nuevoEstado === 'ENVIADO' || nuevoEstado === 'CANCELADO')) {
       alert('El pedido debe estar en PEDIDO_LISTO para enviar o cancelar.');
@@ -84,7 +95,34 @@ const EnviosPage = () => {
         console.error('Error actualizando estado de envio:', err);
         cargarVentas();
       });
-  };
+  }, [cargarVentas, patchVenta]);
+
+  const abrirDetalle = useCallback(async (venta) => {
+    if (!venta?.id) return;
+    const requestId = ++detalleRequestRef.current;
+    setDetalleVenta(venta);
+    setDetalleCargando(true);
+    try {
+      const resp = await ventasService.obtener(venta.id);
+      if (requestId !== detalleRequestRef.current) return;
+      setDetalleVenta(resp?.data || venta);
+    } catch (err) {
+      console.error('Error cargando detalle de venta en envios:', err);
+      if (requestId === detalleRequestRef.current) {
+        setDetalleVenta(venta);
+      }
+    } finally {
+      if (requestId === detalleRequestRef.current) {
+        setDetalleCargando(false);
+      }
+    }
+  }, []);
+
+  const cerrarDetalle = useCallback(() => {
+    detalleRequestRef.current += 1;
+    setDetalleVenta(null);
+    setDetalleCargando(false);
+  }, []);
 
   const ventasEnvio = useMemo(() => {
     return (ventas || []).filter(
@@ -116,8 +154,8 @@ const EnviosPage = () => {
                 <th>Vendedor</th>
                 <th>Agencia</th>
                 <th>Destino</th>
-                  <th>Estado envio</th>
-                  <th>Estado pedido</th>
+                <th>Estado envio</th>
+                <th>Estado pedido</th>
                 <th>Fecha despacho</th>
                 <th>Ticket</th>
                 <th>Guia</th>
@@ -171,7 +209,8 @@ const EnviosPage = () => {
                         type="text"
                         value={venta.ticket || ''}
                         disabled={venta.estadoEnvio !== 'ENVIADO'}
-                        onChange={(e) => actualizarVenta(venta.id, { ticket: e.target.value })}
+                        onChange={(e) => patchVenta(venta.id, { ticket: e.target.value })}
+                        onBlur={(e) => persistirCamposEnvio({ ...venta, ticket: e.target.value })}
                       />
                     </td>
                     <td>
@@ -179,7 +218,8 @@ const EnviosPage = () => {
                         type="text"
                         value={venta.guia || ''}
                         disabled={venta.estadoEnvio !== 'ENVIADO'}
-                        onChange={(e) => actualizarVenta(venta.id, { guia: e.target.value })}
+                        onChange={(e) => patchVenta(venta.id, { guia: e.target.value })}
+                        onBlur={(e) => persistirCamposEnvio({ ...venta, guia: e.target.value })}
                       />
                     </td>
                     <td>
@@ -187,14 +227,19 @@ const EnviosPage = () => {
                         type="text"
                         value={venta.retiro || ''}
                         disabled={venta.estadoEnvio !== 'ENVIADO'}
-                        onChange={(e) => actualizarVenta(venta.id, { retiro: e.target.value })}
+                        onChange={(e) => patchVenta(venta.id, { retiro: e.target.value })}
+                        onBlur={(e) => persistirCamposEnvio({ ...venta, retiro: e.target.value })}
                       />
                     </td>
                     <td>
                       <select
                         value={venta.rastreoEstado || 'EN TRANSITO'}
                         disabled={venta.estadoEnvio === 'CANCELADO'}
-                        onChange={(e) => actualizarVenta(venta.id, { rastreoEstado: e.target.value })}
+                        onChange={(e) => {
+                          const rastreoEstado = e.target.value;
+                          patchVenta(venta.id, { rastreoEstado });
+                          persistirCamposEnvio({ ...venta, rastreoEstado });
+                        }}
                       >
                         {estadosRastreo.map((estado) => (
                           <option key={estado} value={estado}>
@@ -207,7 +252,7 @@ const EnviosPage = () => {
                       <button
                         type="button"
                         className="icon-btn icon-btn--view"
-                        onClick={() => setDetalleVenta(venta)}
+                        onClick={() => abrirDetalle(venta)}
                         title="Detalle"
                         aria-label="Detalle"
                       >
@@ -232,63 +277,67 @@ const EnviosPage = () => {
               <button
                 type="button"
                 className="btn-icon"
-                onClick={() => setDetalleVenta(null)}
+                onClick={cerrarDetalle}
                 aria-label="Cerrar"
               >
                 X
               </button>
             </div>
             <div className="modal-body">
-              <div className="envios-detalle-grid">
-                <div className="envios-detalle-card">
-                  <h3>Productos</h3>
-                  {(detalleVenta.productos || []).length === 0 ? (
-                    <div className="empty-message">Sin productos.</div>
-                  ) : (
-                    <ul className="envios-detalle-list">
-                      {(detalleVenta.productos || []).map((item) => (
-                        <li key={item.id}>
-                          {item.codigo} {item.descripcion} x{item.cantidad}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+              {detalleCargando ? (
+                <div className="loading">Cargando detalle...</div>
+              ) : (
+                <div className="envios-detalle-grid">
+                  <div className="envios-detalle-card">
+                    <h3>Productos</h3>
+                    {(detalleVenta.productos || []).length === 0 ? (
+                      <div className="empty-message">Sin productos.</div>
+                    ) : (
+                      <ul className="envios-detalle-list">
+                        {(detalleVenta.productos || []).map((item) => (
+                          <li key={item.id}>
+                            {item.codigo} {item.descripcion} x{item.cantidad}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div className="envios-detalle-card">
+                    <h3>Requerimientos</h3>
+                    {(detalleVenta.requerimientos || []).length === 0 ? (
+                      <div className="empty-message">Sin requerimientos.</div>
+                    ) : (
+                      <ul className="envios-detalle-list">
+                        {(detalleVenta.requerimientos || []).map((item) => (
+                          <li key={item.id}>
+                            {item.codigo} {item.descripcion} x{item.cantidad}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div className="envios-detalle-card">
+                    <h3>Regalos</h3>
+                    {[
+                      ...(detalleVenta.regalos || []),
+                      ...(detalleVenta.regaloRequerimientos || [])
+                    ].length === 0 ? (
+                      <div className="empty-message">Sin regalos.</div>
+                    ) : (
+                      <ul className="envios-detalle-list">
+                        {[
+                          ...(detalleVenta.regalos || []),
+                          ...(detalleVenta.regaloRequerimientos || [])
+                        ].map((item) => (
+                          <li key={item.id}>
+                            {item.codigo} {item.descripcion} x{item.cantidad}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 </div>
-                <div className="envios-detalle-card">
-                  <h3>Requerimientos</h3>
-                  {(detalleVenta.requerimientos || []).length === 0 ? (
-                    <div className="empty-message">Sin requerimientos.</div>
-                  ) : (
-                    <ul className="envios-detalle-list">
-                      {(detalleVenta.requerimientos || []).map((item) => (
-                        <li key={item.id}>
-                          {item.codigo} {item.descripcion} x{item.cantidad}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-                <div className="envios-detalle-card">
-                  <h3>Regalos</h3>
-                  {[
-                    ...(detalleVenta.regalos || []),
-                    ...(detalleVenta.regaloRequerimientos || [])
-                  ].length === 0 ? (
-                    <div className="empty-message">Sin regalos.</div>
-                  ) : (
-                    <ul className="envios-detalle-list">
-                      {[
-                        ...(detalleVenta.regalos || []),
-                        ...(detalleVenta.regaloRequerimientos || [])
-                      ].map((item) => (
-                        <li key={item.id}>
-                          {item.codigo} {item.descripcion} x{item.cantidad}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
+              )}
             </div>
           </div>
         </div>

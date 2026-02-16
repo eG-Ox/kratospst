@@ -86,6 +86,27 @@ const sincronizarUbicacionesBase = async (connection) => {
   );
 };
 
+const foreignKeyExists = async (connection, tableName, constraintName) => {
+  const [rows] = await connection.execute(
+    `SELECT 1
+     FROM information_schema.TABLE_CONSTRAINTS
+     WHERE CONSTRAINT_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND CONSTRAINT_NAME = ?
+       AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+     LIMIT 1`,
+    [tableName, constraintName]
+  );
+  return rows.length > 0;
+};
+
+const addForeignKeyIfMissing = async (connection, tableName, constraintName, statement) => {
+  if (await foreignKeyExists(connection, tableName, constraintName)) {
+    return;
+  }
+  await connection.execute(statement);
+};
+
 (async () => {
   const connection = await mysql.createConnection(config);
   try {
@@ -99,6 +120,154 @@ const sincronizarUbicacionesBase = async (connection) => {
     await connection.execute(crearMaquinasUbicaciones);
     await actualizarBusquedaMaquinas(connection);
     await sincronizarUbicacionesBase(connection);
+
+    try {
+      await connection.execute(
+        "ALTER TABLE clientes MODIFY COLUMN tipo_cliente ENUM('natural','juridico','ce') NOT NULL"
+      );
+    } catch (error) {
+      console.log('WARN enum clientes:', error.message);
+    }
+
+    try {
+      await connection.execute(
+        `DELETE c FROM cotizaciones c
+         LEFT JOIN usuarios u ON u.id = c.usuario_id
+         WHERE u.id IS NULL`
+      );
+      await connection.execute(
+        `UPDATE cotizaciones c
+         LEFT JOIN clientes cl ON cl.id = c.cliente_id
+         SET c.cliente_id = NULL
+         WHERE c.cliente_id IS NOT NULL AND cl.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE d FROM detalle_cotizacion d
+         LEFT JOIN cotizaciones c ON c.id = d.cotizacion_id
+         WHERE c.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE d FROM detalle_cotizacion d
+         LEFT JOIN maquinas m ON m.id = d.producto_id
+         WHERE m.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE h FROM historial_cotizaciones h
+         LEFT JOIN cotizaciones c ON c.id = h.cotizacion_id
+         WHERE c.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE h FROM historial_cotizaciones h
+         LEFT JOIN usuarios u ON u.id = h.usuario_id
+         WHERE u.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE k FROM kits k
+         LEFT JOIN usuarios u ON u.id = k.usuario_id
+         WHERE u.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE kp FROM kit_productos kp
+         LEFT JOIN kits k ON k.id = kp.kit_id
+         WHERE k.id IS NULL`
+      );
+      await connection.execute(
+        `DELETE kp FROM kit_productos kp
+         LEFT JOIN maquinas m ON m.id = kp.producto_id
+         WHERE m.id IS NULL`
+      );
+    } catch (error) {
+      console.log('WARN limpieza huerfanos:', error.message);
+    }
+
+    await addForeignKeyIfMissing(
+      connection,
+      'cotizaciones',
+      'fk_cotizaciones_cliente',
+      `ALTER TABLE cotizaciones
+       ADD CONSTRAINT fk_cotizaciones_cliente
+       FOREIGN KEY (cliente_id) REFERENCES clientes(id)
+       ON DELETE SET NULL`
+    );
+    await addForeignKeyIfMissing(
+      connection,
+      'detalle_cotizacion',
+      'fk_detalle_cotizacion_cotizacion',
+      `ALTER TABLE detalle_cotizacion
+       ADD CONSTRAINT fk_detalle_cotizacion_cotizacion
+       FOREIGN KEY (cotizacion_id) REFERENCES cotizaciones(id)
+       ON DELETE CASCADE`
+    );
+    await addForeignKeyIfMissing(
+      connection,
+      'detalle_cotizacion',
+      'fk_detalle_cotizacion_producto',
+      `ALTER TABLE detalle_cotizacion
+       ADD CONSTRAINT fk_detalle_cotizacion_producto
+       FOREIGN KEY (producto_id) REFERENCES maquinas(id)
+       ON DELETE RESTRICT`
+    );
+    await addForeignKeyIfMissing(
+      connection,
+      'historial_cotizaciones',
+      'fk_historial_cotizaciones_cotizacion',
+      `ALTER TABLE historial_cotizaciones
+       ADD CONSTRAINT fk_historial_cotizaciones_cotizacion
+       FOREIGN KEY (cotizacion_id) REFERENCES cotizaciones(id)
+       ON DELETE CASCADE`
+    );
+    await addForeignKeyIfMissing(
+      connection,
+      'historial_cotizaciones',
+      'fk_historial_cotizaciones_usuario',
+      `ALTER TABLE historial_cotizaciones
+       ADD CONSTRAINT fk_historial_cotizaciones_usuario
+       FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+       ON DELETE RESTRICT`
+    );
+    await addForeignKeyIfMissing(
+      connection,
+      'kits',
+      'fk_kits_usuario',
+      `ALTER TABLE kits
+       ADD CONSTRAINT fk_kits_usuario
+       FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+       ON DELETE RESTRICT`
+    );
+    await addForeignKeyIfMissing(
+      connection,
+      'kit_productos',
+      'fk_kit_productos_kit',
+      `ALTER TABLE kit_productos
+       ADD CONSTRAINT fk_kit_productos_kit
+       FOREIGN KEY (kit_id) REFERENCES kits(id)
+       ON DELETE CASCADE`
+    );
+    await addForeignKeyIfMissing(
+      connection,
+      'kit_productos',
+      'fk_kit_productos_producto',
+      `ALTER TABLE kit_productos
+       ADD CONSTRAINT fk_kit_productos_producto
+       FOREIGN KEY (producto_id) REFERENCES maquinas(id)
+       ON DELETE RESTRICT`
+    );
+
+    try {
+      await connection.execute(
+        'CREATE UNIQUE INDEX uniq_cotizacion_serie_correlativo ON cotizaciones (serie, correlativo)'
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME' && error.code !== 'ER_DUP_ENTRY') {
+        throw error;
+      }
+      if (error.code === 'ER_DUP_ENTRY') {
+        console.log(
+          'WARN cotizaciones: hay duplicados en (serie, correlativo); no se pudo crear indice unico'
+        );
+      }
+    }
+
     console.log('OK');
   } catch (error) {
     console.error('ERR', error.code || 'UNKNOWN', error.message);

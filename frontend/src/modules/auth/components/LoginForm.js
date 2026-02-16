@@ -23,7 +23,6 @@ const LoginForm = ({ onLoginSuccess }) => {
     try {
       setLoading(true);
       const response = await authService.login(email, contrasena);
-      localStorage.setItem('token', response.data.token);
       localStorage.setItem('usuario', JSON.stringify(response.data.usuario));
       onLoginSuccess(response.data.usuario);
       navigate('/dashboard');

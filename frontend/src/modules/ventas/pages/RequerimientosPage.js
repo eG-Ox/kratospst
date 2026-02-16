@@ -22,7 +22,10 @@ const RequerimientosPage = () => {
   }, [busqueda]);
 
   useEffect(() => {
-    cargarPendientes();
+    const timeout = setTimeout(() => {
+      cargarPendientes();
+    }, 250);
+    return () => clearTimeout(timeout);
   }, [cargarPendientes]);
 
   const actualizarFila = async (id, changes) => {

@@ -1,5 +1,5 @@
 -- Inserta marcas faltantes sin duplicar existentes
-USE kratos_1;
+-- Ejecutar sobre la base activa (sin USE fijo para evitar errores en otro entorno)
 
 INSERT IGNORE INTO marcas (codigo, nombre) VALUES
 ('M0001', 'Agrotech'),

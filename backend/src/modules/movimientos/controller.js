@@ -258,7 +258,7 @@ const parsePositiveInt = (value, fallback) => {
 // Obtener historial de movimientos
 exports.obtenerMovimientos = async (req, res) => {
   const { maquina_id, tipo, fecha_inicio, fecha_fin, limite = 50, pagina = 1 } = req.query;
-
+  let connection;
   try {
     let query = `
       SELECT 
@@ -297,14 +297,17 @@ exports.obtenerMovimientos = async (req, res) => {
 
     query += ` ORDER BY i.fecha DESC LIMIT ${offset}, ${limiteValue}`;
 
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [movimientos] = await connection.execute(query, params);
-    connection.release();
 
     res.json(movimientos);
   } catch (error) {
     console.error('Error obteniendo movimientos:', error);
     res.status(500).json({ error: 'Error al obtener movimientos' });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 };
 
@@ -316,8 +319,7 @@ exports.obtenerMovimientosPorMaquina = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    await connection.beginTransaction();
-    
+
     const limiteValue = parsePositiveInt(limite, 20);
     const paginaValue = parsePositiveInt(pagina, 1);
     const offset = (paginaValue - 1) * limiteValue;
@@ -331,74 +333,68 @@ exports.obtenerMovimientosPorMaquina = async (req, res) => {
       LIMIT ${offset}, ${limiteValue}`,
       [maquina_id]
     );
-    connection.release();
 
     res.json(movimientos);
   } catch (error) {
     console.error('Error obteniendo movimientos:', error);
     res.status(500).json({ error: 'Error al obtener movimientos' });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 };
 
-// Obtener estadísticas
+// Obtener estadisticas
 exports.obtenerEstadisticas = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    await connection.beginTransaction();
+    const stockAlerta = Number.isFinite(STOCK_ALERTA) ? STOCK_ALERTA : 2;
 
-    // Total de máquinas
-    const [totalMaquinas] = await connection.execute(
-      'SELECT COUNT(*) as total FROM maquinas'
+    const [resumenMaquinasRows] = await connection.execute(
+      `SELECT
+         COUNT(*) AS total_maquinas,
+         COALESCE(SUM(stock), 0) AS total_stock,
+         SUM(CASE WHEN activo = TRUE AND stock <= ? THEN 1 ELSE 0 END) AS stock_bajo
+       FROM maquinas`,
+      [stockAlerta]
     );
 
-    // Total de stock
-    const [totalStock] = await connection.execute(
-      'SELECT SUM(stock) as total FROM maquinas'
+    const [resumenMovimientosRows] = await connection.execute(
+      `SELECT
+         COUNT(*) AS movimientos_hoy,
+         SUM(CASE WHEN tipo = 'ingreso' THEN 1 ELSE 0 END) AS ingresos_movimientos,
+         COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN cantidad ELSE 0 END), 0) AS ingresos_cantidad,
+         SUM(CASE WHEN tipo = 'salida' THEN 1 ELSE 0 END) AS salidas_movimientos,
+         COALESCE(SUM(CASE WHEN tipo = 'salida' THEN cantidad ELSE 0 END), 0) AS salidas_cantidad
+       FROM ingresos_salidas
+       WHERE fecha >= CURDATE() AND fecha < (CURDATE() + INTERVAL 1 DAY)`
     );
 
-    // Movimientos de hoy
-    const [movimientosHoy] = await connection.execute(
-      `SELECT COUNT(*) as total FROM ingresos_salidas 
-       WHERE DATE(fecha) = CURDATE()`
-    );
-
-    // Ingresos de hoy
-    const [ingresosHoy] = await connection.execute(
-      `SELECT COUNT(*) as total, SUM(cantidad) as cantidad FROM ingresos_salidas 
-       WHERE DATE(fecha) = CURDATE() AND tipo = 'ingreso'`
-    );
-
-    // Salidas de hoy
-    const [salidAsHoy] = await connection.execute(
-      `SELECT COUNT(*) as total, SUM(cantidad) as cantidad FROM ingresos_salidas 
-       WHERE DATE(fecha) = CURDATE() AND tipo = 'salida'`
-    );
-
-    // Máquinas con stock bajo
-    const [stockBajo] = await connection.execute(
-      'SELECT COUNT(*) as total FROM maquinas WHERE activo = TRUE AND stock <= ?',
-      [Number.isFinite(STOCK_ALERTA) ? STOCK_ALERTA : 2]
-    );
-
-    connection.release();
+    const resumenMaquinas = resumenMaquinasRows?.[0] || {};
+    const resumenMovimientos = resumenMovimientosRows?.[0] || {};
 
     res.json({
-      total_maquinas: totalMaquinas[0].total,
-      total_stock: totalStock[0].total || 0,
-      movimientos_hoy: movimientosHoy[0].total,
+      total_maquinas: Number(resumenMaquinas.total_maquinas || 0),
+      total_stock: Number(resumenMaquinas.total_stock || 0),
+      movimientos_hoy: Number(resumenMovimientos.movimientos_hoy || 0),
       ingresos_hoy: {
-        movimientos: ingresosHoy[0].total,
-        cantidad: ingresosHoy[0].cantidad || 0
+        movimientos: Number(resumenMovimientos.ingresos_movimientos || 0),
+        cantidad: Number(resumenMovimientos.ingresos_cantidad || 0)
       },
       salidas_hoy: {
-        movimientos: salidAsHoy[0].total,
-        cantidad: salidAsHoy[0].cantidad || 0
+        movimientos: Number(resumenMovimientos.salidas_movimientos || 0),
+        cantidad: Number(resumenMovimientos.salidas_cantidad || 0)
       },
-      stock_bajo: stockBajo[0].total
+      stock_bajo: Number(resumenMaquinas.stock_bajo || 0)
     });
   } catch (error) {
-    console.error('Error obteniendo estadísticas:', error);
-    res.status(500).json({ error: 'Error al obtener estadísticas' });
+    console.error('Error obteniendo estadisticas:', error);
+    res.status(500).json({ error: 'Error al obtener estadisticas' });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 };

@@ -1,6 +1,17 @@
 const pool = require('../../core/config/database');
 const { ExcelJS, addSheetFromObjects, workbookToBuffer } = require('../../shared/utils/excel');
 
+const MAX_HISTORY_LIST_LIMIT = 500;
+
+const releaseConnection = (connection) => {
+  if (!connection) return;
+  try {
+    connection.release();
+  } catch (_) {
+    // no-op
+  }
+};
+
 const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -62,12 +73,16 @@ exports.listarHistorial = async (req, res) => {
   const { entidad, usuario_id, accion, fecha_inicio, fecha_fin, limite = 50, pagina = 1 } = req.query;
   const limitValue = Number.parseInt(limite, 10);
   const pageValue = Number.parseInt(pagina, 10);
-  const safeLimit = Number.isFinite(limitValue) && limitValue > 0 ? limitValue : 50;
+  const safeLimit = Math.min(
+    Number.isFinite(limitValue) && limitValue > 0 ? limitValue : 50,
+    MAX_HISTORY_LIST_LIMIT
+  );
   const safePage = Number.isFinite(pageValue) && pageValue > 0 ? pageValue : 1;
   const offset = (safePage - 1) * safeLimit;
+  let connection;
 
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     let query = `
       SELECT h.*, u.nombre as usuario_nombre
       FROM historial_acciones h
@@ -77,17 +92,19 @@ exports.listarHistorial = async (req, res) => {
 
     query += ` ${where} ORDER BY h.created_at DESC LIMIT ${safeLimit} OFFSET ${offset}`;
     const [rows] = await connection.execute(query, params);
-    connection.release();
     res.json(rows);
   } catch (error) {
     console.error('Error listando historial:', error);
     res.status(500).json({ error: 'Error al obtener historial' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.exportarHistorial = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     let query = `
       SELECT h.created_at, h.entidad, h.entidad_id, h.accion, u.nombre as usuario_nombre, h.descripcion,
         h.antes_json, h.despues_json
@@ -99,7 +116,6 @@ exports.exportarHistorial = async (req, res) => {
       const safeLimit = Math.min(limiteValue, 20000);
       query += ` ${where} ORDER BY h.created_at DESC LIMIT ${safeLimit}`;
       const [rows] = await connection.execute(query, params);
-    connection.release();
 
     const beforeKeys = new Set();
     const afterKeys = new Set();
@@ -176,5 +192,7 @@ exports.exportarHistorial = async (req, res) => {
   } catch (error) {
     console.error('Error exportando historial:', error);
     res.status(500).json({ error: 'Error al exportar historial' });
+  } finally {
+    releaseConnection(connection);
   }
 };

@@ -18,9 +18,19 @@ const normalizarItems = (items = []) =>
     }))
     .filter((item) => item.producto_id && item.cantidad > 0);
 
-exports.listarKitsActivos = async (req, res) => {
+const releaseConnection = (connection) => {
+  if (!connection) return;
   try {
-    const connection = await pool.getConnection();
+    connection.release();
+  } catch (_) {
+    // no-op
+  }
+};
+
+exports.listarKitsActivos = async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(
       `SELECT id, nombre, descripcion, precio_total
        FROM kits
@@ -28,26 +38,27 @@ exports.listarKitsActivos = async (req, res) => {
        ORDER BY created_at DESC`,
       [req.usuario.id]
     );
-    connection.release();
     res.json(rows);
   } catch (error) {
     console.error('Error listando kits:', error);
     res.status(500).json({ error: 'Error al listar kits' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.obtenerParaVenta = async (req, res) => {
   const { kit_id } = req.params;
+  let connection;
 
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [kits] = await connection.execute(
       'SELECT id, nombre, descripcion, precio_total FROM kits WHERE id = ? AND usuario_id = ? AND activo = TRUE',
       [kit_id, req.usuario.id]
     );
 
     if (!kits.length) {
-      connection.release();
       return res.status(404).json({ error: 'Kit no encontrado' });
     }
 
@@ -58,8 +69,6 @@ exports.obtenerParaVenta = async (req, res) => {
        WHERE kp.kit_id = ?`,
       [kit_id]
     );
-
-    connection.release();
 
     const todos = itemsProductos.map((item) => ({
       id: item.id,
@@ -99,12 +108,15 @@ exports.obtenerParaVenta = async (req, res) => {
   } catch (error) {
     console.error('Error obteniendo kit para venta:', error);
     res.status(500).json({ error: 'Error al obtener kit' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.listarKits = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(
       `SELECT id, nombre, descripcion, precio_total, activo, created_at
        FROM kits
@@ -112,25 +124,26 @@ exports.listarKits = async (req, res) => {
        ORDER BY created_at DESC`,
       [req.usuario.id]
     );
-    connection.release();
     res.json(rows);
   } catch (error) {
     console.error('Error listando kits:', error);
     res.status(500).json({ error: 'Error al listar kits' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.obtenerKit = async (req, res) => {
   const { id } = req.params;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [kits] = await connection.execute(
       `SELECT id, nombre, descripcion, precio_total, activo, created_at
        FROM kits WHERE id = ? AND usuario_id = ?`,
       [id, req.usuario.id]
     );
     if (!kits.length) {
-      connection.release();
       return res.status(404).json({ error: 'Kit no encontrado' });
     }
     const [items] = await connection.execute(
@@ -138,11 +151,12 @@ exports.obtenerKit = async (req, res) => {
        FROM kit_productos WHERE kit_id = ?`,
       [id]
     );
-    connection.release();
     res.json({ ...kits[0], productos: items });
   } catch (error) {
     console.error('Error obteniendo kit:', error);
     res.status(500).json({ error: 'Error al obtener kit' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -333,15 +347,15 @@ exports.eliminarKit = async (req, res) => {
 
 exports.toggleKit = async (req, res) => {
   const { id } = req.params;
+  let connection;
 
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(
       'SELECT activo FROM kits WHERE id = ? AND usuario_id = ?',
       [id, req.usuario.id]
     );
     if (!rows.length) {
-      connection.release();
       return res.status(404).json({ error: 'Kit no encontrado' });
     }
 
@@ -360,11 +374,12 @@ exports.toggleKit = async (req, res) => {
       antes: { activo: rows[0].activo },
       despues: { activo: nuevoEstado }
     });
-    connection.release();
 
     res.json({ id, activo: nuevoEstado });
   } catch (error) {
     console.error('Error cambiando estado de kit:', error);
     res.status(500).json({ error: 'Error al cambiar estado del kit' });
+  } finally {
+    releaseConnection(connection);
   }
 };

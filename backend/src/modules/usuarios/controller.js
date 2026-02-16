@@ -7,9 +7,28 @@ const parsePositiveInt = (value, fallback) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
-exports.listarUsuarios = async (req, res) => {
+const releaseConnection = (connection) => {
+  if (!connection) return;
   try {
-    const connection = await pool.getConnection();
+    connection.release();
+  } catch (_) {
+    // no-op
+  }
+};
+
+const rollbackSilently = async (connection) => {
+  if (!connection) return;
+  try {
+    await connection.rollback();
+  } catch (_) {
+    // no-op
+  }
+};
+
+exports.listarUsuarios = async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
     const limiteValue = parsePositiveInt(req.query.limite, 5000);
     const paginaValue = parsePositiveInt(req.query.pagina, 1);
     const safeLimit = Math.min(limiteValue, 20000);
@@ -20,11 +39,12 @@ exports.listarUsuarios = async (req, res) => {
        ORDER BY id DESC
        LIMIT ${offset}, ${safeLimit}`
     );
-    connection.release();
     res.json(rows);
   } catch (error) {
     console.error('Error listando usuarios:', error);
     res.status(500).json({ error: 'Error al listar usuarios' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -33,28 +53,37 @@ exports.actualizarUsuario = async (req, res) => {
   const { id } = req.params;
   const rolesValidos = ['admin', 'ventas', 'logistica'];
 
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
     const [existing] = await connection.execute('SELECT * FROM usuarios WHERE id = ?', [id]);
     if (!existing.length) {
-      connection.release();
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
     if (rol && !rolesValidos.includes(rol)) {
-      connection.release();
+      await rollbackSilently(connection);
       return res.status(400).json({ error: 'Rol no valido' });
     }
 
     if (!isNonEmptyString(nombre) || !isNonEmptyString(email)) {
-      connection.release();
-      return res.status(400).json({ error: 'Nombre y usuario son requeridos' });
+      await rollbackSilently(connection);
+      return res.status(400).json({ error: 'Nombre y email son requeridos' });
     }
 
     await connection.execute(
       `UPDATE usuarios
        SET nombre = ?, email = ?, telefono = ?, rol = ?, activo = ?
       WHERE id = ?`,
-      [normalizeString(nombre), normalizeString(email), normalizeString(telefono) || null, rol, activo ? 1 : 0, id]
+      [
+        normalizeString(nombre),
+        normalizeString(email),
+        normalizeString(telefono) || null,
+        rol,
+        activo ? 1 : 0,
+        id
+      ]
     );
     await registrarHistorial(connection, {
       entidad: 'usuarios',
@@ -72,26 +101,29 @@ exports.actualizarUsuario = async (req, res) => {
         activo: !!activo
       }
     });
-    connection.release();
+    await connection.commit();
 
-    res.json({ id, nombre, email, telefono: telefono || null, rol, activo: !!activo });
+    return res.json({ id, nombre, email, telefono: telefono || null, rol, activo: !!activo });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error actualizando usuario:', error);
     if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ error: 'El usuario ya está registrado' });
+      return res.status(400).json({ error: 'El usuario ya esta registrado' });
     }
-    res.status(500).json({ error: 'Error al actualizar usuario' });
+    return res.status(500).json({ error: 'Error al actualizar usuario' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.obtenerPerfil = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(
       'SELECT id, nombre, email, telefono, rol FROM usuarios WHERE id = ?',
       [req.usuario.id]
     );
-    connection.release();
     if (!rows.length) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
@@ -99,16 +131,21 @@ exports.obtenerPerfil = async (req, res) => {
   } catch (error) {
     console.error('Error obteniendo perfil:', error);
     res.status(500).json({ error: 'Error al obtener perfil' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.actualizarPerfil = async (req, res) => {
   const { nombre, email, telefono } = req.body;
   if (!isNonEmptyString(nombre) || !isNonEmptyString(email)) {
-    return res.status(400).json({ error: 'Nombre y usuario son requeridos' });
+    return res.status(400).json({ error: 'Nombre y email son requeridos' });
   }
+
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
     const [prev] = await connection.execute('SELECT * FROM usuarios WHERE id = ?', [req.usuario.id]);
     await connection.execute(
       `UPDATE usuarios
@@ -130,13 +167,16 @@ exports.actualizarPerfil = async (req, res) => {
         telefono: telefono || null
       }
     });
-    connection.release();
-    res.json({ id: req.usuario.id, nombre, email, telefono: telefono || null });
+    await connection.commit();
+    return res.json({ id: req.usuario.id, nombre, email, telefono: telefono || null });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error actualizando perfil:', error);
     if (error.code === 'ER_DUP_ENTRY') {
-      return res.status(400).json({ error: 'El usuario ya está registrado' });
+      return res.status(400).json({ error: 'El usuario ya esta registrado' });
     }
-    res.status(500).json({ error: 'Error al actualizar perfil' });
+    return res.status(500).json({ error: 'Error al actualizar perfil' });
+  } finally {
+    releaseConnection(connection);
   }
 };

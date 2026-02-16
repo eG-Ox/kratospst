@@ -164,7 +164,7 @@
   background: #ffffff;
   border-radius: 18px;
   padding: 18px;
-  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.2);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -334,9 +334,7 @@
   height: min(56vw, 220px);
   border: 2px solid rgba(255, 255, 255, 0.7);
   border-radius: 12px;
-  box-shadow:
-    0 0 0 9999px rgba(0, 0, 0, 0.22),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .scan-cross::before,
@@ -367,8 +365,8 @@
   width: min(56vw, 220px);
   height: 2px;
   background: rgba(52, 152, 219, 0.9);
-  box-shadow: 0 0 10px rgba(52, 152, 219, 0.6);
-  animation: scan-move 2.2s ease-in-out infinite;
+  box-shadow: none;
+  animation: none;
   border-radius: 999px;
 }
 
@@ -700,8 +698,8 @@
 
 .movimientos-form button[type="submit"]:hover {
   background: #2980b9;
-  transform: translateY(-2px);
-  box-shadow: 0 8px 18px rgba(52, 152, 219, 0.28);
+  transform: none;
+  box-shadow: 0 4px 10px rgba(52, 152, 219, 0.2);
 }
 
 .error-message {
