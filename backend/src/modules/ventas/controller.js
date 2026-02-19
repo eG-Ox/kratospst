@@ -2,6 +2,7 @@ const pool = require('../../core/config/database');
 const { ExcelJS, addSheetFromObjects, workbookToBuffer } = require('../../shared/utils/excel');
 const { isNonEmptyString, isNonNegative, isPositiveInt, validateDocumento, toNumber } = require('../../shared/utils/validation');
 const { syncUbicacionPrincipal } = require('../../shared/utils/ubicaciones');
+const { tienePermiso } = require('../../core/middleware/auth');
 
 const formatDate = (value) => {
   if (!value) return null;
@@ -15,6 +16,10 @@ const parsePositiveInt = (value, fallback) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 const isDuplicateKeyError = (error) => error?.code === 'ER_DUP_ENTRY';
+const DOCUMENTO_TIPOS_VALIDOS = new Set(['dni', 'ruc']);
+const AGENCIAS_VALIDAS = new Set(['SHALOM', 'MARVISUR', 'OLVA', 'OTROS', 'TIENDA']);
+const ESTADOS_ENVIO_VALIDOS = new Set(['PENDIENTE', 'ENVIADO', 'CANCELADO', 'VISITA']);
+const PERMISO_VER_PRECIO_COMPRA = 'productos.precio_compra.ver';
 
 const mapVentaRow = (row) => ({
   id: row.id,
@@ -42,8 +47,9 @@ const mapVentaRow = (row) => ({
   createdAt: row.created_at
 });
 
-const mapDetalleRow = (row) => ({
+const mapDetalleRow = (row, includePrecioCompra = true) => ({
   id: row.id,
+  productoId: row.producto_id ? Number(row.producto_id) : null,
   tipo: row.tipo,
   codigo: row.codigo,
   descripcion: row.descripcion,
@@ -51,26 +57,59 @@ const mapDetalleRow = (row) => ({
   cantidad: Number(row.cantidad || 0),
   cantidadPicked: Number(row.cantidad_picked || 0),
   precioVenta: Number(row.precio_venta || 0),
-  precioCompra: Number(row.precio_compra || 0),
+  precioCompra: includePrecioCompra ? Number(row.precio_compra || 0) : null,
   proveedor: row.proveedor,
   stock: row.stock === null ? null : Number(row.stock || 0)
 });
 
-const buildDetalleRows = (ventaId, items, tipo) =>
-  (items || []).map((item) => ({
-    venta_id: ventaId,
-    tipo,
-    codigo: item.codigo || null,
-    descripcion: item.descripcion || null,
-    marca: item.marca || null,
-    cantidad: Number(item.cantidad || 0),
-    // La cantidad pickeada se controla exclusivamente en el flujo de picking.
-    cantidad_picked: 0,
-    precio_venta: Number(item.precioVenta || item.precio_venta || 0),
-    precio_compra: Number(item.precioCompra || item.precio_compra || 0),
-    proveedor: item.proveedor || null,
-    stock: item.stock === null || item.stock === undefined ? null : Number(item.stock || 0)
-  }));
+const puedeVerPrecioCompra = (req) => tienePermiso(req, PERMISO_VER_PRECIO_COMPRA);
+
+const createProductoIdResolver = (connection) => {
+  const cache = new Map();
+  return async (item) => {
+    const directId = Number(item?.producto_id ?? item?.productoId);
+    if (Number.isInteger(directId) && directId > 0) {
+      return directId;
+    }
+    const codigo = String(item?.codigo || '').trim();
+    if (!codigo) {
+      return null;
+    }
+    const cacheKey = codigo.toUpperCase();
+    if (cache.has(cacheKey)) {
+      return cache.get(cacheKey);
+    }
+    const [rows] = await connection.execute(
+      'SELECT id FROM maquinas WHERE codigo = ? LIMIT 1',
+      [codigo]
+    );
+    const productoId = rows[0]?.id ? Number(rows[0].id) : null;
+    cache.set(cacheKey, productoId);
+    return productoId;
+  };
+};
+
+const buildDetalleRows = async (ventaId, items, tipo, resolveProductoId) => {
+  const rows = [];
+  for (const item of items || []) {
+    rows.push({
+      venta_id: ventaId,
+      producto_id: await resolveProductoId(item),
+      tipo,
+      codigo: item.codigo || null,
+      descripcion: item.descripcion || null,
+      marca: item.marca || null,
+      cantidad: Number(item.cantidad || 0),
+      // La cantidad pickeada se controla exclusivamente en el flujo de picking.
+      cantidad_picked: 0,
+      precio_venta: Number(item.precioVenta || item.precio_venta || 0),
+      precio_compra: Number(item.precioCompra || item.precio_compra || 0),
+      proveedor: item.proveedor || null,
+      stock: item.stock === null || item.stock === undefined ? null : Number(item.stock || 0)
+    });
+  }
+  return rows;
+};
 
 const parseArray = (value) => {
   if (Array.isArray(value)) return value;
@@ -101,6 +140,22 @@ const rollbackSilently = async (connection) => {
   } catch (_) {
     // no-op
   }
+};
+
+const normalizarDocumentoTipo = (value) => String(value || '').trim().toLowerCase();
+const normalizarAgencia = (value) => String(value || '').trim().toUpperCase();
+const normalizarEstadoEnvio = (value) => String(value || 'PENDIENTE').trim().toUpperCase();
+const isValidDateInput = (value) =>
+  value === undefined || value === null || value === '' || !Number.isNaN(Date.parse(value));
+const isVentasScopedByOwner = (req) => req.usuario?.rol === 'ventas' && isPositiveInt(req.usuario?.id);
+const getOwnerUserId = (req) => (isVentasScopedByOwner(req) ? Number(req.usuario.id) : null);
+const appendOwnerScope = (req, params, alias = 'v') => {
+  const ownerUserId = getOwnerUserId(req);
+  if (!ownerUserId) {
+    return '';
+  }
+  params.push(ownerUserId);
+  return ` AND ${alias}.usuario_id = ?`;
 };
 
 
@@ -270,12 +325,13 @@ const crearProductoDesdeRequerimiento = async (connection, item) => {
   throw new Error('No se pudo generar codigo de requerimiento unico');
 };
 
-const buscarDetallePendientePorCodigo = async (connection, codigo, ventaId) => {
+const buscarDetallePendientePorCodigo = async (connection, codigo, ventaId, ownerUserId) => {
   const normalizada = normalizarClave(codigo);
   const codigoExacto = normalizarTexto(codigo);
   if (!normalizada && !codigoExacto) return null;
 
   const whereVentaId = ventaId ? ' AND d.venta_id = ?' : '';
+  const whereOwnerId = ownerUserId ? ' AND v.usuario_id = ?' : '';
 
   if (codigoExacto) {
     const exactParams = [codigoExacto];
@@ -290,6 +346,10 @@ const buscarDetallePendientePorCodigo = async (connection, codigo, ventaId) => {
     if (ventaId) {
       exactQuery += ' AND d.venta_id = ?';
       exactParams.push(ventaId);
+    }
+    if (ownerUserId) {
+      exactQuery += ' AND v.usuario_id = ?';
+      exactParams.push(ownerUserId);
     }
     exactQuery += ' ORDER BY v.created_at ASC, d.id ASC LIMIT 1 FOR UPDATE';
     const [exactRows] = await connection.execute(exactQuery, exactParams);
@@ -307,10 +367,14 @@ const buscarDetallePendientePorCodigo = async (connection, codigo, ventaId) => {
       AND d.cantidad_picked < d.cantidad
       AND REPLACE(REPLACE(REPLACE(UPPER(d.codigo), ' ', ''), '-', ''), '/', '') = ?
       ${whereVentaId}
+      ${whereOwnerId}
   `;
   const params = [normalizada];
   if (ventaId) {
     params.push(ventaId);
+  }
+  if (ownerUserId) {
+    params.push(ownerUserId);
   }
   query += ' ORDER BY v.created_at ASC, d.id ASC LIMIT 1 FOR UPDATE';
   const [rows] = await connection.execute(query, params);
@@ -328,13 +392,20 @@ const asegurarProductoRequerimiento = async (connection, item) => {
     }
     return {
       ...item,
+      producto_id: existente.id,
       codigo: existente.codigo,
       marca: existente.marca || item.marca,
       descripcion: existente.descripcion || item.descripcion
     };
   }
   const creado = await crearProductoDesdeRequerimiento(connection, item);
-  return { ...item, codigo: creado.codigo, marca: creado.marca, descripcion: creado.descripcion };
+  return {
+    ...item,
+    producto_id: creado.id,
+    codigo: creado.codigo,
+    marca: creado.marca,
+    descripcion: creado.descripcion
+  };
 };
 
 const prepararRequerimientos = async (connection, items) => {
@@ -373,6 +444,7 @@ exports.listarVentas = async (req, res) => {
       query += ' AND v.fecha_venta <= ?';
       params.push(fecha_fin);
     }
+    query += appendOwnerScope(req, params, 'v');
     const limitValue = parsePositiveInt(limite, 200);
     const pageValue = parsePositiveInt(pagina, 1);
     const safeLimit = Math.min(limitValue, 500);
@@ -396,9 +468,10 @@ exports.listarVentas = async (req, res) => {
       ventaIds
     );
 
+    const includePrecioCompra = puedeVerPrecioCompra(req);
     const detallePorVenta = new Map();
     detalleRows.forEach((row) => {
-      const mapped = mapDetalleRow(row);
+      const mapped = mapDetalleRow(row, includePrecioCompra);
       if (!detallePorVenta.has(row.venta_id)) {
         detallePorVenta.set(row.venta_id, []);
       }
@@ -429,12 +502,15 @@ exports.obtenerVenta = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const [rows] = await connection.execute(
-      `SELECT v.*, u.nombre as vendedor_nombre
+    let query = `SELECT v.*, u.nombre as vendedor_nombre
        FROM ventas v
        LEFT JOIN usuarios u ON v.usuario_id = u.id
-       WHERE v.id = ?`,
-      [req.params.id]
+       WHERE v.id = ?`;
+    const params = [req.params.id];
+    query += appendOwnerScope(req, params, 'v');
+    const [rows] = await connection.execute(
+      query,
+      params
     );
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Venta no encontrada' });
@@ -445,7 +521,8 @@ exports.obtenerVenta = async (req, res) => {
     );
 
     const venta = mapVentaRow(rows[0]);
-    const detalles = detalleRows.map(mapDetalleRow);
+    const includePrecioCompra = puedeVerPrecioCompra(req);
+    const detalles = detalleRows.map((row) => mapDetalleRow(row, includePrecioCompra));
     venta.productos = detalles.filter((item) => item.tipo === 'producto');
     venta.requerimientos = detalles.filter((item) => item.tipo === 'requerimiento');
     venta.regalos = detalles.filter((item) => item.tipo === 'regalo');
@@ -492,11 +569,30 @@ exports.crearVenta = async (req, res) => {
     const regalosList = parseArray(regalos);
     const regalosReqList = parseArray(regaloRequerimientos);
 
-    if (!validateDocumento(documentoTipo, documento)) {
+    const documentoTipoValue = normalizarDocumentoTipo(documentoTipo || 'dni');
+    const agenciaValue = normalizarAgencia(agencia || 'SHALOM');
+    const estadoEnvioValue = normalizarEstadoEnvio(estadoEnvio);
+
+    if (!DOCUMENTO_TIPOS_VALIDOS.has(documentoTipoValue)) {
+      return res.status(400).json({ error: 'Tipo de documento invalido' });
+    }
+    if (!validateDocumento(documentoTipoValue, documento)) {
       return res.status(400).json({ error: 'Documento invalido' });
     }
-    if (fechaVenta && Number.isNaN(Date.parse(fechaVenta))) {
+    if (!AGENCIAS_VALIDAS.has(agenciaValue)) {
+      return res.status(400).json({ error: 'Agencia invalida' });
+    }
+    if (!ESTADOS_ENVIO_VALIDOS.has(estadoEnvioValue)) {
+      return res.status(400).json({ error: 'Estado de envio invalido' });
+    }
+    if (!isValidDateInput(fechaVenta)) {
       return res.status(400).json({ error: 'Fecha de venta invalida' });
+    }
+    if (!isValidDateInput(fechaDespacho)) {
+      return res.status(400).json({ error: 'Fecha de despacho invalida' });
+    }
+    if (!isValidDateInput(fechaCancelacion)) {
+      return res.status(400).json({ error: 'Fecha de cancelacion invalida' });
     }
     if (productosList.length + requerimientosList.length + regalosList.length + regalosReqList.length === 0) {
       return res.status(400).json({ error: 'Debe agregar productos o requerimientos a la venta' });
@@ -511,6 +607,11 @@ exports.crearVenta = async (req, res) => {
     }
 
     const estadoPedido = productosList.length > 0 ? 'PICKING' : 'PEDIDO_LISTO';
+    if (['ENVIADO', 'CANCELADO'].includes(estadoEnvioValue) && estadoPedido !== 'PEDIDO_LISTO') {
+      return res.status(400).json({
+        error: 'El pedido debe estar en PEDIDO_LISTO para enviar o cancelar.'
+      });
+    }
     const connection = await pool.getConnection();
     await connection.beginTransaction();
     try {
@@ -522,15 +623,15 @@ exports.crearVenta = async (req, res) => {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           usuarioId,
-          documentoTipo,
+          documentoTipoValue,
           documento,
           clienteNombre,
           clienteTelefono,
-          agencia,
+          agenciaValue,
           agenciaOtro,
           destino,
-          fechaVenta,
-          estadoEnvio,
+          fechaVenta || null,
+          estadoEnvioValue,
           estadoPedido,
           fechaDespacho || null,
           fechaCancelacion || null,
@@ -548,17 +649,24 @@ exports.crearVenta = async (req, res) => {
       const requerimientosPreparados = await prepararRequerimientos(connection, requerimientosList);
       const regalosPreparados = await prepararRequerimientos(connection, regalosList);
       const regalosReqPreparados = await prepararRequerimientos(connection, regalosReqList);
+      const resolveProductoId = createProductoIdResolver(connection);
 
       const detalleRows = [
-        ...buildDetalleRows(ventaId, productosList, 'producto'),
-        ...buildDetalleRows(ventaId, requerimientosPreparados, 'requerimiento'),
-        ...buildDetalleRows(ventaId, regalosPreparados, 'regalo'),
-        ...buildDetalleRows(ventaId, regalosReqPreparados, 'regalo_requerimiento')
+        ...(await buildDetalleRows(ventaId, productosList, 'producto', resolveProductoId)),
+        ...(await buildDetalleRows(ventaId, requerimientosPreparados, 'requerimiento', resolveProductoId)),
+        ...(await buildDetalleRows(ventaId, regalosPreparados, 'regalo', resolveProductoId)),
+        ...(await buildDetalleRows(
+          ventaId,
+          regalosReqPreparados,
+          'regalo_requerimiento',
+          resolveProductoId
+        ))
       ];
 
       if (detalleRows.length) {
         const values = detalleRows.map((row) => [
           row.venta_id,
+          row.producto_id,
           row.tipo,
           row.codigo,
           row.descripcion,
@@ -575,7 +683,7 @@ exports.crearVenta = async (req, res) => {
           const chunk = values.slice(i, i + chunkSize);
           await connection.query(
             `INSERT INTO ventas_detalle
-            (venta_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked, precio_venta, precio_compra, proveedor, stock)
+            (venta_id, producto_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked, precio_venta, precio_compra, proveedor, stock)
             VALUES ?`,
             [chunk]
           );
@@ -626,12 +734,30 @@ exports.editarVenta = async (req, res) => {
     const requerimientosList = parseArray(requerimientos);
     const regalosList = parseArray(regalos);
     const regalosReqList = parseArray(regaloRequerimientos);
+    const documentoTipoValue = normalizarDocumentoTipo(documentoTipo || 'dni');
+    const agenciaValue = normalizarAgencia(agencia || 'SHALOM');
+    const estadoEnvioValue = normalizarEstadoEnvio(estadoEnvio);
 
-    if (!validateDocumento(documentoTipo, documento)) {
+    if (!DOCUMENTO_TIPOS_VALIDOS.has(documentoTipoValue)) {
+      return res.status(400).json({ error: 'Tipo de documento invalido' });
+    }
+    if (!validateDocumento(documentoTipoValue, documento)) {
       return res.status(400).json({ error: 'Documento invalido' });
     }
-    if (fechaVenta && Number.isNaN(Date.parse(fechaVenta))) {
+    if (!AGENCIAS_VALIDAS.has(agenciaValue)) {
+      return res.status(400).json({ error: 'Agencia invalida' });
+    }
+    if (!ESTADOS_ENVIO_VALIDOS.has(estadoEnvioValue)) {
+      return res.status(400).json({ error: 'Estado de envio invalido' });
+    }
+    if (!isValidDateInput(fechaVenta)) {
       return res.status(400).json({ error: 'Fecha de venta invalida' });
+    }
+    if (!isValidDateInput(fechaDespacho)) {
+      return res.status(400).json({ error: 'Fecha de despacho invalida' });
+    }
+    if (!isValidDateInput(fechaCancelacion)) {
+      return res.status(400).json({ error: 'Fecha de cancelacion invalida' });
     }
     if (productosList.length + requerimientosList.length + regalosList.length + regalosReqList.length === 0) {
       return res.status(400).json({ error: 'Debe agregar productos o requerimientos a la venta' });
@@ -646,13 +772,19 @@ exports.editarVenta = async (req, res) => {
     }
 
     const estadoPedido = productosList.length > 0 ? 'PICKING' : 'PEDIDO_LISTO';
+    if (['ENVIADO', 'CANCELADO'].includes(estadoEnvioValue) && estadoPedido !== 'PEDIDO_LISTO') {
+      return res.status(400).json({
+        error: 'El pedido debe estar en PEDIDO_LISTO para enviar o cancelar.'
+      });
+    }
     const connection = await pool.getConnection();
     await connection.beginTransaction();
     try {
-      const [ventaRows] = await connection.execute(
-        'SELECT id, estado_envio FROM ventas WHERE id = ? FOR UPDATE',
-        [req.params.id]
-      );
+      const ventaSelectParams = [req.params.id];
+      let ventaSelectQuery = 'SELECT id, estado_envio FROM ventas WHERE id = ?';
+      ventaSelectQuery += appendOwnerScope(req, ventaSelectParams, 'ventas');
+      ventaSelectQuery += ' FOR UPDATE';
+      const [ventaRows] = await connection.execute(ventaSelectQuery, ventaSelectParams);
       if (!ventaRows.length) {
         await connection.rollback();
         return res.status(404).json({ error: 'Venta no encontrada' });
@@ -687,15 +819,15 @@ exports.editarVenta = async (req, res) => {
           rastreo_estado = ?, ticket = ?, guia = ?, retiro = ?, notas = ?
          WHERE id = ?`,
         [
-          documentoTipo,
+          documentoTipoValue,
           documento,
           clienteNombre,
           clienteTelefono,
-          agencia,
+          agenciaValue,
           agenciaOtro,
           destino,
-          fechaVenta,
-          estadoEnvio,
+          fechaVenta || null,
+          estadoEnvioValue,
           estadoPedido,
           fechaDespacho || null,
           fechaCancelacion || null,
@@ -713,19 +845,31 @@ exports.editarVenta = async (req, res) => {
       const requerimientosPreparados = await prepararRequerimientos(connection, requerimientosList);
       const regalosPreparados = await prepararRequerimientos(connection, regalosList);
       const regalosReqPreparados = await prepararRequerimientos(connection, regalosReqList);
+      const resolveProductoId = createProductoIdResolver(connection);
 
       await connection.execute('DELETE FROM ventas_detalle WHERE venta_id = ?', [req.params.id]);
 
       const detalleRows = [
-        ...buildDetalleRows(req.params.id, productosList, 'producto'),
-        ...buildDetalleRows(req.params.id, requerimientosPreparados, 'requerimiento'),
-        ...buildDetalleRows(req.params.id, regalosPreparados, 'regalo'),
-        ...buildDetalleRows(req.params.id, regalosReqPreparados, 'regalo_requerimiento')
+        ...(await buildDetalleRows(req.params.id, productosList, 'producto', resolveProductoId)),
+        ...(await buildDetalleRows(
+          req.params.id,
+          requerimientosPreparados,
+          'requerimiento',
+          resolveProductoId
+        )),
+        ...(await buildDetalleRows(req.params.id, regalosPreparados, 'regalo', resolveProductoId)),
+        ...(await buildDetalleRows(
+          req.params.id,
+          regalosReqPreparados,
+          'regalo_requerimiento',
+          resolveProductoId
+        ))
       ];
 
       if (detalleRows.length) {
         const values = detalleRows.map((row) => [
           row.venta_id,
+          row.producto_id,
           row.tipo,
           row.codigo,
           row.descripcion,
@@ -742,7 +886,7 @@ exports.editarVenta = async (req, res) => {
           const chunk = values.slice(i, i + chunkSize);
           await connection.query(
             `INSERT INTO ventas_detalle
-            (venta_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked, precio_venta, precio_compra, proveedor, stock)
+            (venta_id, producto_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked, precio_venta, precio_compra, proveedor, stock)
             VALUES ?`,
             [chunk]
           );
@@ -765,35 +909,60 @@ exports.editarVenta = async (req, res) => {
 
 exports.actualizarEstadoVenta = async (req, res) => {
   const { estadoEnvio, fechaDespacho, fechaCancelacion, rastreoEstado } = req.body;
+  const estadoEnvioValue = normalizarEstadoEnvio(estadoEnvio);
+  if (!ESTADOS_ENVIO_VALIDOS.has(estadoEnvioValue)) {
+    return res.status(400).json({ error: 'Estado de envio invalido' });
+  }
+  if (!isValidDateInput(fechaDespacho)) {
+    return res.status(400).json({ error: 'Fecha de despacho invalida' });
+  }
+  if (!isValidDateInput(fechaCancelacion)) {
+    return res.status(400).json({ error: 'Fecha de cancelacion invalida' });
+  }
   let connection;
   try {
     connection = await pool.getConnection();
-    if (['ENVIADO', 'CANCELADO'].includes(estadoEnvio)) {
-      const [rows] = await connection.execute('SELECT estado_pedido FROM ventas WHERE id = ?', [
-        req.params.id
-      ]);
+    const selectParams = [req.params.id];
+    let selectQuery = 'SELECT estado_pedido FROM ventas WHERE id = ?';
+    selectQuery += appendOwnerScope(req, selectParams, 'ventas');
+    if (['ENVIADO', 'CANCELADO'].includes(estadoEnvioValue)) {
+      const [rows] = await connection.execute(selectQuery, selectParams);
+      if (!rows.length) {
+        return res.status(404).json({ error: 'Venta no encontrada' });
+      }
       const estadoPedido = rows[0]?.estado_pedido;
       if (estadoPedido && estadoPedido !== 'PEDIDO_LISTO') {
         return res.status(400).json({
           error: 'El pedido debe estar en PEDIDO_LISTO para enviar o cancelar.'
         });
       }
+    } else {
+      const [rows] = await connection.execute(selectQuery, selectParams);
+      if (!rows.length) {
+        return res.status(404).json({ error: 'Venta no encontrada' });
+      }
     }
-    await connection.execute(
-      `UPDATE ventas
+    const updateParams = [
+      estadoEnvioValue,
+      fechaDespacho || null,
+      fechaCancelacion || null,
+      rastreoEstado || null,
+      req.params.id
+    ];
+    let updateQuery = `UPDATE ventas
        SET estado_envio = ?,
            fecha_despacho = ?,
            fecha_cancelacion = ?,
            rastreo_estado = ?
-       WHERE id = ?`,
-      [
-        estadoEnvio,
-        fechaDespacho || null,
-        fechaCancelacion || null,
-        rastreoEstado || null,
-        req.params.id
-      ]
+       WHERE id = ?`;
+    updateQuery += appendOwnerScope(req, updateParams, 'ventas');
+    const [updateResult] = await connection.execute(
+      updateQuery,
+      updateParams
     );
+    if (!updateResult.affectedRows) {
+      return res.status(404).json({ error: 'Venta no encontrada' });
+    }
     return res.json({ ok: true });
   } catch (error) {
     console.error('Error actualizando estado de venta:', error);
@@ -808,12 +977,18 @@ exports.actualizarEnvioVenta = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    await connection.execute(
-      `UPDATE ventas
+    const params = [ticket || null, guia || null, retiro || null, rastreoEstado || null, req.params.id];
+    let query = `UPDATE ventas
        SET ticket = ?, guia = ?, retiro = ?, rastreo_estado = ?
-       WHERE id = ?`,
-      [ticket || null, guia || null, retiro || null, rastreoEstado || null, req.params.id]
+       WHERE id = ?`;
+    query += appendOwnerScope(req, params, 'ventas');
+    const [updateResult] = await connection.execute(
+      query,
+      params
     );
+    if (!updateResult.affectedRows) {
+      return res.status(404).json({ error: 'Venta no encontrada' });
+    }
     return res.json({ ok: true });
   } catch (error) {
     console.error('Error actualizando envio:', error);
@@ -829,10 +1004,11 @@ exports.eliminarVenta = async (req, res) => {
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    const [ventaRows] = await connection.execute(
-      'SELECT id, estado_envio FROM ventas WHERE id = ? FOR UPDATE',
-      [req.params.id]
-    );
+    const ventaParams = [req.params.id];
+    let ventaQuery = 'SELECT id, estado_envio FROM ventas WHERE id = ?';
+    ventaQuery += appendOwnerScope(req, ventaParams, 'ventas');
+    ventaQuery += ' FOR UPDATE';
+    const [ventaRows] = await connection.execute(ventaQuery, ventaParams);
     if (!ventaRows.length) {
       await connection.rollback();
       return res.status(404).json({ error: 'Venta no encontrada' });
@@ -895,18 +1071,21 @@ exports.listarDetalleVentas = async (req, res) => {
       query += ' AND (d.codigo LIKE ? OR d.descripcion LIKE ?)';
       params.push(`%${q}%`, `%${q}%`);
     }
+    query += appendOwnerScope(req, params, 'v');
     query += ' ORDER BY v.created_at DESC, d.id DESC LIMIT 500';
     const [rows] = await connection.execute(query, params);
+    const includePrecioCompra = puedeVerPrecioCompra(req);
     return res.json(
       rows.map((row) => ({
         ventaId: row.venta_id,
+        productoId: row.producto_id ? Number(row.producto_id) : null,
         tipo: row.tipo,
         codigo: row.codigo,
         descripcion: row.descripcion,
         marca: row.marca,
         cantidad: Number(row.cantidad || 0),
         precioVenta: Number(row.precio_venta || 0),
-        precioCompra: Number(row.precio_compra || 0),
+        precioCompra: includePrecioCompra ? Number(row.precio_compra || 0) : null,
         proveedor: row.proveedor,
         fechaVenta: formatDate(row.fecha_venta) || formatDate(row.created_at)
       }))
@@ -924,23 +1103,24 @@ exports.historialRequerimientos = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const [rows] = await connection.execute(
-      `
+    const params = [`%${q}%`, `%${q}%`];
+    let query = `
       SELECT d.codigo, d.descripcion, d.proveedor, d.precio_compra, d.precio_venta
       FROM ventas_detalle d
+      JOIN ventas v ON d.venta_id = v.id
       WHERE d.tipo IN ('requerimiento','regalo_requerimiento')
         AND (d.codigo LIKE ? OR d.descripcion LIKE ?)
-      ORDER BY d.id DESC
-      LIMIT 20
-      `,
-      [`%${q}%`, `%${q}%`]
-    );
+    `;
+    query += appendOwnerScope(req, params, 'v');
+    query += ' ORDER BY d.id DESC LIMIT 20';
+    const [rows] = await connection.execute(query, params);
+    const includePrecioCompra = puedeVerPrecioCompra(req);
     return res.json(
       rows.map((row) => ({
         codigo: row.codigo,
         descripcion: row.descripcion,
         proveedor: row.proveedor,
-        precioCompra: Number(row.precio_compra || 0),
+        precioCompra: includePrecioCompra ? Number(row.precio_compra || 0) : null,
         precioVenta: Number(row.precio_venta || 0)
       }))
     );
@@ -969,21 +1149,24 @@ exports.listarRequerimientosPendientes = async (req, res) => {
       query += ' AND (d.codigo LIKE ? OR d.descripcion LIKE ?)';
       params.push(`%${q}%`, `%${q}%`);
     }
+    query += appendOwnerScope(req, params, 'v');
     const limitValue = parsePositiveInt(limite, 200);
     const pageValue = parsePositiveInt(pagina, 1);
     const safeLimit = Math.min(limitValue, 500);
     const offset = (pageValue - 1) * safeLimit;
     query += ` ORDER BY v.created_at DESC, d.id DESC LIMIT ${safeLimit} OFFSET ${offset}`;
     const [rows] = await connection.execute(query, params);
+    const includePrecioCompra = puedeVerPrecioCompra(req);
     return res.json(
       rows.map((row) => ({
         id: row.id,
         ventaId: row.venta_id,
+        productoId: row.producto_id ? Number(row.producto_id) : null,
         tipo: row.tipo,
         codigo: row.codigo,
         descripcion: row.descripcion,
         cantidad: Number(row.cantidad || 0),
-        precioCompra: Number(row.precio_compra || 0),
+        precioCompra: includePrecioCompra ? Number(row.precio_compra || 0) : null,
         precioVenta: Number(row.precio_venta || 0),
         proveedor: row.proveedor || '',
         cliente: row.cliente_nombre || '',
@@ -1002,20 +1185,50 @@ exports.listarRequerimientosPendientes = async (req, res) => {
 
 exports.actualizarRequerimiento = async (req, res) => {
   const { proveedor, precioCompra, precioVenta } = req.body;
+  const detalleId = Number(req.params.id);
+  if (!isPositiveInt(detalleId)) {
+    return res.status(400).json({ error: 'Id de detalle invalido' });
+  }
+
+  const precioCompraNum = toNumber(precioCompra);
+  const precioVentaNum = toNumber(precioVenta);
+  if (!isNonNegative(precioCompraNum) || !isNonNegative(precioVentaNum)) {
+    return res.status(400).json({ error: 'Precios invalidos' });
+  }
+
+  const proveedorValue = isNonEmptyString(String(proveedor || ''))
+    ? String(proveedor).trim()
+    : null;
   let connection;
   try {
     connection = await pool.getConnection();
-    await connection.execute(
+    const selectParams = [detalleId];
+    let selectQuery = `
+      SELECT d.id, d.tipo
+      FROM ventas_detalle d
+      JOIN ventas v ON d.venta_id = v.id
+      WHERE d.id = ?
+    `;
+    selectQuery += appendOwnerScope(req, selectParams, 'v');
+    selectQuery += ' LIMIT 1';
+    const [detalleRows] = await connection.execute(selectQuery, selectParams);
+    if (!detalleRows.length) {
+      return res.status(404).json({ error: 'Detalle no encontrado' });
+    }
+    if (!['requerimiento', 'regalo_requerimiento'].includes(detalleRows[0].tipo)) {
+      return res.status(400).json({
+        error: 'Solo se pueden actualizar items de tipo requerimiento.'
+      });
+    }
+    const [updateResult] = await connection.execute(
       `UPDATE ventas_detalle
        SET proveedor = ?, precio_compra = ?, precio_venta = ?
        WHERE id = ?`,
-      [
-        proveedor || null,
-        Number(precioCompra || 0),
-        Number(precioVenta || 0),
-        req.params.id
-      ]
+      [proveedorValue, precioCompraNum, precioVentaNum, detalleId]
     );
+    if (!updateResult.affectedRows) {
+      return res.status(404).json({ error: 'Detalle no encontrado' });
+    }
     return res.json({ ok: true });
   } catch (error) {
     console.error('Error actualizando requerimiento:', error);
@@ -1111,6 +1324,7 @@ exports.exportarVentas = async (req, res) => {
       query += ' AND v.fecha_venta <= ?';
       params.push(fecha_fin);
     }
+    query += appendOwnerScope(req, params, 'v');
     const limiteValue = parsePositiveInt(limite, 5000);
     const safeLimit = Math.min(limiteValue, 20000);
     query += ` ORDER BY v.created_at DESC LIMIT ${safeLimit}`;
@@ -1132,6 +1346,7 @@ exports.exportarVentas = async (req, res) => {
       `SELECT * FROM ventas_detalle WHERE venta_id IN (${placeholders})`,
       ventaIds
     );
+    const includePrecioCompra = puedeVerPrecioCompra(req);
 
     const ventasData = ventasRows.map((row) => ({
       id: row.id,
@@ -1157,12 +1372,13 @@ exports.exportarVentas = async (req, res) => {
 
     const detalleData = detalleRows.map((row) => ({
       venta_id: row.venta_id,
+      producto_id: row.producto_id ? Number(row.producto_id) : null,
       tipo: row.tipo,
       codigo: row.codigo,
       descripcion: row.descripcion,
       cantidad: Number(row.cantidad || 0),
       precio_venta: Number(row.precio_venta || 0),
-      precio_compra: Number(row.precio_compra || 0),
+      precio_compra: includePrecioCompra ? Number(row.precio_compra || 0) : null,
       proveedor: row.proveedor || ''
     }));
 
@@ -1191,14 +1407,16 @@ exports.listarPickingPendientes = async (req, res) => {
     connection = await pool.getConnection();
     let query = `
       SELECT 
-        d.id as detalle_id, d.venta_id, d.codigo, d.descripcion, d.marca,
+        d.id as detalle_id, d.venta_id, d.producto_id, d.codigo, d.descripcion, d.marca,
         d.cantidad, d.cantidad_picked,
         v.cliente_nombre, v.documento, v.agencia, v.agencia_otro, v.destino,
         v.fecha_venta, v.created_at, v.estado_pedido,
-        m.id as maquina_id, m.stock
+        COALESCE(m_id.id, m_cod.id) as maquina_id,
+        COALESCE(m_id.stock, m_cod.stock) as stock
       FROM ventas_detalle d
       JOIN ventas v ON d.venta_id = v.id
-      LEFT JOIN maquinas m ON d.codigo = m.codigo
+      LEFT JOIN maquinas m_id ON d.producto_id = m_id.id
+      LEFT JOIN maquinas m_cod ON d.producto_id IS NULL AND d.codigo = m_cod.codigo
       WHERE d.tipo = 'producto'
         AND d.cantidad_picked < d.cantidad
     `;
@@ -1211,6 +1429,7 @@ exports.listarPickingPendientes = async (req, res) => {
       query += ' AND d.venta_id = ?';
       params.push(venta_id);
     }
+    query += appendOwnerScope(req, params, 'v');
     query += ' ORDER BY v.created_at ASC, d.id ASC';
     const [rows] = await connection.execute(query, params);
 
@@ -1232,6 +1451,7 @@ exports.listarPickingPendientes = async (req, res) => {
       const venta = ventasMap.get(row.venta_id);
       venta.items.push({
         detalleId: row.detalle_id,
+        productoId: row.producto_id ? Number(row.producto_id) : null,
         codigo: row.codigo,
         descripcion: row.descripcion,
         marca: row.marca,
@@ -1255,6 +1475,7 @@ exports.listarPickingPendientes = async (req, res) => {
 exports.confirmarPicking = async (req, res) => {
   const { detalleId, cantidad, codigo, ventaId } = req.body;
   const usuarioId = req.usuario?.id;
+  const ownerUserId = getOwnerUserId(req);
   if ((!detalleId && !codigo) || !cantidad) {
     return res.status(400).json({ error: 'detalleId o codigo son obligatorios.' });
   }
@@ -1269,17 +1490,21 @@ exports.confirmarPicking = async (req, res) => {
 
     let detalle = null;
     if (detalleId) {
-      const [detalleRows] = await connection.execute(
-        `SELECT d.*, v.estado_pedido
-         FROM ventas_detalle d
-         JOIN ventas v ON d.venta_id = v.id
-         WHERE d.id = ? FOR UPDATE`,
-        [detalleId]
-      );
+      const detalleParams = [detalleId];
+      let detalleQuery = `SELECT d.*, v.estado_pedido
+          FROM ventas_detalle d
+          JOIN ventas v ON d.venta_id = v.id
+          WHERE d.id = ?`;
+      if (ownerUserId) {
+        detalleQuery += ' AND v.usuario_id = ?';
+        detalleParams.push(ownerUserId);
+      }
+      detalleQuery += ' FOR UPDATE';
+      const [detalleRows] = await connection.execute(detalleQuery, detalleParams);
       detalle = detalleRows[0] || null;
     }
     if (!detalle && codigo) {
-      detalle = await buscarDetallePendientePorCodigo(connection, codigo, ventaId);
+      detalle = await buscarDetallePendientePorCodigo(connection, codigo, ventaId, ownerUserId);
     }
     if (!detalle) {
       await connection.rollback();
@@ -1295,10 +1520,21 @@ exports.confirmarPicking = async (req, res) => {
       return res.status(400).json({ error: 'Cantidad supera lo pendiente.' });
     }
 
-    const [maquinas] = await connection.execute(
-      'SELECT id, stock, ubicacion_letra, ubicacion_numero FROM maquinas WHERE codigo = ? FOR UPDATE',
-      [detalle.codigo]
-    );
+    let maquinas = [];
+    if (detalle.producto_id) {
+      const [maquinasById] = await connection.execute(
+        'SELECT id, stock, ubicacion_letra, ubicacion_numero FROM maquinas WHERE id = ? AND activo = TRUE FOR UPDATE',
+        [detalle.producto_id]
+      );
+      maquinas = maquinasById;
+    }
+    if (!maquinas.length && detalle.codigo) {
+      const [maquinasByCodigo] = await connection.execute(
+        'SELECT id, stock, ubicacion_letra, ubicacion_numero FROM maquinas WHERE codigo = ? AND activo = TRUE FOR UPDATE',
+        [detalle.codigo]
+      );
+      maquinas = maquinasByCodigo;
+    }
     if (maquinas.length === 0) {
       await connection.rollback();
       return res.status(404).json({ error: 'Producto no encontrado en maquinas.' });
@@ -1328,6 +1564,12 @@ exports.confirmarPicking = async (req, res) => {
     });
 
     const detalleTargetId = detalleId || detalle.id;
+    if (!detalle.producto_id) {
+      await connection.execute(
+        'UPDATE ventas_detalle SET producto_id = ? WHERE id = ? AND producto_id IS NULL',
+        [maquina.id, detalleTargetId]
+      );
+    }
     await connection.execute(
       'UPDATE ventas_detalle SET cantidad_picked = cantidad_picked + ? WHERE id = ?',
       [cantidadNum, detalleTargetId]
@@ -1358,6 +1600,7 @@ exports.confirmarPicking = async (req, res) => {
 
 exports.cerrarPedido = async (req, res) => {
   const { ventaId } = req.body;
+  const ownerUserId = getOwnerUserId(req);
   if (!ventaId) {
     return res.status(400).json({ error: 'ventaId es obligatorio.' });
   }
@@ -1365,6 +1608,18 @@ exports.cerrarPedido = async (req, res) => {
   try {
     connection = await pool.getConnection();
     await connection.beginTransaction();
+    const ventaParams = [ventaId];
+    let ventaQuery = 'SELECT id FROM ventas WHERE id = ?';
+    if (ownerUserId) {
+      ventaQuery += ' AND usuario_id = ?';
+      ventaParams.push(ownerUserId);
+    }
+    ventaQuery += ' FOR UPDATE';
+    const [ventaRows] = await connection.execute(ventaQuery, ventaParams);
+    if (!ventaRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Venta no encontrada' });
+    }
 
     const [pendientes] = await connection.execute(
       `SELECT COUNT(*) as total
@@ -1378,9 +1633,17 @@ exports.cerrarPedido = async (req, res) => {
       return res.status(400).json({ error: 'Aun hay productos pendientes de picking.' });
     }
 
-    await connection.execute(`UPDATE ventas SET estado_pedido = 'PEDIDO_LISTO' WHERE id = ?`, [
-      ventaId
-    ]);
+    const updateParams = [ventaId];
+    let updateQuery = `UPDATE ventas SET estado_pedido = 'PEDIDO_LISTO' WHERE id = ?`;
+    if (ownerUserId) {
+      updateQuery += ' AND usuario_id = ?';
+      updateParams.push(ownerUserId);
+    }
+    const [updateResult] = await connection.execute(updateQuery, updateParams);
+    if (!updateResult.affectedRows) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Venta no encontrada' });
+    }
 
     await connection.commit();
     return res.json({ ok: true });

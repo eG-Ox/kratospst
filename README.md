@@ -39,10 +39,19 @@ PORT=5000
 NODE_ENV=development
 JWT_SECRET=tu_secreto_super_seguro_aqui
 TRUST_PROXY=0
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 SEED_DEFAULT_ADMIN=false
 ADMIN_EMAIL=admin
 ADMIN_PASSWORD=define_un_password_seguro
 AUTH_COOKIE_SECURE=false
+ALLOW_BOOTSTRAP_REGISTRATION=false
+BACKUP_SCHEDULER_ENABLED=false
+BACKUP_RETENTION_DAYS=30
+BACKUP_SCHEDULE_RETENTION_DAYS=120
+# Seguridad de migraciones: por defecto NO se ejecutan limpiezas destructivas
+ALLOW_DESTRUCTIVE_MIGRATION=false
+# Si ALLOW_DESTRUCTIVE_MIGRATION=true, puedes simular sin ejecutar cambios
+DRY_RUN_DESTRUCTIVE_MIGRATION=false
 ```
 
 Inicializar la base de datos:
@@ -82,16 +91,9 @@ Abrir `http://localhost:3000`.
 
 ## 🌐 LAN con HTTPS (Caddy)
 
-Para cámara en móviles es obligatorio HTTPS.
-
-1) Frontend build con API relativa:
+1) Build del frontend:
 ```env
 REACT_APP_API_URL=/api
-```
-
-Backend `.env` recomendado en LAN con Caddy:
-```env
-TRUST_PROXY=1
 ```
 
 ```bash
@@ -99,29 +101,28 @@ cd frontend
 npm run build
 ```
 
-2) Caddyfile:
-```
-192.168.18.73:443 {
-  tls internal
-
-  handle /api/* {
-    reverse_proxy 127.0.0.1:5000
-  }
-
-  handle {
-    root * "G:/PROYECTO KRATOS/frontend/build"
-    try_files {path} /index.html
-    file_server
-  }
-}
+2) Variables del backend para proxy:
+```env
+NODE_ENV=production
+TRUST_PROXY=1
+AUTH_COOKIE_SECURE=true
+AUTH_COOKIE_SAMESITE=strict
+CORS_ORIGINS=https://tu-dominio-o-ip
+PUBLIC_BASE_URL=https://tu-dominio-o-ip
+BACKUP_SCHEDULER_ENABLED=true
 ```
 
-3) Ejecutar Caddy:
+3) Variables para el `caddyfile` versionado (LAN):
 ```bash
-caddy run --config "g:\PROYECTO KRATOS\caddyfile" --adapter caddyfile
+set LAN_HOST=192.168.18.131
+set FRONTEND_BUILD_DIR=C:\ruta\PROYECTO KRATOS\frontend\build
+set API_UPSTREAM=127.0.0.1:5000
 ```
 
-Abrir `https://192.168.18.73`.
+4) Ejecutar Caddy:
+```bash
+caddy run --config "C:\Users\user\Documents\marco\NODE\PROYECTO KRATOS\caddyfile" --adapter caddyfile
+```
 
 ## 📡 API REST Endpoints
 

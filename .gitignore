@@ -32,4 +32,6 @@ backend/uploads/
 
 # Local infra / backups
 backups/
-caddyfile
+backend/backups/
+caddy_data/
+caddy_config/

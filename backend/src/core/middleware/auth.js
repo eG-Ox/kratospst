@@ -35,47 +35,75 @@ const obtenerToken = (req) => {
   return null;
 };
 
-const cargarPermisos = async (rol) => {
-  let connection;
+const releaseConnection = (connection) => {
+  if (!connection) return;
   try {
-    connection = await pool.getConnection();
-    const [rows] = await connection.execute(
-      `SELECT p.clave, rp.permitido
-       FROM roles r
-       JOIN rol_permisos rp ON r.id = rp.rol_id
-       JOIN permisos p ON rp.permiso_id = p.id
-       WHERE r.nombre = ?`,
-      [rol]
-    );
-    return rows.filter((row) => row.permitido).map((row) => row.clave);
-  } catch (error) {
-    return null;
-  } finally {
-    if (connection) {
-      connection.release();
-    }
+    connection.release();
+  } catch (_) {
+    // no-op
   }
 };
 
+const cargarUsuarioActivo = async (connection, usuarioId) => {
+  const [rows] = await connection.execute(
+    `SELECT id, nombre, email, telefono, rol, activo
+     FROM usuarios
+     WHERE id = ?
+     LIMIT 1`,
+    [usuarioId]
+  );
+  const usuario = rows[0];
+  if (!usuario || !usuario.activo) {
+    return null;
+  }
+  return usuario;
+};
+
+const cargarPermisos = async (connection, rol) => {
+  const [rows] = await connection.execute(
+    `SELECT p.clave, rp.permitido
+     FROM roles r
+     JOIN rol_permisos rp ON r.id = rp.rol_id
+     JOIN permisos p ON rp.permiso_id = p.id
+     WHERE r.nombre = ?`,
+    [rol]
+  );
+  return rows.filter((row) => row.permitido).map((row) => row.clave);
+};
+
 const autenticar = async (req, res, next) => {
+  let connection;
   try {
     const token = obtenerToken(req);
     if (!token) {
       return res.status(401).json({ error: 'Token no proporcionado' });
     }
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.usuario = decoded;
-    const permisos = await cargarPermisos(decoded.rol);
-    if (permisos) {
-      req.permisos = new Set(permisos);
-      req.permisosCargados = true;
-    } else {
-      req.permisos = null;
-      req.permisosCargados = false;
+    connection = await pool.getConnection();
+    const usuario = await cargarUsuarioActivo(connection, decoded.id);
+    if (!usuario) {
+      return res.status(401).json({ error: 'Usuario no autorizado' });
     }
+    req.usuario = {
+      ...decoded,
+      id: usuario.id,
+      nombre: usuario.nombre,
+      email: usuario.email,
+      telefono: usuario.telefono || null,
+      rol: usuario.rol
+    };
+    const permisos = await cargarPermisos(connection, usuario.rol);
+    req.permisos = new Set(permisos);
+    req.permisosCargados = true;
     next();
   } catch (error) {
-    return res.status(401).json({ error: 'Token invalido o expirado' });
+    if (error?.name === 'TokenExpiredError' || error?.name === 'JsonWebTokenError') {
+      return res.status(401).json({ error: 'Token invalido o expirado' });
+    }
+    console.error('Error de autenticacion:', error);
+    return res.status(500).json({ error: 'Error al validar autenticacion' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 

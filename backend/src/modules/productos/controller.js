@@ -25,6 +25,13 @@ const parseNumero = (value, fallback = 0) => {
   const parsed = Number(String(value).replace(',', '.'));
   return Number.isFinite(parsed) ? parsed : fallback;
 };
+const parseNumeroNullable = (value) => {
+  if (value === '' || value === null || value === undefined) {
+    return null;
+  }
+  const parsed = Number(String(value).replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 const UBICACION_VALIDAS = new Set(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']);
 
@@ -32,6 +39,7 @@ const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+const MAX_PRODUCTOS_LIST_LIMIT = 500;
 
 const parseUbicacionString = (value) => {
   const raw = String(value || '').trim().toUpperCase();
@@ -85,6 +93,23 @@ const normalizarUbicacion = (data) => {
   }
 
   return { letra: letra || null, numero: numero ?? null };
+};
+
+const validarFichaWeb = (value) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return { value: null };
+  }
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch (_) {
+    return { error: 'ficha_web invalida. Debe iniciar con http:// o https://' };
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return { error: 'ficha_web invalida. Solo se permite http/https' };
+  }
+  return { value: parsed.toString() };
 };
 
 // Obtener todas las máquinas
@@ -150,7 +175,7 @@ exports.getMaquinas = async (req, res) => {
     let limitValue = null;
 
     if (hasQuery) {
-      limitValue = parsePositiveInt(limit, 200);
+      limitValue = Math.min(parsePositiveInt(limit, 200), MAX_PRODUCTOS_LIST_LIMIT);
       pageValue = parsePositiveInt(page, 1);
       const offset = (pageValue - 1) * limitValue;
       query += ` LIMIT ${offset}, ${limitValue}`;
@@ -344,6 +369,11 @@ exports.crearMaquina = async (req, res) => {
   if (precioMinimoNum > precioVentaNum) {
     return res.status(400).json({ error: 'Precio minimo no puede ser mayor que precio de venta' });
   }
+  const fichaWebValidation = validarFichaWeb(ficha_web);
+  if (fichaWebValidation.error) {
+    return res.status(400).json({ error: fichaWebValidation.error });
+  }
+  const fichaWebValue = fichaWebValidation.value;
 
   const codigoBusqueda = normalizarBusqueda(codigo);
   const descripcionBusqueda = normalizarBusqueda(descripcion);
@@ -401,13 +431,13 @@ exports.crearMaquina = async (req, res) => {
           ubicacionParse.letra,
           ubicacionParse.numero,
           stockValue,
-          precioCompraNum,
-          precioVentaNum,
-          precioMinimoNum,
-          ficha_web || null,
-          ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
-          existente[0].id
-        ]
+           precioCompraNum,
+           precioVentaNum,
+           precioMinimoNum,
+           fichaWebValue,
+           ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
+           existente[0].id
+         ]
       );
       await syncUbicacionPrincipal(connection, {
         id: existente[0].id,
@@ -430,13 +460,13 @@ exports.crearMaquina = async (req, res) => {
           ubicacion_letra: ubicacionParse.letra,
           ubicacion_numero: ubicacionParse.numero,
           stock: stockValue,
-          precio_compra: precioCompraNum,
-          precio_venta: precioVentaNum,
-          precio_minimo: precioMinimoNum,
-          ficha_web: ficha_web || null,
-          ficha_tecnica_ruta: ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
-          activo: 1
-        }
+           precio_compra: precioCompraNum,
+           precio_venta: precioVentaNum,
+           precio_minimo: precioMinimoNum,
+           ficha_web: fichaWebValue,
+           ficha_tecnica_ruta: ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
+           activo: 1
+         }
       });
       await connection.commit();
       connection.release();
@@ -449,14 +479,14 @@ exports.crearMaquina = async (req, res) => {
         descripcion,
         ubicacion_letra: ubicacionParse.letra,
         ubicacion_numero: ubicacionParse.numero,
-        stock: stockValue,
-        precio_compra: precioCompraNum,
-        precio_venta: precioVentaNum,
-        precio_minimo: precioMinimoNum,
-        ficha_web,
-        ficha_tecnica_ruta: ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
-        activo: 1
-      });
+         stock: stockValue,
+         precio_compra: precioCompraNum,
+         precio_venta: precioVentaNum,
+         precio_minimo: precioMinimoNum,
+         ficha_web: fichaWebValue,
+         ficha_tecnica_ruta: ficha_tecnica_ruta || existente[0].ficha_tecnica_ruta,
+         activo: 1
+       });
     }
 
     const [result] = await connection.execute(
@@ -478,7 +508,7 @@ exports.crearMaquina = async (req, res) => {
         precioCompraNum,
         precioVentaNum,
         precioMinimoNum,
-        ficha_web || null,
+        fichaWebValue,
         ficha_tecnica_ruta
       ]
     );
@@ -525,7 +555,7 @@ exports.crearMaquina = async (req, res) => {
       precio_compra: precioCompraNum,
       precio_venta: precioVentaNum,
       precio_minimo: precioMinimoNum,
-      ficha_web,
+      ficha_web: fichaWebValue,
       ficha_tecnica_ruta
     });
   } catch (error) {
@@ -611,6 +641,7 @@ exports.actualizarMaquina = async (req, res) => {
     const stockNum = toNumber(stockInput);
     const codigoBusqueda = normalizarBusqueda(codigo);
     const descripcionBusqueda = normalizarBusqueda(descripcion);
+    const fichaWebInputPresent = Object.prototype.hasOwnProperty.call(req.body, 'ficha_web');
 
     if (!isNonNegative(precioCompraNum) || !isNonNegative(precioVentaNum)) {
       await connection.rollback();
@@ -666,6 +697,17 @@ exports.actualizarMaquina = async (req, res) => {
     }
 
     let ficha_tecnica_ruta = maquinaActual[0].ficha_tecnica_ruta;
+    let fichaWebValue = maquinaActual[0].ficha_web ?? null;
+    if (fichaWebInputPresent) {
+      const fichaWebValidation = validarFichaWeb(ficha_web);
+      if (fichaWebValidation.error) {
+        await connection.rollback();
+        connection.release();
+        connection = null;
+        return res.status(400).json({ error: fichaWebValidation.error });
+      }
+      fichaWebValue = fichaWebValidation.value;
+    }
 
     // Si hay un nuevo archivo, usar ese
     if (req.file) {
@@ -696,7 +738,7 @@ exports.actualizarMaquina = async (req, res) => {
         precioCompraNum,
         precioVentaNum,
         precioMinimoNum,
-        ficha_web || null,
+        fichaWebValue,
         ficha_tecnica_ruta,
         req.params.id
       ]
@@ -744,7 +786,7 @@ exports.actualizarMaquina = async (req, res) => {
       precio_compra: precioCompraNum,
       precio_venta: precioVentaNum,
       precio_minimo: precioMinimoNum,
-      ficha_web,
+      ficha_web: fichaWebValue,
       ficha_tecnica_ruta
     });
   } catch (error) {
@@ -825,6 +867,7 @@ exports.exportarExcel = async (req, res) => {
     `);
     connection.release();
     connection = null;
+    const puedeVerPrecioCompra = tienePermiso(req, 'productos.precio_compra.ver');
 
     const data = rows.map((row) => ({
       codigo: row.codigo,
@@ -833,7 +876,7 @@ exports.exportarExcel = async (req, res) => {
       descripcion: row.descripcion,
       ubicacion: row.ubicacion_letra ? `${row.ubicacion_letra}${row.ubicacion_numero || ''}` : '',
       stock: row.stock,
-      precio_compra: row.precio_compra,
+      precio_compra: puedeVerPrecioCompra ? row.precio_compra : null,
       precio_venta: row.precio_venta,
       precio_minimo: row.precio_minimo
     }));
@@ -972,24 +1015,42 @@ exports.importarExcel = async (req, res) => {
       const marca = String(normalized.marca || '').trim();
       const precioCompraRaw = normalized.preciocompra;
       const precioVentaRaw = normalized.precioventa;
-      const precioCompra =
-        precioCompraRaw === '' || precioCompraRaw === null || precioCompraRaw === undefined
-          ? null
-          : parseNumero(precioCompraRaw, null);
-      const precioVenta =
-        precioVentaRaw === '' || precioVentaRaw === null || precioVentaRaw === undefined
-          ? null
-          : parseNumero(precioVentaRaw, null);
+      const precioCompra = parseNumeroNullable(precioCompraRaw);
+      const precioVenta = parseNumeroNullable(precioVentaRaw);
       if (!marca || precioCompra === null || precioVenta === null) {
         errores.push(`Fila ${index + 2}: faltan campos requeridos`);
+        continue;
+      }
+      if (!isNonNegative(precioCompra) || !isNonNegative(precioVenta)) {
+        errores.push(`Fila ${index + 2}: precios invalidos`);
+        continue;
+      }
+      if (precioCompra > precioVenta) {
+        errores.push(
+          `Fila ${index + 2}: precio de compra no puede ser mayor que precio de venta`
+        );
         continue;
       }
 
       const descripcion = String(normalized.descripcion || '').trim();
       const codigoBusqueda = normalizarBusqueda(codigo);
       const descripcionBusqueda = normalizarBusqueda(descripcion);
-      const stock = parseNumero(normalized.stock, 0);
-      const precioMinimo = parseNumero(normalized.preciominimo, 0);
+      const stockRaw = parseNumeroNullable(normalized.stock);
+      const stock = stockRaw === null ? 0 : stockRaw;
+      const precioMinimoRaw = parseNumeroNullable(normalized.preciominimo);
+      const precioMinimo = precioMinimoRaw === null ? 0 : precioMinimoRaw;
+      if (!isNonNegative(stock)) {
+        errores.push(`Fila ${index + 2}: stock invalido`);
+        continue;
+      }
+      if (!isNonNegative(precioMinimo)) {
+        errores.push(`Fila ${index + 2}: precio minimo invalido`);
+        continue;
+      }
+      if (precioMinimo > precioVenta) {
+        errores.push(`Fila ${index + 2}: precio minimo no puede ser mayor que precio de venta`);
+        continue;
+      }
       const ubicacionRaw = String(normalized.ubicacion || '').trim();
       const ubicacionLetra = String(normalized.ubicacionletra || '').trim();
       const ubicacionNumero = normalized.ubicacionnumero;
@@ -1101,36 +1162,36 @@ exports.importarExcel = async (req, res) => {
 // Eliminar máquina
 exports.eliminarMaquina = async (req, res) => {
   let connection;
+  const ejecutarConReintentos = async (fn, { retries = 3, baseDelayMs = 250 } = {}) => {
+    let intento = 0;
+    while (true) {
+      try {
+        return await fn();
+      } catch (error) {
+        if (error?.code !== 'ER_LOCK_WAIT_TIMEOUT' || intento >= retries) {
+          throw error;
+        }
+        const espera = baseDelayMs * Math.pow(2, intento);
+        await new Promise((resolve) => setTimeout(resolve, espera));
+        intento += 1;
+      }
+    }
+  };
+
   try {
     connection = await pool.getConnection();
+    await connection.beginTransaction();
 
     // Obtener la maquina
     const [maquina] = await connection.execute(
-      'SELECT * FROM maquinas WHERE id = ?',
+      'SELECT * FROM maquinas WHERE id = ? FOR UPDATE',
       [req.params.id]
     );
 
     if (maquina.length === 0) {
-      connection.release();
-      connection = null;
+      await connection.rollback();
       return res.status(404).json({ error: 'Maquina no encontrada' });
     }
-
-    const ejecutarConReintentos = async (fn, { retries = 3, baseDelayMs = 250 } = {}) => {
-      let intento = 0;
-      while (true) {
-        try {
-          return await fn();
-        } catch (error) {
-          if (error?.code !== 'ER_LOCK_WAIT_TIMEOUT' || intento >= retries) {
-            throw error;
-          }
-          const espera = baseDelayMs * Math.pow(2, intento);
-          await new Promise((resolve) => setTimeout(resolve, espera));
-          intento += 1;
-        }
-      }
-    };
 
     await ejecutarConReintentos(
       () =>
@@ -1149,16 +1210,20 @@ exports.eliminarMaquina = async (req, res) => {
       antes: maquina[0] || null,
       despues: null
     });
-    connection.release();
-    connection = null;
-    res.json({ mensaje: 'Maquina desactivada exitosamente' });
+    await connection.commit();
+    return res.json({ mensaje: 'Maquina desactivada exitosamente' });
   } catch (error) {
     console.error('Error eliminando maquina:', error);
     if (connection) {
-      connection.release();
-      connection = null;
+      try {
+        await connection.rollback();
+      } catch (_) {}
     }
-    res.status(500).json({ error: 'Error al eliminar maquina' });
+    return res.status(500).json({ error: 'Error al eliminar maquina' });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 };
 

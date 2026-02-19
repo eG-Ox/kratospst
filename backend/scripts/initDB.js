@@ -7,6 +7,20 @@ const normalizarBusqueda = (value) =>
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^A-Z0-9]/g, '');
 
+const parseBoolean = (value, fallback = false) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+};
+
+const ALLOW_DESTRUCTIVE_MIGRATION = parseBoolean(
+  process.env.ALLOW_DESTRUCTIVE_MIGRATION,
+  false
+);
+const DRY_RUN_DESTRUCTIVE_MIGRATION = parseBoolean(
+  process.env.DRY_RUN_DESTRUCTIVE_MIGRATION,
+  false
+);
+
 const actualizarBusquedaMaquinas = async (connection) => {
   try {
     const [cols] = await connection.execute("SHOW COLUMNS FROM maquinas LIKE 'codigo_busqueda'");
@@ -107,6 +121,163 @@ const addForeignKeyIfMissing = async (connection, tableName, constraintName, sta
   await connection.execute(statement);
 };
 
+const checkConstraintExists = async (connection, tableName, constraintName) => {
+  const [rows] = await connection.execute(
+    `SELECT 1
+     FROM information_schema.TABLE_CONSTRAINTS
+     WHERE CONSTRAINT_SCHEMA = DATABASE()
+       AND TABLE_NAME = ?
+       AND CONSTRAINT_NAME = ?
+       AND CONSTRAINT_TYPE = 'CHECK'
+     LIMIT 1`,
+    [tableName, constraintName]
+  );
+  return rows.length > 0;
+};
+
+const CHECK_UNSUPPORTED_ERROR_CODES = new Set([
+  'ER_PARSE_ERROR',
+  'ER_NOT_SUPPORTED_YET',
+  'ER_CHECK_NOT_IMPLEMENTED',
+  'ER_UNSUPPORTED_EXTENSION'
+]);
+
+const addCheckConstraintIfMissing = async (connection, tableName, constraintName, statement) => {
+  try {
+    if (await checkConstraintExists(connection, tableName, constraintName)) {
+      return false;
+    }
+  } catch (_) {
+    // MySQL antiguos pueden no exponer CHECK en information_schema.
+  }
+
+  try {
+    await connection.execute(statement);
+    return true;
+  } catch (error) {
+    if (error.code === 'ER_DUP_CONSTRAINT_NAME' || error.code === 'ER_DUP_KEYNAME') {
+      return false;
+    }
+    if (CHECK_UNSUPPORTED_ERROR_CODES.has(error.code)) {
+      console.log(`Aviso: CHECK no soportado para ${tableName}.${constraintName}.`);
+      return false;
+    }
+    throw error;
+  }
+};
+
+const normalizarDatosNumericos = async (connection) => {
+  const ejecutarSiExiste = async (sql) => {
+    try {
+      await connection.execute(sql);
+    } catch (error) {
+      if (error.code === 'ER_NO_SUCH_TABLE' || error.code === 'ER_BAD_FIELD_ERROR') {
+        return;
+      }
+      throw error;
+    }
+  };
+
+  await ejecutarSiExiste(
+    `UPDATE maquinas
+     SET stock = GREATEST(COALESCE(stock, 0), 0),
+          precio_compra = GREATEST(COALESCE(precio_compra, 0), 0),
+          precio_venta = GREATEST(COALESCE(precio_venta, 0), 0),
+          precio_minimo = GREATEST(COALESCE(precio_minimo, 0), 0)`
+  );
+  await ejecutarSiExiste(
+    `UPDATE maquinas
+     SET precio_compra = LEAST(precio_compra, precio_venta),
+          precio_minimo = LEAST(precio_minimo, precio_venta)`
+  );
+  await ejecutarSiExiste(
+    `UPDATE ventas_detalle
+     SET cantidad = GREATEST(COALESCE(cantidad, 1), 1),
+         cantidad_picked = GREATEST(COALESCE(cantidad_picked, 0), 0),
+         precio_compra = GREATEST(COALESCE(precio_compra, 0), 0),
+         precio_venta = GREATEST(COALESCE(precio_venta, 0), 0),
+         stock = CASE
+           WHEN stock IS NULL THEN NULL
+           ELSE GREATEST(stock, 0)
+         END`
+  );
+  await ejecutarSiExiste(
+    `UPDATE ventas_detalle
+     SET precio_compra = LEAST(precio_compra, precio_venta),
+         cantidad_picked = LEAST(cantidad_picked, cantidad)`
+  );
+  await ejecutarSiExiste(
+    `UPDATE inventario_detalle d
+     LEFT JOIN maquinas m ON m.id = d.producto_id
+     SET d.ubicacion_letra = CASE
+           WHEN UPPER(TRIM(COALESCE(d.ubicacion_letra, ''))) REGEXP '^[A-H]$' THEN UPPER(TRIM(d.ubicacion_letra))
+           WHEN UPPER(TRIM(COALESCE(m.ubicacion_letra, ''))) REGEXP '^[A-H]$' THEN UPPER(TRIM(m.ubicacion_letra))
+           ELSE 'H'
+         END,
+         d.ubicacion_numero = CASE
+           WHEN d.ubicacion_numero IS NOT NULL AND d.ubicacion_numero > 0 THEN d.ubicacion_numero
+           WHEN m.ubicacion_numero IS NOT NULL AND m.ubicacion_numero > 0 THEN m.ubicacion_numero
+           ELSE 1
+         END,
+         d.stock_actual = GREATEST(COALESCE(d.stock_actual, 0), 0),
+         d.conteo = GREATEST(COALESCE(d.conteo, 0), 0),
+         d.diferencia = GREATEST(COALESCE(d.conteo, 0), 0) - GREATEST(COALESCE(d.stock_actual, 0), 0)`
+  );
+  await ejecutarSiExiste(
+    `UPDATE inventario_detalle d
+     JOIN (
+       SELECT
+         MIN(id) AS keep_id,
+         SUM(conteo) AS conteo_total,
+         MAX(stock_actual) AS stock_actual_max
+       FROM inventario_detalle
+       GROUP BY inventario_id, producto_id, ubicacion_letra, ubicacion_numero
+       HAVING COUNT(*) > 1
+     ) dup ON dup.keep_id = d.id
+     SET d.conteo = dup.conteo_total,
+         d.stock_actual = dup.stock_actual_max,
+         d.diferencia = dup.conteo_total - dup.stock_actual_max`
+  );
+  await ejecutarSiExiste(
+    `DELETE d1
+     FROM inventario_detalle d1
+     JOIN inventario_detalle d2
+       ON d1.inventario_id = d2.inventario_id
+      AND d1.producto_id = d2.producto_id
+      AND d1.ubicacion_letra = d2.ubicacion_letra
+      AND d1.ubicacion_numero = d2.ubicacion_numero
+      AND d1.id > d2.id`
+  );
+};
+
+const PASSWORD_COLUMN_CANONICAL = 'contrasena';
+
+const asegurarColumnaContrasena = async (connection) => {
+  const [columns] = await connection.execute('SHOW COLUMNS FROM usuarios');
+  const fields = new Set((columns || []).map((col) => col.Field));
+  if (fields.has(PASSWORD_COLUMN_CANONICAL)) {
+    return PASSWORD_COLUMN_CANONICAL;
+  }
+
+  const legacyCandidates = ['contraseña', 'contraseÃ±a'];
+  const legacyColumn =
+    legacyCandidates.find((name) => fields.has(name)) ||
+    (columns || [])
+      .map((col) => col.Field)
+      .find((name) => String(name || '').toLowerCase().startsWith('contra'));
+
+  if (!legacyColumn) {
+    throw new Error(
+      `No se encontro columna de password en usuarios. Esperada: ${PASSWORD_COLUMN_CANONICAL}`
+    );
+  }
+
+  await connection.execute(
+    `ALTER TABLE usuarios CHANGE COLUMN \`${legacyColumn}\` ${PASSWORD_COLUMN_CANONICAL} VARCHAR(255) NOT NULL`
+  );
+  return PASSWORD_COLUMN_CANONICAL;
+};
+
 // Crear tabla de usuarios
 const crearUsuarios = `
 CREATE TABLE IF NOT EXISTS usuarios (
@@ -114,7 +285,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   nombre VARCHAR(100) NOT NULL,
   email VARCHAR(100) NOT NULL UNIQUE,
   telefono VARCHAR(30),
-  contraseÃ±a VARCHAR(255) NOT NULL,
+  contrasena VARCHAR(255) NOT NULL,
   rol ENUM('admin', 'ventas', 'logistica') NOT NULL DEFAULT 'ventas',
   activo BOOLEAN DEFAULT TRUE,
   fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -394,7 +565,7 @@ CREATE TABLE IF NOT EXISTS clientes (
   id INT PRIMARY KEY AUTO_INCREMENT,
   usuario_id INT,
   tipo_cliente ENUM('natural', 'juridico', 'ce') NOT NULL,
-  dni VARCHAR(8) UNIQUE,
+  dni VARCHAR(9) UNIQUE,
   ruc VARCHAR(11) UNIQUE,
   nombre VARCHAR(100),
   apellido VARCHAR(100),
@@ -464,6 +635,7 @@ const crearVentasDetalle = `
 CREATE TABLE IF NOT EXISTS ventas_detalle (
   id INT PRIMARY KEY AUTO_INCREMENT,
   venta_id INT NOT NULL,
+  producto_id INT NULL,
   tipo ENUM('producto','requerimiento','regalo','regalo_requerimiento') NOT NULL,
   codigo VARCHAR(50),
   descripcion TEXT,
@@ -474,8 +646,10 @@ CREATE TABLE IF NOT EXISTS ventas_detalle (
   precio_compra DECIMAL(10, 2) NOT NULL DEFAULT 0,
   proveedor VARCHAR(120),
   stock INT NULL,
-  FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
+  CONSTRAINT fk_ventas_detalle_venta FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
+  CONSTRAINT fk_ventas_detalle_producto FOREIGN KEY (producto_id) REFERENCES maquinas(id) ON DELETE SET NULL,
   INDEX idx_venta_detalle (venta_id),
+  INDEX idx_detalle_producto (producto_id),
   INDEX idx_venta_tipo (tipo),
   INDEX idx_venta_tipo_picked (venta_id, tipo, cantidad_picked),
   INDEX idx_detalle_codigo (codigo),
@@ -490,6 +664,7 @@ async function inicializarBaseDatos() {
     console.log('Creando tabla usuarios...');
     await connection.execute(crearUsuarios);
     console.log('âœ“ Tabla usuarios creada exitosamente');
+    const passwordColumn = await asegurarColumnaContrasena(connection);
 
     // Asegurar columna telefono en usuarios (por si ya existÃ­a sin esa columna)
     try {
@@ -753,6 +928,13 @@ async function inicializarBaseDatos() {
       }
     }
     try {
+      await connection.execute('CREATE INDEX idx_detalle_producto ON ventas_detalle (producto_id)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME' && error.code !== 'ER_BAD_FIELD_ERROR') {
+        throw error;
+      }
+    }
+    try {
       await connection.execute(
         'CREATE INDEX idx_venta_tipo_picked ON ventas_detalle (venta_id, tipo, cantidad_picked)'
       );
@@ -771,6 +953,45 @@ async function inicializarBaseDatos() {
       if (error.code !== 'ER_DUP_FIELDNAME') {
         throw error;
       }
+    }
+    try {
+      await connection.execute(
+        'ALTER TABLE ventas_detalle ADD COLUMN producto_id INT NULL AFTER venta_id'
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute('CREATE INDEX idx_detalle_producto ON ventas_detalle (producto_id)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute(
+        `UPDATE ventas_detalle d
+         JOIN maquinas m ON m.codigo = d.codigo
+         SET d.producto_id = m.id
+         WHERE d.producto_id IS NULL
+           AND d.codigo IS NOT NULL
+           AND d.codigo <> ''`
+      );
+    } catch (error) {
+      console.log('Aviso backfill ventas_detalle.producto_id:', error.message);
+    }
+    try {
+      await connection.execute(
+        `UPDATE ventas_detalle d
+         LEFT JOIN maquinas m ON m.id = d.producto_id
+         SET d.producto_id = NULL
+         WHERE d.producto_id IS NOT NULL
+           AND m.id IS NULL`
+      );
+    } catch (error) {
+      console.log('Aviso limpiando ventas_detalle.producto_id huerfano:', error.message);
     }
     console.log('âœ“ Tabla ventas_detalle creada exitosamente');
 
@@ -858,6 +1079,38 @@ async function inicializarBaseDatos() {
         throw error;
       }
     }
+
+    try {
+      await normalizarDatosNumericos(connection);
+    } catch (error) {
+      console.log('Aviso normalizando datos numericos:', error.message);
+    }
+
+    const alterIntegridadNumerica = [
+      'ALTER TABLE maquinas MODIFY COLUMN stock INT NOT NULL DEFAULT 0',
+      'ALTER TABLE maquinas MODIFY COLUMN precio_compra DECIMAL(10, 2) NOT NULL',
+      'ALTER TABLE maquinas MODIFY COLUMN precio_venta DECIMAL(10, 2) NOT NULL',
+      'ALTER TABLE maquinas MODIFY COLUMN precio_minimo DECIMAL(10, 2) NOT NULL',
+      'ALTER TABLE ventas_detalle MODIFY COLUMN cantidad INT NOT NULL DEFAULT 1',
+      'ALTER TABLE ventas_detalle MODIFY COLUMN cantidad_picked INT NOT NULL DEFAULT 0',
+      'ALTER TABLE ventas_detalle MODIFY COLUMN precio_venta DECIMAL(10, 2) NOT NULL DEFAULT 0',
+      'ALTER TABLE ventas_detalle MODIFY COLUMN precio_compra DECIMAL(10, 2) NOT NULL DEFAULT 0',
+      "ALTER TABLE inventario_detalle MODIFY COLUMN ubicacion_letra CHAR(1) NOT NULL DEFAULT 'H'",
+      'ALTER TABLE inventario_detalle MODIFY COLUMN ubicacion_numero INT NOT NULL DEFAULT 1',
+      'ALTER TABLE inventario_detalle MODIFY COLUMN stock_actual INT NOT NULL DEFAULT 0',
+      'ALTER TABLE inventario_detalle MODIFY COLUMN conteo INT NOT NULL DEFAULT 0',
+      'ALTER TABLE inventario_detalle MODIFY COLUMN diferencia INT NOT NULL DEFAULT 0'
+    ];
+    for (const statement of alterIntegridadNumerica) {
+      try {
+        await connection.execute(statement);
+      } catch (error) {
+        if (error.code !== 'ER_NO_SUCH_TABLE' && error.code !== 'ER_BAD_FIELD_ERROR') {
+          throw error;
+        }
+      }
+    }
+
     try {
       await connection.execute(
         'ALTER TABLE inventario_detalle ADD UNIQUE KEY uniq_inventario_producto_ubicacion (inventario_id, producto_id, ubicacion_letra, ubicacion_numero)'
@@ -866,6 +1119,118 @@ async function inicializarBaseDatos() {
       if (error.code !== 'ER_DUP_KEYNAME' && error.code !== 'ER_DUP_ENTRY') {
         throw error;
       }
+      if (error.code === 'ER_DUP_ENTRY') {
+        console.log(
+          'Aviso: existen inventario_detalle duplicados por inventario+producto+ubicacion. No se pudo reforzar clave unica.'
+        );
+      }
+    }
+
+    try {
+      await addCheckConstraintIfMissing(
+        connection,
+        'maquinas',
+        'chk_maquinas_stock_nonneg',
+        'ALTER TABLE maquinas ADD CONSTRAINT chk_maquinas_stock_nonneg CHECK (stock >= 0)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'maquinas',
+        'chk_maquinas_pcompra_nonneg',
+        'ALTER TABLE maquinas ADD CONSTRAINT chk_maquinas_pcompra_nonneg CHECK (precio_compra >= 0)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'maquinas',
+        'chk_maquinas_pventa_nonneg',
+        'ALTER TABLE maquinas ADD CONSTRAINT chk_maquinas_pventa_nonneg CHECK (precio_venta >= 0)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'maquinas',
+        'chk_maquinas_pmin_nonneg',
+        'ALTER TABLE maquinas ADD CONSTRAINT chk_maquinas_pmin_nonneg CHECK (precio_minimo >= 0)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'maquinas',
+        'chk_maquinas_pcompra_lte_pventa',
+        'ALTER TABLE maquinas ADD CONSTRAINT chk_maquinas_pcompra_lte_pventa CHECK (precio_compra <= precio_venta)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'maquinas',
+        'chk_maquinas_pmin_lte_pventa',
+        'ALTER TABLE maquinas ADD CONSTRAINT chk_maquinas_pmin_lte_pventa CHECK (precio_minimo <= precio_venta)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'ventas_detalle',
+        'chk_vdet_cantidad_pos',
+        'ALTER TABLE ventas_detalle ADD CONSTRAINT chk_vdet_cantidad_pos CHECK (cantidad >= 1)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'ventas_detalle',
+        'chk_vdet_picked_nonneg',
+        'ALTER TABLE ventas_detalle ADD CONSTRAINT chk_vdet_picked_nonneg CHECK (cantidad_picked >= 0)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'ventas_detalle',
+        'chk_vdet_picked_lte_cantidad',
+        'ALTER TABLE ventas_detalle ADD CONSTRAINT chk_vdet_picked_lte_cantidad CHECK (cantidad_picked <= cantidad)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'ventas_detalle',
+        'chk_vdet_pventa_nonneg',
+        'ALTER TABLE ventas_detalle ADD CONSTRAINT chk_vdet_pventa_nonneg CHECK (precio_venta >= 0)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'ventas_detalle',
+        'chk_vdet_pcompra_nonneg',
+        'ALTER TABLE ventas_detalle ADD CONSTRAINT chk_vdet_pcompra_nonneg CHECK (precio_compra >= 0)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'ventas_detalle',
+        'chk_vdet_pcompra_lte_pventa',
+        'ALTER TABLE ventas_detalle ADD CONSTRAINT chk_vdet_pcompra_lte_pventa CHECK (precio_compra <= precio_venta)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'ventas_detalle',
+        'chk_vdet_stock_nonneg',
+        'ALTER TABLE ventas_detalle ADD CONSTRAINT chk_vdet_stock_nonneg CHECK (stock IS NULL OR stock >= 0)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'inventario_detalle',
+        'chk_invdet_stock_nonneg',
+        'ALTER TABLE inventario_detalle ADD CONSTRAINT chk_invdet_stock_nonneg CHECK (stock_actual >= 0)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'inventario_detalle',
+        'chk_invdet_conteo_nonneg',
+        'ALTER TABLE inventario_detalle ADD CONSTRAINT chk_invdet_conteo_nonneg CHECK (conteo >= 0)'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'inventario_detalle',
+        'chk_invdet_diff_consistente',
+        'ALTER TABLE inventario_detalle ADD CONSTRAINT chk_invdet_diff_consistente CHECK (diferencia = (conteo - stock_actual))'
+      );
+      await addCheckConstraintIfMissing(
+        connection,
+        'inventario_detalle',
+        'chk_invdet_ubicacion_numero_pos',
+        'ALTER TABLE inventario_detalle ADD CONSTRAINT chk_invdet_ubicacion_numero_pos CHECK (ubicacion_numero > 0)'
+      );
+    } catch (error) {
+      console.log('Aviso agregando constraints CHECK:', error.message);
     }
 
 
@@ -885,60 +1250,103 @@ async function inicializarBaseDatos() {
     } catch (error) {
       console.log('Aviso actualizando enum tipo_cliente:', error.message);
     }
-
-    // Limpiar huÃƒÂ©rfanos para poder asegurar llaves foraneas sin fallar en bases existentes.
     try {
-      await connection.execute(
-        `DELETE c FROM cotizaciones c
-         LEFT JOIN usuarios u ON u.id = c.usuario_id
-         WHERE u.id IS NULL`
-      );
-      await connection.execute(
-        `UPDATE cotizaciones c
-         LEFT JOIN clientes cl ON cl.id = c.cliente_id
-         SET c.cliente_id = NULL
-         WHERE c.cliente_id IS NOT NULL AND cl.id IS NULL`
-      );
-      await connection.execute(
-        `DELETE d FROM detalle_cotizacion d
-         LEFT JOIN cotizaciones c ON c.id = d.cotizacion_id
-         WHERE c.id IS NULL`
-      );
-      await connection.execute(
-        `DELETE d FROM detalle_cotizacion d
-         LEFT JOIN maquinas m ON m.id = d.producto_id
-         WHERE m.id IS NULL`
-      );
-      await connection.execute(
-        `DELETE h FROM historial_cotizaciones h
-         LEFT JOIN cotizaciones c ON c.id = h.cotizacion_id
-         WHERE c.id IS NULL`
-      );
-      await connection.execute(
-        `DELETE h FROM historial_cotizaciones h
-         LEFT JOIN usuarios u ON u.id = h.usuario_id
-         WHERE u.id IS NULL`
-      );
-      await connection.execute(
-        `DELETE k FROM kits k
-         LEFT JOIN usuarios u ON u.id = k.usuario_id
-         WHERE u.id IS NULL`
-      );
-      await connection.execute(
-        `DELETE kp FROM kit_productos kp
-         LEFT JOIN kits k ON k.id = kp.kit_id
-         WHERE k.id IS NULL`
-      );
-      await connection.execute(
-        `DELETE kp FROM kit_productos kp
-         LEFT JOIN maquinas m ON m.id = kp.producto_id
-         WHERE m.id IS NULL`
-      );
+      await connection.execute('ALTER TABLE clientes MODIFY COLUMN dni VARCHAR(9) UNIQUE');
     } catch (error) {
-      console.log('Aviso limpiando huÃƒÂ©rfanos para llaves foraneas:', error.message);
+      console.log('Aviso actualizando columna dni de clientes:', error.message);
+    }
+
+    // Limpieza destructiva: solo habilitar de forma explicita.
+    try {
+      const cleanupStatements = [
+        {
+          label: 'cotizaciones sin usuario',
+          sql: `DELETE c FROM cotizaciones c
+                LEFT JOIN usuarios u ON u.id = c.usuario_id
+                WHERE u.id IS NULL`
+        },
+        {
+          label: 'cliente_id huerfano en cotizaciones',
+          sql: `UPDATE cotizaciones c
+                LEFT JOIN clientes cl ON cl.id = c.cliente_id
+                SET c.cliente_id = NULL
+                WHERE c.cliente_id IS NOT NULL AND cl.id IS NULL`
+        },
+        {
+          label: 'detalle_cotizacion sin cotizacion',
+          sql: `DELETE d FROM detalle_cotizacion d
+                LEFT JOIN cotizaciones c ON c.id = d.cotizacion_id
+                WHERE c.id IS NULL`
+        },
+        {
+          label: 'detalle_cotizacion sin producto',
+          sql: `DELETE d FROM detalle_cotizacion d
+                LEFT JOIN maquinas m ON m.id = d.producto_id
+                WHERE m.id IS NULL`
+        },
+        {
+          label: 'historial_cotizaciones sin cotizacion',
+          sql: `DELETE h FROM historial_cotizaciones h
+                LEFT JOIN cotizaciones c ON c.id = h.cotizacion_id
+                WHERE c.id IS NULL`
+        },
+        {
+          label: 'historial_cotizaciones sin usuario',
+          sql: `DELETE h FROM historial_cotizaciones h
+                LEFT JOIN usuarios u ON u.id = h.usuario_id
+                WHERE u.id IS NULL`
+        },
+        {
+          label: 'kits sin usuario',
+          sql: `DELETE k FROM kits k
+                LEFT JOIN usuarios u ON u.id = k.usuario_id
+                WHERE u.id IS NULL`
+        },
+        {
+          label: 'kit_productos sin kit',
+          sql: `DELETE kp FROM kit_productos kp
+                LEFT JOIN kits k ON k.id = kp.kit_id
+                WHERE k.id IS NULL`
+        },
+        {
+          label: 'kit_productos sin producto',
+          sql: `DELETE kp FROM kit_productos kp
+                LEFT JOIN maquinas m ON m.id = kp.producto_id
+                WHERE m.id IS NULL`
+        }
+      ];
+
+      if (!ALLOW_DESTRUCTIVE_MIGRATION) {
+        console.log(
+          'Aviso: limpieza de huerfanos omitida. Configure ALLOW_DESTRUCTIVE_MIGRATION=true para habilitarla.'
+        );
+      } else {
+        if (DRY_RUN_DESTRUCTIVE_MIGRATION) {
+          console.log('[DRY-RUN] Limpieza de huerfanos habilitada en modo simulacion.');
+        }
+        for (const step of cleanupStatements) {
+          if (DRY_RUN_DESTRUCTIVE_MIGRATION) {
+            const compactSql = step.sql.replace(/\s+/g, ' ').trim();
+            console.log(`[DRY-RUN] ${step.label}: ${compactSql}`);
+            continue;
+          }
+          await connection.execute(step.sql);
+        }
+      }
+    } catch (error) {
+      console.log('Aviso limpiando huerfanos para llaves foraneas:', error.message);
     }
 
     try {
+      await addForeignKeyIfMissing(
+        connection,
+        'ventas_detalle',
+        'fk_ventas_detalle_producto',
+        `ALTER TABLE ventas_detalle
+         ADD CONSTRAINT fk_ventas_detalle_producto
+         FOREIGN KEY (producto_id) REFERENCES maquinas(id)
+         ON DELETE SET NULL`
+      );
       await addForeignKeyIfMissing(
         connection,
         'cotizaciones',
@@ -1074,6 +1482,49 @@ async function inicializarBaseDatos() {
       { clave: 'picking.ver', descripcion: 'Ver picking de ventas', grupo: 'Ventas' },
       { clave: 'picking.editar', descripcion: 'Registrar picking de ventas', grupo: 'Ventas' }
     ];
+    const permisosPorRolDefault = {
+      admin: new Set(permisosBase.map((permiso) => permiso.clave)),
+      ventas: new Set([
+        'productos.ver',
+        'tipos_maquinas.ver',
+        'marcas.ver',
+        'movimientos.ver',
+        'inventario_general.ver',
+        'kits.ver',
+        'kits.editar',
+        'cotizaciones.ver',
+        'cotizaciones.editar',
+        'cotizaciones.historial.ver',
+        'clientes.ver',
+        'clientes.editar',
+        'ventas.ver',
+        'ventas.editar',
+        'picking.ver'
+      ]),
+      logistica: new Set([
+        'productos.ver',
+        'productos.editar',
+        'productos.precio_compra.ver',
+        'tipos_maquinas.ver',
+        'tipos_maquinas.editar',
+        'marcas.ver',
+        'marcas.editar',
+        'movimientos.ver',
+        'movimientos.registrar',
+        'historial.ver',
+        'inventario_general.ver',
+        'inventario_general.editar',
+        'inventario_general.aplicar',
+        'ventas.ver',
+        'picking.ver',
+        'picking.editar'
+      ])
+    };
+    const permitidoPorDefecto = (rolNombre, clave) => {
+      const permisosRol = permisosPorRolDefault[rolNombre];
+      if (!permisosRol) return false;
+      return permisosRol.has(clave);
+    };
 
     for (const permiso of permisosBase) {
       try {
@@ -1088,21 +1539,16 @@ async function inicializarBaseDatos() {
       }
     }
 
-    // Asignar todos los permisos a todos los roles por defecto
+    // Asignar permisos por rol solo para relaciones faltantes.
     const [rolesRows] = await connection.execute('SELECT id, nombre FROM roles');
     const [permisosRows] = await connection.execute('SELECT id, clave FROM permisos');
     for (const rol of rolesRows) {
       for (const permiso of permisosRows) {
-        try {
-          await connection.execute(
-            'INSERT INTO rol_permisos (rol_id, permiso_id, permitido) VALUES (?, ?, TRUE)',
-            [rol.id, permiso.id]
-          );
-        } catch (error) {
-          if (error.code !== 'ER_DUP_ENTRY') {
-            throw error;
-          }
-        }
+        const permitido = permitidoPorDefecto(rol.nombre, permiso.clave) ? 1 : 0;
+        await connection.execute(
+          'INSERT IGNORE INTO rol_permisos (rol_id, permiso_id, permitido) VALUES (?, ?, ?)',
+          [rol.id, permiso.id, permitido]
+        );
       }
     }
     
@@ -1148,7 +1594,7 @@ async function inicializarBaseDatos() {
 
         try {
           await connection.execute(
-            'INSERT INTO usuarios (nombre, email, telefono, contraseÃ±a, rol) VALUES (?, ?, ?, ?, ?)',
+            `INSERT INTO usuarios (nombre, email, telefono, \`${passwordColumn}\`, rol) VALUES (?, ?, ?, ?, ?)`,
             [adminNombre, adminEmail, adminTelefono, passwordHash, 'admin']
           );
           console.log(`âœ“ Usuario admin creado: ${adminEmail}`);

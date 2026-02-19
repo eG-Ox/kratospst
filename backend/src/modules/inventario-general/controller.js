@@ -10,6 +10,15 @@ const releaseConnection = (connection) => {
   }
 };
 
+const rollbackSilently = async (connection) => {
+  if (!connection) return;
+  try {
+    await connection.rollback();
+  } catch (_) {
+    // no-op
+  }
+};
+
 const UBICACION_VALIDAS = new Set(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']);
 
 const parseUbicacion = (value) => {
@@ -28,10 +37,34 @@ const parseUbicacion = (value) => {
   if (!UBICACION_VALIDAS.has(match[1])) {
     return { error: 'Ubicacion invalida. Letras permitidas: A-H' };
   }
-  if (numero !== 1 && numero !== 2) {
-    return { error: 'Subzona invalida. Solo se permite 1 o 2' };
-  }
   return { letra: match[1], numero };
+};
+
+const parseConteoIncremento = (value) => {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+};
+
+const parseConteoAbsoluto = (value) => {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+};
+
+const formatLocalDate = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
 const mapDetalle = (row) => ({
@@ -47,11 +80,12 @@ const mapDetalle = (row) => ({
   diferencia: Number(row.diferencia || 0)
 });
 
-const obtenerInventario = async (connection, id) => {
-  const [rows] = await connection.execute(
-    'SELECT * FROM inventarios WHERE id = ?',
-    [id]
-  );
+const obtenerInventario = async (connection, id, options = {}) => {
+  const { forUpdate = false } = options;
+  const query = forUpdate
+    ? 'SELECT * FROM inventarios WHERE id = ? FOR UPDATE'
+    : 'SELECT * FROM inventarios WHERE id = ?';
+  const [rows] = await connection.execute(query, [id]);
   return rows[0] || null;
 };
 
@@ -60,6 +94,7 @@ exports.crearInventario = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
+    await connection.beginTransaction();
     const [result] = await connection.execute(
       `INSERT INTO inventarios (usuario_id, estado, observaciones)
        VALUES (?, 'abierto', ?)`,
@@ -74,8 +109,10 @@ exports.crearInventario = async (req, res) => {
       antes: null,
       despues: { id: result.insertId, estado: 'abierto' }
     });
+    await connection.commit();
     res.status(201).json({ id: result.insertId, estado: 'abierto' });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error creando inventario:', error);
     res.status(500).json({ error: 'Error al crear inventario' });
   } finally {
@@ -156,11 +193,14 @@ exports.eliminarDetalle = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const inventario = await obtenerInventario(connection, req.params.id);
+    await connection.beginTransaction();
+    const inventario = await obtenerInventario(connection, req.params.id, { forUpdate: true });
     if (!inventario) {
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
     if (inventario.estado !== 'abierto') {
+      await rollbackSilently(connection);
       return res.status(400).json({ error: 'Inventario no esta abierto' });
     }
     if (detalle_id) {
@@ -174,8 +214,10 @@ exports.eliminarDetalle = async (req, res) => {
         [req.params.id, producto_id]
       );
     }
+    await connection.commit();
     res.json({ mensaje: 'Detalle eliminado' });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error eliminando detalle:', error);
     res.status(500).json({ error: 'Error al eliminar detalle' });
   } finally {
@@ -206,24 +248,32 @@ exports.agregarConteo = async (req, res) => {
     }
 
     connection = await pool.getConnection();
-    const inventario = await obtenerInventario(connection, req.params.id);
+    await connection.beginTransaction();
+    const inventario = await obtenerInventario(connection, req.params.id, { forUpdate: true });
     if (!inventario) {
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
     if (inventario.estado !== 'abierto') {
+      await rollbackSilently(connection);
       return res.status(400).json({ error: 'Inventario no esta abierto' });
     }
 
     const [productos] = await connection.execute(
-      'SELECT id, codigo, descripcion, stock FROM maquinas WHERE codigo = ?',
+      'SELECT id, codigo, descripcion, stock FROM maquinas WHERE codigo = ? AND activo = TRUE',
       [codigoFinal]
     );
     if (!productos.length) {
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Producto no encontrado' });
     }
 
     const producto = productos[0];
-    const conteoIncremento = Number(cantidad || 0);
+    const conteoIncremento = parseConteoIncremento(cantidad);
+    if (conteoIncremento === null) {
+      await rollbackSilently(connection);
+      return res.status(400).json({ error: 'Cantidad invalida. Debe ser entero mayor a 0.' });
+    }
     const diferenciaInicial = conteoIncremento - Number(producto.stock || 0);
     await connection.execute(
       `INSERT INTO inventario_detalle
@@ -243,8 +293,10 @@ exports.agregarConteo = async (req, res) => {
       ]
     );
 
+    await connection.commit();
     res.json({ mensaje: 'Conteo actualizado' });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error agregando conteo:', error);
     res.status(500).json({ error: 'Error al agregar conteo' });
   } finally {
@@ -260,11 +312,14 @@ exports.ajustarConteo = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const inventario = await obtenerInventario(connection, req.params.id);
+    await connection.beginTransaction();
+    const inventario = await obtenerInventario(connection, req.params.id, { forUpdate: true });
     if (!inventario) {
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
     if (inventario.estado !== 'abierto') {
+      await rollbackSilently(connection);
       return res.status(400).json({ error: 'Inventario no esta abierto' });
     }
 
@@ -275,9 +330,14 @@ exports.ajustarConteo = async (req, res) => {
       [req.params.id, detalle_id || producto_id]
     );
     if (!detalles.length) {
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Detalle no encontrado' });
     }
-    const nuevoConteo = Number(conteo || 0);
+    const nuevoConteo = parseConteoAbsoluto(conteo);
+    if (nuevoConteo === null) {
+      await rollbackSilently(connection);
+      return res.status(400).json({ error: 'Conteo invalido. Debe ser entero mayor o igual a 0.' });
+    }
     const diferencia = nuevoConteo - Number(detalles[0].stock_actual || 0);
     await connection.execute(
       `UPDATE inventario_detalle
@@ -285,8 +345,10 @@ exports.ajustarConteo = async (req, res) => {
        WHERE id = ?`,
       [nuevoConteo, diferencia, detalles[0].id]
     );
+    await connection.commit();
     res.json({ mensaje: 'Conteo ajustado' });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error ajustando conteo:', error);
     res.status(500).json({ error: 'Error al ajustar conteo' });
   } finally {
@@ -298,11 +360,14 @@ exports.cerrarInventario = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const inventario = await obtenerInventario(connection, req.params.id);
+    await connection.beginTransaction();
+    const inventario = await obtenerInventario(connection, req.params.id, { forUpdate: true });
     if (!inventario) {
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
     if (inventario.estado !== 'abierto') {
+      await rollbackSilently(connection);
       return res.status(400).json({ error: 'Inventario ya esta cerrado' });
     }
     await connection.execute(
@@ -318,8 +383,10 @@ exports.cerrarInventario = async (req, res) => {
       antes: { estado: inventario.estado },
       despues: { estado: 'cerrado' }
     });
+    await connection.commit();
     res.json({ mensaje: 'Inventario cerrado' });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error cerrando inventario:', error);
     res.status(500).json({ error: 'Error al cerrar inventario' });
   } finally {
@@ -331,15 +398,16 @@ exports.eliminarInventario = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const inventario = await obtenerInventario(connection, req.params.id);
+    await connection.beginTransaction();
+    const inventario = await obtenerInventario(connection, req.params.id, { forUpdate: true });
     if (!inventario) {
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Inventario no encontrado' });
     }
     if (inventario.estado !== 'abierto') {
+      await rollbackSilently(connection);
       return res.status(400).json({ error: 'Solo se puede eliminar inventarios abiertos' });
     }
-
-    await connection.beginTransaction();
     await connection.execute(
       'DELETE FROM inventario_detalle WHERE inventario_id = ?',
       [req.params.id]
@@ -378,7 +446,7 @@ exports.aplicarStock = async (req, res) => {
   try {
     connection = await pool.getConnection();
     await connection.beginTransaction();
-    const inventario = await obtenerInventario(connection, req.params.id);
+    const inventario = await obtenerInventario(connection, req.params.id, { forUpdate: true });
     if (!inventario) {
       await connection.rollback();
       return res.status(404).json({ error: 'Inventario no encontrado' });
@@ -395,8 +463,8 @@ exports.aplicarStock = async (req, res) => {
       await connection.rollback();
       return res.status(400).json({ error: 'Inventario debe estar cerrado' });
     }
-    const hoy = new Date().toISOString().slice(0, 10);
-    const fechaInventario = new Date(inventario.created_at).toISOString().slice(0, 10);
+    const hoy = formatLocalDate(new Date());
+    const fechaInventario = formatLocalDate(inventario.created_at);
     if (hoy !== fechaInventario) {
       await connection.rollback();
       return res.status(400).json({ error: 'Solo se puede aplicar stock el mismo dia' });
@@ -413,15 +481,22 @@ exports.aplicarStock = async (req, res) => {
        WHERE d.inventario_id = ?`,
       [req.params.id]
     );
+    if (!detalles.length) {
+      await connection.rollback();
+      return res.status(400).json({
+        error: 'No se puede aplicar un inventario sin detalles'
+      });
+    }
 
     // Detectar productos no escaneados en este inventario
     const [noEscaneados] = await connection.execute(
       `SELECT m.id, m.codigo
        FROM maquinas m
-       WHERE NOT EXISTS (
-         SELECT 1 FROM inventario_detalle d
-         WHERE d.inventario_id = ? AND d.producto_id = m.id
-       )`,
+       WHERE m.activo = TRUE
+         AND NOT EXISTS (
+          SELECT 1 FROM inventario_detalle d
+          WHERE d.inventario_id = ? AND d.producto_id = m.id
+        )`,
       [req.params.id]
     );
 

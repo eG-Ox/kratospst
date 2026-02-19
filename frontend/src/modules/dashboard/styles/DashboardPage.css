@@ -356,6 +356,25 @@
   background-color: rgba(15, 23, 42, 0.03);
 }
 
+.stock-alerts-scroll {
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+}
+
+.stock-alerts-scroll .movements-table {
+  min-width: 520px;
+}
+
+.stock-alerts-scroll .movements-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f8fafc;
+}
+
 .type-ingreso {
   color: var(--secondary-color);
   font-weight: 600;
@@ -439,6 +458,10 @@
   .movements-table th,
   .movements-table td {
     padding: 8px;
+  }
+
+  .stock-alerts-scroll {
+    max-height: 300px;
   }
 }
 

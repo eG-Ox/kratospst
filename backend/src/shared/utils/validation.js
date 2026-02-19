@@ -7,6 +7,15 @@ const isEmail = (value) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 };
 
+const isUsuarioIdentificador = (value) => {
+  if (!isNonEmptyString(value)) return false;
+  const normalized = value.trim();
+  if (normalized.includes('@')) {
+    return isEmail(normalized);
+  }
+  return /^[A-Za-z0-9._-]{1,100}$/.test(normalized);
+};
+
 const toNumber = (value) => {
   if (value === null || value === undefined || value === '') return null;
   const num = Number(value);
@@ -34,6 +43,7 @@ module.exports = {
   isNonEmptyString,
   normalizeString,
   isEmail,
+  isUsuarioIdentificador,
   toNumber,
   isPositiveInt,
   isNonNegative,

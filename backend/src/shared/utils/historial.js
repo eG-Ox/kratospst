@@ -1,3 +1,40 @@
+const REDACTED_VALUE = '[REDACTED]';
+const SENSITIVE_KEYS = new Set([
+  'contrasena',
+  'contraseña',
+  'password',
+  'pass',
+  'token',
+  'secret',
+  'jwt',
+  'cookie',
+  'authorization'
+]);
+
+const normalizeKey = (key) =>
+  String(key || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const sanitizeForHistory = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeForHistory(item));
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  const output = {};
+  for (const [key, innerValue] of Object.entries(value)) {
+    if (SENSITIVE_KEYS.has(normalizeKey(key))) {
+      output[key] = REDACTED_VALUE;
+      continue;
+    }
+    output[key] = sanitizeForHistory(innerValue);
+  }
+  return output;
+};
+
 const registrarHistorial = async (connection, payload) => {
   const {
     entidad,
@@ -9,8 +46,8 @@ const registrarHistorial = async (connection, payload) => {
     despues
   } = payload;
 
-  const antesJson = antes ? JSON.stringify(antes) : null;
-  const despuesJson = despues ? JSON.stringify(despues) : null;
+  const antesJson = antes ? JSON.stringify(sanitizeForHistory(antes)) : null;
+  const despuesJson = despues ? JSON.stringify(sanitizeForHistory(despues)) : null;
 
   await connection.execute(
     `INSERT INTO historial_acciones
@@ -20,4 +57,4 @@ const registrarHistorial = async (connection, payload) => {
   );
 };
 
-module.exports = { registrarHistorial };
+module.exports = { registrarHistorial, sanitizeForHistory };

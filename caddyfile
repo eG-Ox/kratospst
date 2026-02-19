@@ -1,0 +1,33 @@
+{$LAN_HOST:192.168.18.131}:443 {
+	tls internal
+	encode zstd gzip
+	root * "{$FRONTEND_BUILD_DIR:C:/Users/user/Documents/marco/NODE/PROYECTO KRATOS/frontend/build}"
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(self), geolocation=(), microphone=()"
+		-Server
+	}
+
+	@frontend_static path /static/* /assets/*
+	header @frontend_static Cache-Control "public, max-age=3600, must-revalidate"
+	@spa_routes {
+		not path /api/* /static/* /assets/*
+	}
+	header @spa_routes Cache-Control "no-store, no-cache, must-revalidate"
+
+	route {
+		@backend_paths path /api/* /static/img/* /static/js/html2pdf.bundle.min.js
+		handle @backend_paths {
+			reverse_proxy {$API_UPSTREAM:127.0.0.1:5000}
+		}
+
+		handle {
+			# Fallback SPA: cualquier ruta de React debe servir index.html.
+			try_files {path} {path}/ /index.html
+			file_server
+		}
+	}
+}

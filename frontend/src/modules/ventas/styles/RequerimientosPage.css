@@ -1,5 +1,6 @@
 .requerimientos-container {
   padding: 30px 24px 50px;
+  --requerimientos-cache-bust-v2: 1;
 }
 
 .requerimientos-container .page-header__actions input {

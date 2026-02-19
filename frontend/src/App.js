@@ -1,9 +1,10 @@
-import React, { lazy, Suspense, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './shared/components/Navbar';
 import ProtectedRoute from './shared/components/ProtectedRoute';
 import ErrorBoundary from './shared/components/ErrorBoundary';
-import { authService } from './core/services/apiServices';
+import { authService, permisosService } from './core/services/apiServices';
+import RequerimientosPage from './modules/ventas/pages/RequerimientosPage';
 import './shared/styles/variables.css';
 import './shared/styles/shared.css';
 import './shared/styles/animations.css';
@@ -27,13 +28,13 @@ const InventarioGeneralPage = lazy(() => import('./modules/inventario-general/pa
 const VentasPage = lazy(() => import('./modules/ventas/pages/VentasPage'));
 const EnviosPage = lazy(() => import('./modules/ventas/pages/EnviosPage'));
 const VentasDetallePage = lazy(() => import('./modules/ventas/pages/VentasDetallePage'));
-const RequerimientosPage = lazy(() => import('./modules/ventas/pages/RequerimientosPage'));
 const PickingPage = lazy(() => import('./modules/picking/pages/PickingPage'));
 const RotulosPage = lazy(() => import('./modules/rotulos/pages/RotulosPage'));
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [usuario, setUsuario] = useState(null);
+  const [userPermissions, setUserPermissions] = useState([]);
   const [authChecked, setAuthChecked] = useState(false);
   const [authMessage] = useState(() => {
     const mensajes = [
@@ -46,32 +47,60 @@ function App() {
     return mensajes[Math.floor(Math.random() * mensajes.length)];
   });
 
-  useEffect(() => {
-    const usuarioGuardado = localStorage.getItem('usuario');
-    if (usuarioGuardado && usuarioGuardado !== 'undefined') {
-      try {
-        setUsuario(JSON.parse(usuarioGuardado));
-      } catch (error) {
-        localStorage.removeItem('usuario');
-      }
+  const cargarPermisos = async () => {
+    try {
+      const permisosResp = await permisosService.misPermisos();
+      return Array.isArray(permisosResp?.data) ? permisosResp.data : [];
+    } catch (_) {
+      return [];
     }
+  };
 
-    authService.obtenerUsuarioActual()
-      .then((resp) => {
-        if (resp?.data) {
-          setIsAuthenticated(true);
-          setUsuario(resp.data);
-          localStorage.setItem('usuario', JSON.stringify(resp.data));
+  useEffect(() => {
+    let mounted = true;
+    const initAuth = async () => {
+      const usuarioGuardado = localStorage.getItem('usuario');
+      if (usuarioGuardado && usuarioGuardado !== 'undefined') {
+        try {
+          const parsed = JSON.parse(usuarioGuardado);
+          if (mounted) {
+            setUsuario(parsed);
+          }
+        } catch (error) {
+          localStorage.removeItem('usuario');
         }
-      })
-      .catch((err) => {
+      }
+
+      try {
+        const resp = await authService.obtenerUsuarioActual();
+        if (!mounted || !resp?.data) return;
+        setIsAuthenticated(true);
+        setUsuario(resp.data);
+        localStorage.setItem('usuario', JSON.stringify(resp.data));
+        const permisos = await cargarPermisos();
+        if (mounted) {
+          setUserPermissions(permisos);
+        }
+      } catch (err) {
         if (err?.response?.status === 401) {
           localStorage.removeItem('usuario');
+        }
+        if (mounted) {
           setIsAuthenticated(false);
           setUsuario(null);
+          setUserPermissions([]);
         }
-      })
-      .finally(() => setAuthChecked(true));
+      } finally {
+        if (mounted) {
+          setAuthChecked(true);
+        }
+      }
+    };
+
+    initAuth();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -84,16 +113,21 @@ function App() {
     return () => window.removeEventListener('resize', updateVh);
   }, []);
 
-  const handleLoginSuccess = (usuarioData) => {
+  const handleLoginSuccess = async (usuarioData) => {
     setIsAuthenticated(true);
     setUsuario(usuarioData);
+    const permisos = await cargarPermisos();
+    setUserPermissions(permisos);
   };
 
   const handleLogout = () => {
     setIsAuthenticated(false);
     setUsuario(null);
+    setUserPermissions([]);
     localStorage.removeItem('usuario');
   };
+
+  const userPermissionsSet = useMemo(() => new Set(userPermissions), [userPermissions]);
 
   if (!authChecked) {
     return (
@@ -116,10 +150,23 @@ function App() {
     </div>
   );
 
+  const protectedRouteProps = {
+    isAuthenticated,
+    authChecked,
+    usuario,
+    userPermissions: userPermissionsSet
+  };
+
   return (
     <ErrorBoundary>
       <Router>
-        {isAuthenticated && <Navbar usuario={usuario} onLogout={handleLogout} />}
+        {isAuthenticated && (
+          <Navbar
+            usuario={usuario}
+            permisos={userPermissions}
+            onLogout={handleLogout}
+          />
+        )}
         <Suspense fallback={routeFallback}>
           <Routes>
             <Route
@@ -135,7 +182,7 @@ function App() {
             <Route
               path="/dashboard"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps}>
                   <DashboardPage usuario={usuario} />
                 </ProtectedRoute>
               }
@@ -143,7 +190,7 @@ function App() {
             <Route
               path="/productos"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="productos.ver">
                   <ProductosPage />
                 </ProtectedRoute>
               }
@@ -151,7 +198,7 @@ function App() {
             <Route
               path="/tipos-maquinas"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="tipos_maquinas.ver">
                   <TiposMaquinasPage />
                 </ProtectedRoute>
               }
@@ -159,7 +206,7 @@ function App() {
             <Route
               path="/inventario"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="movimientos.ver">
                   <GestorInventarioPage />
                 </ProtectedRoute>
               }
@@ -167,7 +214,7 @@ function App() {
             <Route
               path="/inventario-general"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="inventario_general.ver">
                   <InventarioGeneralPage />
                 </ProtectedRoute>
               }
@@ -177,7 +224,7 @@ function App() {
             <Route
               path="/kits"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="kits.ver">
                   <KitsPage />
                 </ProtectedRoute>
               }
@@ -185,7 +232,7 @@ function App() {
             <Route
               path="/cotizaciones"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="cotizaciones.ver">
                   <CotizacionesPage />
                 </ProtectedRoute>
               }
@@ -193,7 +240,10 @@ function App() {
             <Route
               path="/cotizaciones-historial"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute
+                  {...protectedRouteProps}
+                  requiredPermissions="cotizaciones.historial.ver"
+                >
                   <HistorialCotizacionesPage />
                 </ProtectedRoute>
               }
@@ -201,7 +251,7 @@ function App() {
             <Route
               path="/clientes"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="clientes.ver">
                   <ClientesPage />
                 </ProtectedRoute>
               }
@@ -209,7 +259,7 @@ function App() {
             <Route
               path="/usuarios"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps}>
                   <UsuariosPage />
                 </ProtectedRoute>
               }
@@ -217,7 +267,7 @@ function App() {
             <Route
               path="/backups"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} allowedRoles="admin">
                   <BackupsPage />
                 </ProtectedRoute>
               }
@@ -225,7 +275,7 @@ function App() {
             <Route
               path="/permisos"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="permisos.editar">
                   <PermisosPage />
                 </ProtectedRoute>
               }
@@ -233,7 +283,7 @@ function App() {
             <Route
               path="/historial"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="historial.ver">
                   <HistorialPage />
                 </ProtectedRoute>
               }
@@ -241,7 +291,7 @@ function App() {
             <Route
               path="/ventas"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="ventas.ver">
                   <VentasPage />
                 </ProtectedRoute>
               }
@@ -249,7 +299,7 @@ function App() {
             <Route
               path="/ventas-envios"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="ventas.ver">
                   <EnviosPage />
                 </ProtectedRoute>
               }
@@ -257,7 +307,7 @@ function App() {
             <Route
               path="/ventas-detalle"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="ventas.ver">
                   <VentasDetallePage />
                 </ProtectedRoute>
               }
@@ -265,7 +315,7 @@ function App() {
             <Route
               path="/ventas-requerimientos"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="ventas.ver">
                   <RequerimientosPage />
                 </ProtectedRoute>
               }
@@ -273,7 +323,7 @@ function App() {
             <Route
               path="/picking"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="picking.ver">
                   <PickingPage />
                 </ProtectedRoute>
               }
@@ -281,7 +331,7 @@ function App() {
             <Route
               path="/rotulos"
               element={
-                <ProtectedRoute isAuthenticated={isAuthenticated} authChecked={authChecked}>
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="clientes.ver">
                   <RotulosPage />
                 </ProtectedRoute>
               }
@@ -295,3 +345,4 @@ function App() {
 }
 
 export default App;
+

@@ -397,7 +397,8 @@ const DashboardPage = ({ usuario }) => {
                 <div className="dashboard-panel">
                   <h2>Alertas de stock mínimo</h2>
                   {productosBajoStock.length > 0 ? (
-                    <table className="movements-table">
+                    <div className="stock-alerts-scroll" aria-label="Lista de stock bajo">
+                      <table className="movements-table">
                       <thead>
                         <tr>
                           <th>Codigo</th>
@@ -414,7 +415,8 @@ const DashboardPage = ({ usuario }) => {
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                      </table>
+                    </div>
                   ) : (
                     <p className="empty-message">Sin alertas de stock.</p>
                   )}

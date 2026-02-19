@@ -12,6 +12,7 @@ const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+const MAX_CLIENTES_LIST_LIMIT = 500;
 
 const fetchJson = (url) =>
   new Promise((resolve, reject) => {
@@ -69,10 +70,11 @@ const rollbackSilently = async (connection) => {
 
 exports.getClientes = async (req, res) => {
   const { tipo, documento, search } = req.query;
+  let connection;
 
   try {
-    const connection = await pool.getConnection();
-    let query = 'SELECT c.* FROM clientes c';
+    connection = await pool.getConnection();
+    let query = 'SELECT DISTINCT c.* FROM clientes c';
     const params = [];
 
     if (req.usuario?.rol !== 'admin') {
@@ -101,26 +103,27 @@ exports.getClientes = async (req, res) => {
       params.push(req.usuario.id, req.usuario.id);
     }
 
-    const limiteValue = parsePositiveInt(req.query.limite, 5000);
+    const limiteValue = parsePositiveInt(req.query.limite, 100);
     const paginaValue = parsePositiveInt(req.query.pagina, 1);
-    const safeLimit = Math.min(limiteValue, 20000);
+    const safeLimit = Math.min(limiteValue, MAX_CLIENTES_LIST_LIMIT);
     const offset = (paginaValue - 1) * safeLimit;
     query += ` ORDER BY c.fecha_creacion DESC LIMIT ${offset}, ${safeLimit}`;
     const [rows] = await connection.execute(query, params);
-    connection.release();
 
     res.json(rows.map(buildClienteFromRow));
   } catch (error) {
     console.error('Error obteniendo clientes:', error);
     res.status(500).json({ error: 'Error al obtener clientes' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.getCliente = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute('SELECT * FROM clientes WHERE id = ?', [req.params.id]);
-    connection.release();
 
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Cliente no encontrado' });
@@ -128,12 +131,10 @@ exports.getCliente = async (req, res) => {
 
     if (req.usuario?.rol !== 'admin') {
       const cliente = rows[0];
-      const connection2 = await pool.getConnection();
-      const [rel] = await connection2.execute(
+      const [rel] = await connection.execute(
         'SELECT id FROM clientes_usuarios WHERE cliente_id = ? AND usuario_id = ?',
         [cliente.id, req.usuario.id]
       );
-      connection2.release();
       if (cliente.usuario_id !== req.usuario.id && !rel.length) {
         return res.status(403).json({ error: 'Acceso denegado' });
       }
@@ -143,6 +144,8 @@ exports.getCliente = async (req, res) => {
   } catch (error) {
     console.error('Error obteniendo cliente:', error);
     res.status(500).json({ error: 'Error al obtener cliente' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -359,6 +362,13 @@ exports.actualizarCliente = async (req, res) => {
     }
   }
 
+  if (correo && !isEmail(String(correo))) {
+    return res.status(400).json({ error: 'Correo invalido' });
+  }
+  if (telefono && !PHONE_REGEX.test(String(telefono))) {
+    return res.status(400).json({ error: 'Telefono invalido' });
+  }
+
   let connection;
   try {
     connection = await pool.getConnection();
@@ -459,6 +469,18 @@ exports.eliminarCliente = async (req, res) => {
     }
 
     if (req.usuario?.rol !== 'admin') {
+      const esPropietario =
+        Number(existing[0]?.usuario_id || 0) === Number(req.usuario?.id || 0);
+      if (!esPropietario) {
+        const [rel] = await connection.execute(
+          'SELECT id FROM clientes_usuarios WHERE cliente_id = ? AND usuario_id = ? LIMIT 1',
+          [req.params.id, req.usuario.id]
+        );
+        if (!rel.length) {
+          await rollbackSilently(connection);
+          return res.status(404).json({ error: 'Cliente no encontrado' });
+        }
+      }
       await connection.execute(
         'DELETE FROM clientes_usuarios WHERE cliente_id = ? AND usuario_id = ?',
         [req.params.id, req.usuario.id]

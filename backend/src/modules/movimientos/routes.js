@@ -1,11 +1,8 @@
 const express = require('express');
 const controller = require('./controller');
-const { autenticar, autorizar } = require('../../core/middleware/auth');
+const { autorizar } = require('../../core/middleware/auth');
 
 const router = express.Router();
-
-// Todas las rutas requieren autenticación
-router.use(autenticar);
 
 router.post('/', autorizar('movimientos.registrar'), controller.registrarMovimiento);
 router.post('/batch', autorizar('movimientos.registrar'), controller.registrarMovimientosBatch);

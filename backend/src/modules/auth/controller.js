@@ -1,11 +1,16 @@
 ﻿const pool = require('../../core/config/database');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { isEmail, isNonEmptyString, normalizeString } = require('../../shared/utils/validation');
+const {
+  isNonEmptyString,
+  isUsuarioIdentificador,
+  normalizeString
+} = require('../../shared/utils/validation');
 const { AUTH_COOKIE_NAME } = require('../../core/middleware/auth');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const TOKEN_TTL_SECONDS = 24 * 60 * 60;
+const PHONE_REGEX = /^[0-9+\s-]{6,20}$/;
 let passwordColumnCache = null;
 
 const parseBoolean = (value, fallback = false) => {
@@ -14,8 +19,11 @@ const parseBoolean = (value, fallback = false) => {
 };
 
 const getCookieOptions = () => {
-  const sameSite = String(process.env.AUTH_COOKIE_SAMESITE || 'lax').toLowerCase();
-  const secure = parseBoolean(process.env.AUTH_COOKIE_SECURE, process.env.NODE_ENV === 'production');
+  const isProduction = process.env.NODE_ENV === 'production';
+  const sameSiteDefault = isProduction ? 'strict' : 'lax';
+  const sameSite = String(process.env.AUTH_COOKIE_SAMESITE || sameSiteDefault).toLowerCase();
+  const secureFromEnv = parseBoolean(process.env.AUTH_COOKIE_SECURE, isProduction);
+  const secure = isProduction ? true : secureFromEnv;
   return {
     httpOnly: true,
     secure,
@@ -63,16 +71,22 @@ const extractPassword = (body) => {
 const resolvePasswordColumn = async (connection) => {
   if (passwordColumnCache) return passwordColumnCache;
   const [columns] = await connection.execute('SHOW COLUMNS FROM usuarios');
-  const names = new Set((columns || []).map((item) => item.Field));
-  if (names.has('contraseña')) {
+  const names = (columns || []).map((item) => item.Field);
+  const namesSet = new Set(names);
+  if (namesSet.has('contrasena')) {
+    passwordColumnCache = 'contrasena';
+    return passwordColumnCache;
+  }
+  if (namesSet.has('contraseña')) {
     passwordColumnCache = 'contraseña';
     return passwordColumnCache;
   }
-  if (names.has('contraseÃ±a')) {
+  if (namesSet.has('contraseÃ±a')) {
     passwordColumnCache = 'contraseÃ±a';
     return passwordColumnCache;
   }
-  passwordColumnCache = 'contraseña';
+  const legacy = names.find((name) => String(name || '').toLowerCase().startsWith('contra'));
+  passwordColumnCache = legacy || 'contrasena';
   return passwordColumnCache;
 };
 
@@ -85,8 +99,8 @@ exports.login = async (req, res) => {
   if (!identificador || !password) {
     return res.status(400).json({ error: 'Usuario/email y contraseña requeridos' });
   }
-  if (identificador.includes('@') && !isEmail(identificador)) {
-    return res.status(400).json({ error: 'Email invalido' });
+  if (!isUsuarioIdentificador(identificador)) {
+    return res.status(400).json({ error: 'Usuario o email invalido' });
   }
 
   let connection;
@@ -106,8 +120,8 @@ exports.login = async (req, res) => {
       const [rows] = await connection.execute(
         `SELECT id, nombre, email, telefono, \`${passwordColumn}\` AS contrasena, rol
          FROM usuarios
-         WHERE (email = ? OR email LIKE ? OR nombre = ?) AND activo = TRUE`,
-        [identificador, `${identificador}@%`, identificador]
+         WHERE (email = ? OR email LIKE ?) AND activo = TRUE`,
+        [identificador, `${identificador}@%`]
       );
       usuarios = rows;
     }
@@ -163,12 +177,20 @@ exports.registro = async (req, res) => {
   const { nombre, email, telefono, rol = 'ventas' } = req.body || {};
   const password = extractPassword(req.body);
   const rolesValidos = ['admin', 'ventas', 'logistica'];
+  const nombreValue = normalizeString(nombre);
+  const identificadorValue = normalizeString(email);
+  const telefonoValue = normalizeString(telefono);
 
-  if (!nombre || !email || !password) {
-    return res.status(400).json({ error: 'Nombre, email y contraseña requeridos' });
+  if (!isNonEmptyString(nombreValue) || !isNonEmptyString(identificadorValue) || !password) {
+    return res.status(400).json({ error: 'Nombre, usuario/email y contraseña requeridos' });
   }
-  if (!isEmail(normalizeString(email))) {
-    return res.status(400).json({ error: 'Email invalido' });
+  if (!isUsuarioIdentificador(identificadorValue)) {
+    return res.status(400).json({ error: 'Usuario o email invalido' });
+  }
+  if (!isNonEmptyString(telefonoValue) || !PHONE_REGEX.test(telefonoValue)) {
+    return res.status(400).json({
+      error: 'Telefono invalido. Use 6-20 caracteres (digitos, +, espacio o -)'
+    });
   }
   if (!isNonEmptyString(password) || password.length < 8) {
     return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
@@ -187,13 +209,19 @@ exports.registro = async (req, res) => {
     await connection.beginTransaction();
     const [result] = await connection.execute(
       `INSERT INTO usuarios (nombre, email, telefono, \`${passwordColumn}\`, rol) VALUES (?, ?, ?, ?, ?)`,
-      [normalizeString(nombre), normalizeString(email), normalizeString(telefono) || null, passwordHash, rol]
+      [nombreValue, identificadorValue, telefonoValue, passwordHash, rol]
     );
     await connection.commit();
 
     if (!req.skipAuthCookie) {
       const token = jwt.sign(
-        { id: result.insertId, nombre, email, rol, telefono: telefono || null },
+        {
+          id: result.insertId,
+          nombre: nombreValue,
+          email: identificadorValue,
+          rol,
+          telefono: telefonoValue
+        },
         JWT_SECRET,
         { expiresIn: TOKEN_TTL_SECONDS }
       );
@@ -202,7 +230,13 @@ exports.registro = async (req, res) => {
 
     res.status(201).json({
       mensaje: 'Usuario registrado exitosamente',
-      usuario: { id: result.insertId, nombre, email, rol, telefono: telefono || null }
+      usuario: {
+        id: result.insertId,
+        nombre: nombreValue,
+        email: identificadorValue,
+        rol,
+        telefono: telefonoValue
+      }
     });
   } catch (error) {
     await rollbackSilently(connection);

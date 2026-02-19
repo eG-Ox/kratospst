@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { backupsService } from '../../../core/services/apiServices';
+import { backupsService, usuariosService } from '../../../core/services/apiServices';
 import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/BackupsPage.css';
 
@@ -9,9 +9,25 @@ const BackupsPage = () => {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [cargandoLista, setCargandoLista] = useState(true);
+  const [perfilCargando, setPerfilCargando] = useState(true);
+  const [esAdmin, setEsAdmin] = useState(false);
 
-  const usuarioActual = JSON.parse(localStorage.getItem('usuario') || '{}');
-  const esAdmin = usuarioActual?.rol === 'admin';
+  const cargarPerfil = useCallback(async () => {
+    try {
+      const resp = await usuariosService.obtenerPerfil();
+      if (!mountedRef.current) return;
+      setEsAdmin(resp?.data?.rol === 'admin');
+    } catch (err) {
+      console.error('Error cargando perfil:', err);
+      if (mountedRef.current) {
+        setEsAdmin(false);
+      }
+    } finally {
+      if (mountedRef.current) {
+        setPerfilCargando(false);
+      }
+    }
+  }, [mountedRef]);
 
   const cargarBackups = useCallback(async () => {
     try {
@@ -30,6 +46,10 @@ const BackupsPage = () => {
       }
     }
   }, [mountedRef]);
+
+  useEffect(() => {
+    cargarPerfil();
+  }, [cargarPerfil]);
 
   useEffect(() => {
     if (esAdmin) {
@@ -57,6 +77,14 @@ const BackupsPage = () => {
       }
     }
   };
+
+  if (perfilCargando) {
+    return (
+      <div className="backups-container">
+        <div className="loading">Cargando...</div>
+      </div>
+    );
+  }
 
   if (!esAdmin) {
     return (

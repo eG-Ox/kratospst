@@ -31,14 +31,14 @@ exports.registrarMovimiento = async (req, res) => {
 
     // Verificar que la máquina existe y obtener stock actual
     const [maquinas] = await connection.execute(
-      'SELECT stock, ubicacion_letra, ubicacion_numero FROM maquinas WHERE id = ? FOR UPDATE',
+      'SELECT stock, ubicacion_letra, ubicacion_numero FROM maquinas WHERE id = ? AND activo = TRUE FOR UPDATE',
       [maquina_id]
     );
 
     if (maquinas.length === 0) {
       await connection.rollback();
       connection.release();
-      return res.status(404).json({ error: 'Máquina no encontrada' });
+      return res.status(404).json({ error: 'Maquina no encontrada o inactiva' });
     }
 
     const stockActual = maquinas[0].stock;
@@ -145,7 +145,10 @@ exports.registrarMovimientosBatch = async (req, res) => {
     const ids = Array.from(new Set(normalizados.map((item) => item.maquina_id)));
     const placeholders = ids.map(() => '?').join(',');
     const [rows] = await connection.execute(
-      `SELECT id, stock, ubicacion_letra, ubicacion_numero FROM maquinas WHERE id IN (${placeholders}) FOR UPDATE`,
+      `SELECT id, stock, ubicacion_letra, ubicacion_numero
+       FROM maquinas
+       WHERE id IN (${placeholders}) AND activo = TRUE
+       FOR UPDATE`,
       ids
     );
 
@@ -163,7 +166,7 @@ exports.registrarMovimientosBatch = async (req, res) => {
       if (!stockMap.has(id)) {
         await connection.rollback();
         connection.release();
-        return res.status(404).json({ error: `Maquina no encontrada: ${id}` });
+        return res.status(404).json({ error: `Maquina no encontrada o inactiva: ${id}` });
       }
     }
 
@@ -219,19 +222,23 @@ exports.registrarMovimientosBatch = async (req, res) => {
       });
     }
 
+    // Mantener trazabilidad item por item respetando el orden del batch.
+    const runningStockMap = new Map(
+      Array.from(stockMap.entries()).map(([id, stockInfo]) => [id, Number(stockInfo?.stock || 0)])
+    );
     for (const item of normalizados) {
-      const stockInfo = stockMap.get(item.maquina_id);
-      const stockActual = stockInfo ? stockInfo.stock : 0;
-      const delta = item.tipo === 'ingreso' ? item.cantidad : -item.cantidad;
-      const nuevoStock = stockActual + deltaMap.get(item.maquina_id);
+      const stockAntes = Number(runningStockMap.get(item.maquina_id) || 0);
+      const delta = item.tipo === 'ingreso' ? Number(item.cantidad || 0) : -Number(item.cantidad || 0);
+      const stockDespues = stockAntes + delta;
+      runningStockMap.set(item.maquina_id, stockDespues);
       await registrarHistorial(connection, {
         entidad: 'movimientos',
         entidad_id: null,
         usuario_id,
         accion: item.tipo,
         descripcion: `Movimiento ${item.tipo} (${item.maquina_id})`,
-        antes: { stock: stockActual },
-        despues: { stock: nuevoStock, cantidad: item.cantidad, motivo: item.motivo }
+        antes: { stock: stockAntes },
+        despues: { stock: stockDespues, cantidad: item.cantidad, motivo: item.motivo }
       });
     }
 
@@ -254,6 +261,7 @@ const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+const MAX_MOVIMIENTOS_LIST_LIMIT = 500;
 
 // Obtener historial de movimientos
 exports.obtenerMovimientos = async (req, res) => {
@@ -293,9 +301,10 @@ exports.obtenerMovimientos = async (req, res) => {
 
     const limiteValue = parsePositiveInt(limite, 50);
     const paginaValue = parsePositiveInt(pagina, 1);
-    const offset = (paginaValue - 1) * limiteValue;
+    const safeLimit = Math.min(limiteValue, MAX_MOVIMIENTOS_LIST_LIMIT);
+    const offset = (paginaValue - 1) * safeLimit;
 
-    query += ` ORDER BY i.fecha DESC LIMIT ${offset}, ${limiteValue}`;
+    query += ` ORDER BY i.fecha DESC LIMIT ${offset}, ${safeLimit}`;
 
     connection = await pool.getConnection();
     const [movimientos] = await connection.execute(query, params);
@@ -322,7 +331,8 @@ exports.obtenerMovimientosPorMaquina = async (req, res) => {
 
     const limiteValue = parsePositiveInt(limite, 20);
     const paginaValue = parsePositiveInt(pagina, 1);
-    const offset = (paginaValue - 1) * limiteValue;
+    const safeLimit = Math.min(limiteValue, MAX_MOVIMIENTOS_LIST_LIMIT);
+    const offset = (paginaValue - 1) * safeLimit;
     const [movimientos] = await connection.execute(
       `SELECT 
         i.id, i.tipo, i.cantidad, i.motivo, i.fecha, u.nombre as usuario_nombre
@@ -330,7 +340,7 @@ exports.obtenerMovimientosPorMaquina = async (req, res) => {
       JOIN usuarios u ON i.usuario_id = u.id
       WHERE i.maquina_id = ?
       ORDER BY i.fecha DESC
-      LIMIT ${offset}, ${limiteValue}`,
+      LIMIT ${offset}, ${safeLimit}`,
       [maquina_id]
     );
 
@@ -356,8 +366,9 @@ exports.obtenerEstadisticas = async (req, res) => {
       `SELECT
          COUNT(*) AS total_maquinas,
          COALESCE(SUM(stock), 0) AS total_stock,
-         SUM(CASE WHEN activo = TRUE AND stock <= ? THEN 1 ELSE 0 END) AS stock_bajo
-       FROM maquinas`,
+         SUM(CASE WHEN stock <= ? THEN 1 ELSE 0 END) AS stock_bajo
+       FROM maquinas
+       WHERE activo = TRUE`,
       [stockAlerta]
     );
 

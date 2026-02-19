@@ -1,11 +1,25 @@
 const pool = require('../../core/config/database');
 const { registrarHistorial } = require('../../shared/utils/historial');
-const { isNonEmptyString, normalizeString } = require('../../shared/utils/validation');
+const {
+  isNonEmptyString,
+  isUsuarioIdentificador,
+  normalizeString
+} = require('../../shared/utils/validation');
 
 const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+const parseBooleanInput = (value, fallback) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+};
+const MAX_USUARIOS_LIST_LIMIT = 500;
+const PHONE_REGEX = /^[0-9+\s-]{6,20}$/;
 
 const releaseConnection = (connection) => {
   if (!connection) return;
@@ -29,9 +43,9 @@ exports.listarUsuarios = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const limiteValue = parsePositiveInt(req.query.limite, 5000);
+    const limiteValue = parsePositiveInt(req.query.limite, 100);
     const paginaValue = parsePositiveInt(req.query.pagina, 1);
-    const safeLimit = Math.min(limiteValue, 20000);
+    const safeLimit = Math.min(limiteValue, MAX_USUARIOS_LIST_LIMIT);
     const offset = (paginaValue - 1) * safeLimit;
     const [rows] = await connection.execute(
       `SELECT id, nombre, email, telefono, rol, activo
@@ -62,26 +76,43 @@ exports.actualizarUsuario = async (req, res) => {
       await rollbackSilently(connection);
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
-    if (rol && !rolesValidos.includes(rol)) {
+    const usuarioActual = existing[0];
+    const rolFinal = rol || usuarioActual.rol;
+    if (!rolesValidos.includes(rolFinal)) {
       await rollbackSilently(connection);
       return res.status(400).json({ error: 'Rol no valido' });
     }
+    const activoFinal = parseBooleanInput(activo, Boolean(usuarioActual.activo));
 
-    if (!isNonEmptyString(nombre) || !isNonEmptyString(email)) {
+    const nombreValue = normalizeString(nombre);
+    const identificadorValue = normalizeString(email);
+    const telefonoValue = normalizeString(telefono);
+
+    if (!isNonEmptyString(nombreValue) || !isNonEmptyString(identificadorValue)) {
       await rollbackSilently(connection);
-      return res.status(400).json({ error: 'Nombre y email son requeridos' });
+      return res.status(400).json({ error: 'Nombre y usuario/email son requeridos' });
+    }
+    if (!isUsuarioIdentificador(identificadorValue)) {
+      await rollbackSilently(connection);
+      return res.status(400).json({ error: 'Usuario o email invalido' });
+    }
+    if (!isNonEmptyString(telefonoValue) || !PHONE_REGEX.test(telefonoValue)) {
+      await rollbackSilently(connection);
+      return res.status(400).json({
+        error: 'Telefono invalido. Use 6-20 caracteres (digitos, +, espacio o -)'
+      });
     }
 
     await connection.execute(
       `UPDATE usuarios
        SET nombre = ?, email = ?, telefono = ?, rol = ?, activo = ?
-      WHERE id = ?`,
+       WHERE id = ?`,
       [
-        normalizeString(nombre),
-        normalizeString(email),
-        normalizeString(telefono) || null,
-        rol,
-        activo ? 1 : 0,
+        nombreValue,
+        identificadorValue,
+        telefonoValue,
+        rolFinal,
+        activoFinal ? 1 : 0,
         id
       ]
     );
@@ -94,16 +125,23 @@ exports.actualizarUsuario = async (req, res) => {
       antes: existing[0],
       despues: {
         id: Number(id),
-        nombre,
-        email,
-        telefono: telefono || null,
-        rol,
-        activo: !!activo
+        nombre: nombreValue,
+        email: identificadorValue,
+        telefono: telefonoValue,
+        rol: rolFinal,
+        activo: activoFinal
       }
     });
     await connection.commit();
 
-    return res.json({ id, nombre, email, telefono: telefono || null, rol, activo: !!activo });
+    return res.json({
+      id,
+      nombre: nombreValue,
+      email: identificadorValue,
+      telefono: telefonoValue,
+      rol: rolFinal,
+      activo: activoFinal
+    });
   } catch (error) {
     await rollbackSilently(connection);
     console.error('Error actualizando usuario:', error);
@@ -138,8 +176,20 @@ exports.obtenerPerfil = async (req, res) => {
 
 exports.actualizarPerfil = async (req, res) => {
   const { nombre, email, telefono } = req.body;
-  if (!isNonEmptyString(nombre) || !isNonEmptyString(email)) {
-    return res.status(400).json({ error: 'Nombre y email son requeridos' });
+  const nombreValue = normalizeString(nombre);
+  const identificadorValue = normalizeString(email);
+  const telefonoValue = normalizeString(telefono);
+
+  if (!isNonEmptyString(nombreValue) || !isNonEmptyString(identificadorValue)) {
+    return res.status(400).json({ error: 'Nombre y usuario/email son requeridos' });
+  }
+  if (!isUsuarioIdentificador(identificadorValue)) {
+    return res.status(400).json({ error: 'Usuario o email invalido' });
+  }
+  if (!isNonEmptyString(telefonoValue) || !PHONE_REGEX.test(telefonoValue)) {
+    return res.status(400).json({
+      error: 'Telefono invalido. Use 6-20 caracteres (digitos, +, espacio o -)'
+    });
   }
 
   let connection;
@@ -151,7 +201,7 @@ exports.actualizarPerfil = async (req, res) => {
       `UPDATE usuarios
        SET nombre = ?, email = ?, telefono = ?
        WHERE id = ?`,
-      [normalizeString(nombre), normalizeString(email), normalizeString(telefono) || null, req.usuario.id]
+      [nombreValue, identificadorValue, telefonoValue, req.usuario.id]
     );
     await registrarHistorial(connection, {
       entidad: 'usuarios',
@@ -162,13 +212,18 @@ exports.actualizarPerfil = async (req, res) => {
       antes: prev[0] || null,
       despues: {
         id: req.usuario.id,
-        nombre,
-        email,
-        telefono: telefono || null
+        nombre: nombreValue,
+        email: identificadorValue,
+        telefono: telefonoValue
       }
     });
     await connection.commit();
-    return res.json({ id: req.usuario.id, nombre, email, telefono: telefono || null });
+    return res.json({
+      id: req.usuario.id,
+      nombre: nombreValue,
+      email: identificadorValue,
+      telefono: telefonoValue
+    });
   } catch (error) {
     await rollbackSilently(connection);
     console.error('Error actualizando perfil:', error);

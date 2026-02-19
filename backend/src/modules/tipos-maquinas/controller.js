@@ -21,37 +21,41 @@ const rollbackSilently = async (connection) => {
 
 // Obtener todos los tipos de máquinas
 exports.getTiposMaquinas = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [tipos] = await connection.execute(
       'SELECT * FROM tipos_maquinas ORDER BY nombre'
     );
-    connection.release();
     res.json(tipos);
   } catch (error) {
     console.error('Error obteniendo tipos de máquinas:', error);
     res.status(500).json({ error: 'Error al obtener tipos de máquinas' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 // Obtener un tipo de máquina por ID
 exports.getTipoMaquina = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [tipo] = await connection.execute(
       'SELECT * FROM tipos_maquinas WHERE id = ?',
       [req.params.id]
     );
-    connection.release();
-    
+
     if (tipo.length === 0) {
       return res.status(404).json({ error: 'Tipo de máquina no encontrado' });
     }
-    
+
     res.json(tipo[0]);
   } catch (error) {
     console.error('Error obteniendo tipo de máquina:', error);
     res.status(500).json({ error: 'Error al obtener tipo de máquina' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 

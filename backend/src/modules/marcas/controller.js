@@ -8,6 +8,7 @@ const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
+const MAX_MARCAS_LIST_LIMIT = 200;
 
 const releaseConnection = (connection) => {
   if (!connection) return;
@@ -35,44 +36,62 @@ const generarCodigoMarca = async (connection) => {
   return `M${String(next).padStart(4, '0')}`;
 };
 
+const sincronizarMarcaEnMaquinas = async (connection, nombreDestino, candidatos = []) => {
+  const filtros = [...new Set(
+    (candidatos || [])
+      .map((item) => String(item || '').trim().toUpperCase())
+      .filter(Boolean)
+  )];
+  if (!filtros.length) {
+    return;
+  }
+  const where = filtros.map(() => 'UPPER(TRIM(marca)) = ?').join(' OR ');
+  await connection.execute(
+    `UPDATE maquinas SET marca = ? WHERE ${where}`,
+    [nombreDestino, ...filtros]
+  );
+};
+
 exports.listarMarcas = async (req, res) => {
+  let connection;
   try {
     const { page, limit } = req.query;
     const hasPagination = page !== undefined || limit !== undefined;
     const orderBy = `ORDER BY CAST(SUBSTRING(codigo, 2) AS UNSIGNED) DESC, codigo DESC`;
 
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     if (hasPagination) {
       const limitValue = parsePositiveInt(limit, 50);
       const pageValue = parsePositiveInt(page, 1);
-      const offset = (pageValue - 1) * limitValue;
+      const safeLimit = Math.min(limitValue, MAX_MARCAS_LIST_LIMIT);
+      const offset = (pageValue - 1) * safeLimit;
       const [rows] = await connection.execute(
-        `SELECT * FROM marcas ${orderBy} LIMIT ${offset}, ${limitValue}`
+        `SELECT * FROM marcas ${orderBy} LIMIT ${offset}, ${safeLimit}`
       );
       const [totalRows] = await connection.execute('SELECT COUNT(*) as total FROM marcas');
       const total = totalRows?.[0]?.total || 0;
-      connection.release();
-      return res.json({ items: rows, total, page: pageValue, limit: limitValue });
+      return res.json({ items: rows, total, page: pageValue, limit: safeLimit });
     }
     const [rows] = await connection.execute(
       `SELECT * FROM marcas ${orderBy}`
     );
-    connection.release();
     res.json(rows);
   } catch (error) {
     console.error('Error listando marcas:', error);
     res.status(500).json({ error: 'Error al obtener marcas' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.obtenerMarca = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     const [rows] = await connection.execute(
       'SELECT * FROM marcas WHERE id = ?',
       [req.params.id]
     );
-    connection.release();
     if (!rows.length) {
       return res.status(404).json({ error: 'Marca no encontrada' });
     }
@@ -80,6 +99,8 @@ exports.obtenerMarca = async (req, res) => {
   } catch (error) {
     console.error('Error obteniendo marca:', error);
     res.status(500).json({ error: 'Error al obtener marca' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -118,10 +139,7 @@ exports.crearMarca = async (req, res) => {
         }
       }
     }
-    await connection.execute(
-      'UPDATE maquinas SET marca = ? WHERE UPPER(marca) = ?',
-      [nombre, codigo]
-    );
+    await sincronizarMarcaEnMaquinas(connection, nombre, [codigo, nombre]);
     await registrarHistorial(connection, {
       entidad: 'marcas',
       entidad_id: result.insertId,
@@ -168,14 +186,12 @@ exports.actualizarMarca = async (req, res) => {
       await rollbackSilently(connection);
       return res.status(404).json({ error: 'Marca no encontrada' });
     }
+    const anterior = prevRows[0];
     await connection.execute(
       'UPDATE marcas SET codigo = ?, nombre = ?, descripcion = ? WHERE id = ?',
       [codigo, nombre, descripcion || null, req.params.id]
     );
-    await connection.execute(
-      'UPDATE maquinas SET marca = ? WHERE UPPER(marca) = ?',
-      [nombre, codigo]
-    );
+    await sincronizarMarcaEnMaquinas(connection, nombre, [anterior.codigo, anterior.nombre, codigo]);
     await registrarHistorial(connection, {
       entidad: 'marcas',
       entidad_id: req.params.id,

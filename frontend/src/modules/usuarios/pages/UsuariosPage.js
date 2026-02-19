@@ -8,22 +8,24 @@ const UsuariosPage = () => {
   const [usuarios, setUsuarios] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [usuarioActual, setUsuarioActual] = useState(null);
   const [editando, setEditando] = useState(null);
   const [creando, setCreando] = useState(false);
   const [formData, setFormData] = useState({
     nombre: '',
     email: '',
+    telefono: '',
     rol: 'ventas',
     activo: true
   });
   const [nuevoUsuario, setNuevoUsuario] = useState({
     nombre: '',
     email: '',
+    telefono: '',
     contrasena: '',
     rol: 'ventas'
   });
 
-  const usuarioActual = JSON.parse(localStorage.getItem('usuario') || '{}');
   const esAdmin = usuarioActual?.rol === 'admin';
 
   const cargarUsuarios = useCallback(async () => {
@@ -31,7 +33,7 @@ const UsuariosPage = () => {
       setLoading(true);
       const resp = await usuariosService.listar();
       if (!mountedRef.current) return;
-      setUsuarios((resp.data || []).filter((usuario) => usuario.activo));
+      setUsuarios(resp.data || []);
       setError('');
     } catch (err) {
       console.error('Error cargando usuarios:', err);
@@ -50,9 +52,11 @@ const UsuariosPage = () => {
       setLoading(true);
       const resp = await usuariosService.obtenerPerfil();
       if (!mountedRef.current) return;
+      setUsuarioActual(resp.data || null);
       setFormData({
         nombre: resp.data.nombre || '',
         email: resp.data.email || '',
+        telefono: resp.data.telefono || '',
         rol: resp.data.rol || 'ventas',
         activo: true
       });
@@ -70,18 +74,21 @@ const UsuariosPage = () => {
   }, [mountedRef]);
 
   useEffect(() => {
+    cargarPerfil();
+  }, [cargarPerfil]);
+
+  useEffect(() => {
     if (esAdmin) {
       cargarUsuarios();
-    } else {
-      cargarPerfil();
     }
-  }, [cargarPerfil, cargarUsuarios, esAdmin]);
+  }, [cargarUsuarios, esAdmin]);
 
   const handleEditar = (usuario) => {
     setEditando(usuario);
     setFormData({
       nombre: usuario.nombre || '',
       email: usuario.email || '',
+      telefono: usuario.telefono || '',
       rol: usuario.rol || 'ventas',
       activo: !!usuario.activo
     });
@@ -100,7 +107,8 @@ const UsuariosPage = () => {
       } else {
         await usuariosService.actualizarPerfil({
           nombre: formData.nombre,
-          email: formData.email
+          email: formData.email,
+          telefono: formData.telefono
         });
         await cargarPerfil();
       }
@@ -134,7 +142,7 @@ const UsuariosPage = () => {
   };
 
   const abrirCrear = () => {
-    setNuevoUsuario({ nombre: '', email: '', contrasena: '', rol: 'ventas' });
+    setNuevoUsuario({ nombre: '', email: '', telefono: '', contrasena: '', rol: 'ventas' });
     setCreando(true);
   };
 
@@ -145,6 +153,7 @@ const UsuariosPage = () => {
       await authService.registro({
         nombre: nuevoUsuario.nombre,
         email: nuevoUsuario.email,
+        telefono: nuevoUsuario.telefono,
         contrasena: nuevoUsuario.contrasena,
         rol: nuevoUsuario.rol
       });
@@ -184,7 +193,8 @@ const UsuariosPage = () => {
             <thead>
               <tr>
                 <th>Nombre</th>
-                <th>Usuario</th>
+                <th>Usuario/Email</th>
+                <th>Telefono</th>
                 <th>Rol</th>
                 <th>Estado</th>
                 <th className="icon-col" title="Acciones">
@@ -197,6 +207,7 @@ const UsuariosPage = () => {
                 <tr key={usuario.id}>
                   <td>{usuario.nombre}</td>
                   <td>{usuario.email}</td>
+                  <td>{usuario.telefono || '-'}</td>
                   <td>{usuario.rol}</td>
                   <td>{usuario.activo ? 'Activo' : 'Inactivo'}</td>
                   <td>
@@ -234,16 +245,28 @@ const UsuariosPage = () => {
             <label>Nombre</label>
             <input
               type="text"
+              required
               value={formData.nombre}
               onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
             />
           </div>
           <div className="form-group">
-            <label>Email</label>
+            <label>Usuario o Email</label>
             <input
               type="text"
+              required
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            />
+          </div>
+          <div className="form-group">
+            <label>Telefono</label>
+            <input
+              type="text"
+              required
+              value={formData.telefono}
+              onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
+              placeholder="+51 999 999 999"
             />
           </div>
           <button type="submit" className="btn-success">
@@ -267,16 +290,28 @@ const UsuariosPage = () => {
                   <label>Nombre</label>
                   <input
                     type="text"
+                    required
                     value={formData.nombre}
                     onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
                   />
                 </div>
                 <div className="form-group">
-                  <label>Email</label>
+                  <label>Usuario o Email</label>
                   <input
                     type="text"
+                    required
                     value={formData.email}
                     onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Telefono</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.telefono}
+                    onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
+                    placeholder="+51 999 999 999"
                   />
                 </div>
                 <div className="form-group">
@@ -328,6 +363,7 @@ const UsuariosPage = () => {
                     type="text"
                     name="nuevo-nombre"
                     autoComplete="off"
+                    required
                     value={nuevoUsuario.nombre}
                     onChange={(e) =>
                       setNuevoUsuario({ ...nuevoUsuario, nombre: e.target.value })
@@ -335,17 +371,31 @@ const UsuariosPage = () => {
                   />
                 </div>
                 <div className="form-group">
-                  <label>Email *</label>
+                  <label>Usuario o Email *</label>
                   <input
-                    type="email"
-                    name="nuevo-email"
-                    autoComplete="email"
+                    type="text"
+                    name="nuevo-identificador"
+                    autoComplete="off"
                     required
                     value={nuevoUsuario.email}
                     onChange={(e) =>
                       setNuevoUsuario({ ...nuevoUsuario, email: e.target.value.trim() })
                     }
-                    placeholder="usuario@dominio.com"
+                    placeholder="usuario o usuario@dominio.com"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Telefono *</label>
+                  <input
+                    type="text"
+                    name="nuevo-telefono"
+                    autoComplete="off"
+                    required
+                    value={nuevoUsuario.telefono}
+                    onChange={(e) =>
+                      setNuevoUsuario({ ...nuevoUsuario, telefono: e.target.value })
+                    }
+                    placeholder="+51 999 999 999"
                   />
                 </div>
                 <div className="form-group">
@@ -354,6 +404,7 @@ const UsuariosPage = () => {
                     type="password"
                     name="nuevo-contrasena"
                     autoComplete="new-password"
+                    required
                     value={nuevoUsuario.contrasena}
                     onChange={(e) =>
                       setNuevoUsuario({ ...nuevoUsuario, contrasena: e.target.value })

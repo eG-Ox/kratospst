@@ -76,9 +76,4 @@ router.get('/tipos_por_almacen', autenticar, async (req, res) => {
   }
 });
 
-// Ruta de prueba
-router.get('/test', (req, res) => {
-  res.json({ mensaje: 'Servidor funcionando correctamente' });
-});
-
 module.exports = router;

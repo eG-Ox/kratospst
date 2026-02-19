@@ -32,6 +32,49 @@ const permisosBase = [
 ];
 
 const rolesBase = ['admin', 'ventas', 'logistica'];
+const permisosPorRolDefault = {
+  admin: new Set(permisosBase.map((permiso) => permiso.clave)),
+  ventas: new Set([
+    'productos.ver',
+    'tipos_maquinas.ver',
+    'marcas.ver',
+    'movimientos.ver',
+    'inventario_general.ver',
+    'kits.ver',
+    'kits.editar',
+    'cotizaciones.ver',
+    'cotizaciones.editar',
+    'cotizaciones.historial.ver',
+    'clientes.ver',
+    'clientes.editar',
+    'ventas.ver',
+    'ventas.editar',
+    'picking.ver'
+  ]),
+  logistica: new Set([
+    'productos.ver',
+    'productos.editar',
+    'productos.precio_compra.ver',
+    'tipos_maquinas.ver',
+    'tipos_maquinas.editar',
+    'marcas.ver',
+    'marcas.editar',
+    'movimientos.ver',
+    'movimientos.registrar',
+    'historial.ver',
+    'inventario_general.ver',
+    'inventario_general.editar',
+    'inventario_general.aplicar',
+    'ventas.ver',
+    'picking.ver',
+    'picking.editar'
+  ])
+};
+const permitidoPorDefecto = (rolNombre, clave) => {
+  const permisosRol = permisosPorRolDefault[rolNombre];
+  if (!permisosRol) return false;
+  return permisosRol.has(clave);
+};
 
 const releaseConnection = (connection) => {
   if (!connection) return;
@@ -68,14 +111,15 @@ const asegurarPermisos = async (connection) => {
       );
     }
 
-    const [rolesRows] = await connection.execute('SELECT id FROM roles');
-    const [permisosRows] = await connection.execute('SELECT id FROM permisos');
+    const [rolesRows] = await connection.execute('SELECT id, nombre FROM roles');
+    const [permisosRows] = await connection.execute('SELECT id, clave FROM permisos');
 
     for (const rol of rolesRows) {
       for (const permiso of permisosRows) {
+        const permitido = permitidoPorDefecto(rol.nombre, permiso.clave);
         await connection.execute(
-          'INSERT IGNORE INTO rol_permisos (rol_id, permiso_id, permitido) VALUES (?, ?, TRUE)',
-          [rol.id, permiso.id]
+          'INSERT IGNORE INTO rol_permisos (rol_id, permiso_id, permitido) VALUES (?, ?, ?)',
+          [rol.id, permiso.id, permitido ? 1 : 0]
         );
       }
     }
@@ -90,26 +134,28 @@ const asegurarPermisos = async (connection) => {
 };
 
 exports.listarRoles = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     await asegurarPermisos(connection);
     const [rows] = await connection.execute('SELECT id, nombre FROM roles ORDER BY nombre');
-    connection.release();
     res.json(rows);
   } catch (error) {
     console.error('Error listando roles:', error);
     res.status(500).json({ error: 'Error al obtener roles' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
 exports.obtenerPermisosRol = async (req, res) => {
   const { rol } = req.params;
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     await asegurarPermisos(connection);
     const [roles] = await connection.execute('SELECT id FROM roles WHERE nombre = ?', [rol]);
     if (!roles.length) {
-      connection.release();
       return res.status(404).json({ error: 'Rol no encontrado' });
     }
     const rolId = roles[0].id;
@@ -118,14 +164,15 @@ exports.obtenerPermisosRol = async (req, res) => {
        FROM permisos p
        LEFT JOIN rol_permisos rp
          ON rp.permiso_id = p.id AND rp.rol_id = ?
-       ORDER BY p.grupo, p.clave`,
+        ORDER BY p.grupo, p.clave`,
       [rolId]
     );
-    connection.release();
     res.json(rows);
   } catch (error) {
     console.error('Error obteniendo permisos:', error);
     res.status(500).json({ error: 'Error al obtener permisos' });
+  } finally {
+    releaseConnection(connection);
   }
 };
 
@@ -172,14 +219,14 @@ exports.actualizarPermisosRol = async (req, res) => {
 };
 
 exports.obtenerMisPermisos = async (req, res) => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     await asegurarPermisos(connection);
     const [roles] = await connection.execute('SELECT id FROM roles WHERE nombre = ?', [
       req.usuario.rol
     ]);
     if (!roles.length) {
-      connection.release();
       return res.json([]);
     }
     const [rows] = await connection.execute(
@@ -189,10 +236,11 @@ exports.obtenerMisPermisos = async (req, res) => {
        WHERE rp.rol_id = ? AND rp.permitido = TRUE`,
       [roles[0].id]
     );
-    connection.release();
     res.json(rows.map((row) => row.clave));
   } catch (error) {
     console.error('Error obteniendo permisos propios:', error);
     res.status(500).json({ error: 'Error al obtener permisos' });
+  } finally {
+    releaseConnection(connection);
   }
 };

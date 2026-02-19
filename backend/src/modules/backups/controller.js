@@ -4,7 +4,11 @@ const { ejecutarBackup, getBackupDir } = require('./service');
 exports.backupManual = async (req, res) => {
   try {
     const result = await ejecutarBackup();
-    res.json({ ok: true, archivo: result.filename });
+    res.json({
+      ok: true,
+      archivo: result.filename,
+      backups_eliminados: result.removedCount || 0
+    });
   } catch (error) {
     console.error('Error creando backup manual:', error);
     res.status(500).json({ error: 'Error al crear backup' });

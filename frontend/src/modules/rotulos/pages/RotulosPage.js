@@ -98,8 +98,8 @@ const RotulosPage = () => {
         <body>
           <button class="print-btn" onclick="window.print()">Imprimir</button>
           <div class="sheet">
-            <div class="watermark"><img src="/static/img/KRATOS_LOGO.PNG" alt="" /></div>
-            <img src="/static/img/KRATOS_LOGO.PNG" class="logo" alt="Kratos" />
+            <div class="watermark"><img src="/static/img/KRATOS_LOGO.png" alt="" /></div>
+            <img src="/static/img/KRATOS_LOGO.png" class="logo" alt="Kratos" />
             <div class="content" id="rotuloContent">
               <div class="header">
                 <div class="dni" data-base="22">DNI ${escapeHtml(dniVal)}</div>

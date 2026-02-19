@@ -44,9 +44,9 @@ export const tiposMaquinasService = {
 
 // Servicios para Máquinas
 export const maquinasService = {
-  getAll: () => api.get('/maquinas'),
-  getById: (id) => api.get(`/maquinas/${id}`),
-  getByCodigo: (codigo) => api.get(`/maquinas?codigo=${codigo}`),
+  getAll: () => api.get('/productos'),
+  getById: (id) => api.get(`/productos/${id}`),
+  getByCodigo: (codigo) => api.get(`/productos/codigo/${encodeURIComponent(codigo)}`),
   create: (data) => {
     const formData = new FormData();
     Object.keys(data).forEach((key) => {
@@ -54,7 +54,7 @@ export const maquinasService = {
         formData.append(key, data[key]);
       }
     });
-    return api.post('/maquinas', formData, {
+    return api.post('/productos', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
@@ -65,13 +65,13 @@ export const maquinasService = {
         formData.append(key, data[key]);
       }
     });
-    return api.put(`/maquinas/${id}`, formData, {
+    return api.put(`/productos/${id}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  delete: (id) => api.delete(`/maquinas/${id}`),
-  descargarFichaTecnica: (filename) => 
-    api.get(`/maquinas/descargar/${filename}`, { responseType: 'blob' }),
+  delete: (id) => api.delete(`/productos/${id}`),
+  descargarFichaTecnica: (filename) =>
+    api.get(`/productos/descargar/${encodeURIComponent(filename)}`, { responseType: 'blob' }),
 };
 
 // Servicios para Movimientos (Ingresos/Salidas)

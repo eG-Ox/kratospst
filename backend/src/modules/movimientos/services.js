@@ -5,7 +5,7 @@ exports.registrarMovimientoService = async (maquina_id, usuario_id, tipo, cantid
   const connection = await pool.getConnection();
   try {
     const [maquinas] = await connection.execute(
-      'SELECT stock FROM maquinas WHERE id = ?',
+      'SELECT stock FROM maquinas WHERE id = ? AND activo = TRUE',
       [maquina_id]
     );
 

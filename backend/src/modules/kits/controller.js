@@ -242,6 +242,7 @@ exports.editarKit = async (req, res) => {
       [id, req.usuario.id]
     );
     if (!existing.length) {
+      await connection.rollback();
       connection.release();
       return res.status(404).json({ error: 'Kit no encontrado' });
     }
@@ -309,13 +310,20 @@ exports.eliminarKit = async (req, res) => {
       'SELECT * FROM kits WHERE id = ? AND usuario_id = ?',
       [id, req.usuario.id]
     );
+    if (!prevKit.length) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Kit no encontrado' });
+    }
     const [prevItems] = await connection.execute(
       `SELECT producto_id, cantidad, precio_unitario, precio_final, subtotal, almacen_origen
        FROM kit_productos WHERE kit_id = ?`,
       [id]
     );
     await connection.execute('DELETE FROM kit_productos WHERE kit_id = ?', [id]);
-    const [result] = await connection.execute('DELETE FROM kits WHERE id = ?', [id]);
+    const [result] = await connection.execute(
+      'DELETE FROM kits WHERE id = ? AND usuario_id = ?',
+      [id, req.usuario.id]
+    );
     await registrarHistorial(connection, {
       entidad: 'kits',
       entidad_id: id,
@@ -327,10 +335,6 @@ exports.eliminarKit = async (req, res) => {
     });
     await connection.commit();
     connection.release();
-
-    if (!result.affectedRows) {
-      return res.status(404).json({ error: 'Kit no encontrado' });
-    }
 
     res.json({ mensaje: 'Kit eliminado' });
   } catch (error) {

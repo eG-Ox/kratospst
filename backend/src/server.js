@@ -62,6 +62,11 @@ app.use(express.urlencoded({ extended: true }));
 const loginLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    const identificador = String(req.body?.email || '').trim().toLowerCase() || 'anon';
+    return `${req.ip}:${identificador}`;
+  },
   standardHeaders: true,
   legacyHeaders: false
 });

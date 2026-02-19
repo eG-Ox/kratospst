@@ -116,8 +116,8 @@ const useVentaImpresion = ({
         <body>
           <button class="print-btn" onclick="window.print()">Imprimir</button>
           <div class="sheet">
-            <div class="watermark"><img src="/static/img/KRATOS_LOGO.PNG" alt="" /></div>
-            <img src="/static/img/KRATOS_LOGO.PNG" class="logo" alt="Kratos" />
+            <div class="watermark"><img src="/static/img/KRATOS_LOGO.png" alt="" /></div>
+            <img src="/static/img/KRATOS_LOGO.png" class="logo" alt="Kratos" />
             <div class="content" id="rotuloContent">
               <div class="header">
                 <div class="dni" data-base="22">${documentoTipo} ${documento}</div>
@@ -288,7 +288,7 @@ const useVentaImpresion = ({
           return `
             <section class="sheet">
               <div class="sheet-header">
-                <img src="/static/img/KRATOS_LOGO.PNG" alt="Kratos" class="logo" />
+                <img src="/static/img/KRATOS_LOGO.png" alt="Kratos" class="logo" />
                 <div>
                   <h2>Hoja de requerimiento</h2>
                   <div class="subtitle">Fecha: ${escapeHtml(fechaHoja)}</div>

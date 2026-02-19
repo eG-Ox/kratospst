@@ -51,8 +51,19 @@ const formatDateTime = (dateValue) => {
 
 const padCorrelativo = (value) => String(value || 0);
 
-const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, descuento, total, baseUrl }) => {
-  const staticBase = `${baseUrl}/static`;
+const buildStaticBase = () => {
+  const rawBase = String(process.env.PUBLIC_BASE_URL || process.env.PUBLIC_BASE_PATH || '').trim();
+  if (!rawBase) {
+    return '/static';
+  }
+  if (/^https?:\/\//i.test(rawBase)) {
+    return `${rawBase.replace(/\/+$/, '')}/static`;
+  }
+  const normalizedPath = `/${rawBase.replace(/^\/+|\/+$/g, '')}`;
+  return `${normalizedPath}/static`;
+};
+
+const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, descuento, total, staticBase }) => {
   const logosBase = `${staticBase}/img/LOGOS%20PDF`;
   const clienteNombre = venta.cliente_nombre || '';
   const clienteApellido = venta.cliente_apellido || '';
@@ -62,8 +73,11 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
   const notas = venta.nota || '';
   const fecha = formatDate(venta.fecha);
   const fechaCompleta = formatDateTime(venta.fecha);
-  const documentType = (venta.tipo || 'VENTA').toUpperCase();
+  const documentType = esCotizacion ? 'COTIZACION' : (venta.tipo || 'VENTA').toUpperCase();
   const correlativo = padCorrelativo(venta.correlativo);
+  const numeroCotizacion = `${venta.serie || 'COT'}-${correlativo}`;
+  const nombreDocumento = (clienteDisplay || 'CLIENTE').trim() || 'CLIENTE';
+  const baseFilename = `${numeroCotizacion} ${nombreDocumento}`;
 
   const rowsHtml = detalles
     .map((item) => {
@@ -118,17 +132,17 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${documentType} #${venta.id || 'N/A'} - KRATOS MAQUINARIAS</title>
   <style>
-    @page { size: A4; margin: 6mm 8mm; }
+    @page { size: A4; margin: 2mm; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; line-height: 1.1; color: #1f2937; background: #fff; font-size: 0.7rem; }
+    body { font-family: Arial, sans-serif; line-height: 1.08; color: #1f2937; background: #fff; font-size: 0.68rem; }
     .control-buttons { position: fixed; top: 15px; right: 15px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
     .pdf-download-btn, .brand-toggle-btn, .pdf-print-btn { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; box-shadow: 0 3px 8px rgba(15, 23, 42, 0.25); font-size: 0.7rem; }
     .brand-toggle-btn.active { background: linear-gradient(135deg, #064e3b 0%, #065f46 100%); }
-    .invoice-container { width: 100%; max-width: 210mm; margin: auto; padding: 2px; background: white; min-height: 280mm; max-height: 290mm; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+    .invoice-container { width: 206mm; max-width: 206mm; margin: 0 auto; padding: 1.5mm; background: white; min-height: 293mm; display: flex; flex-direction: column; position: relative; overflow: visible; }
     .watermark-logo { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); opacity: 0.05; z-index: 1; width: 400%; height: 250px; background-image: url('${staticBase}/img/KRATOS_LOGO.png'); background-size: contain; background-repeat: no-repeat; background-position: center; pointer-events: none; max-width: 100%; max-height: 100%; }
     .brands-logos-only { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; padding: 0 2px; }
     .brand-logo-color { height: 12px; object-fit: contain; }
-    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 2px solid #0f172a; background: white; position: relative; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 5px; padding-bottom: 5px; border-bottom: 2px solid #0f172a; background: white; position: relative; }
     .company-info { max-width: 58%; }
     .company-logo { width: 75px; margin-bottom: 4px; }
     .company-name { font-size: 0.85rem; font-weight: 700; margin-bottom: 3px; color: #000; }
@@ -139,25 +153,25 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
     .document-type { font-size: 0.8rem; font-weight: 700; }
     .document-number { font-size: 0.75rem; margin-top: 2px; font-weight: 700; }
     .document-date { font-size: 0.65rem; margin-top: 2px; font-weight: 600; }
-    .info-section { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 6px; padding: 6px; background: #f8fafc; font-size: 0.6rem; position: relative; }
+    .info-section { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 5px; padding: 5px; background: #f8fafc; font-size: 0.58rem; position: relative; }
     .info-column h3 { font-size: 0.65rem; margin-bottom: 3px; border-bottom: 1.5px solid #1e3a8a; padding-bottom: 1px; color: #000; font-weight: 700; text-transform: uppercase; }
     .info-row { display: flex; margin-bottom: 2px; align-items: center; }
     .info-label { min-width: 70px; font-weight: 700; color: #000; }
     .info-value { flex: 1; color: #000; font-weight: 500; }
-    .products-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 0.6rem; border-radius: 4px; overflow: hidden; border: 2px solid #0f172a; background: white; position: relative; }
-    .products-table th { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white !important; padding: 6px 4px; text-align: left; font-weight: 700; text-transform: uppercase; border-bottom: 2px solid #0f172a; font-size: 0.55rem; }
-    .products-table td { padding: 4px; border-bottom: 1px solid #e5e7eb; background: white; color: #000; font-weight: 500; vertical-align: top; }
+    .products-table { width: 100%; border-collapse: collapse; margin-bottom: 6px; font-size: 0.58rem; border-radius: 4px; overflow: hidden; border: 2px solid #0f172a; background: white; position: relative; }
+    .products-table th { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white !important; padding: 5px 3px; text-align: left; font-weight: 700; text-transform: uppercase; border-bottom: 2px solid #0f172a; font-size: 0.52rem; }
+    .products-table td { padding: 3px; border-bottom: 1px solid #e5e7eb; background: white; color: #000; font-weight: 500; vertical-align: top; }
     .products-table tr:nth-child(even) td { background: #f9fafb; }
     .products-table td:last-child, .products-table th:last-child { text-align: right; font-weight: 700; color: #000; }
     .products-table td:nth-child(4), .products-table th:nth-child(4) { text-align: center; }
     .products-table.hide-brand th:nth-child(3), .products-table.hide-brand td:nth-child(3) { display: none; }
     .products-table.hide-brand th:nth-child(2), .products-table.hide-brand td:nth-child(2) { width: 60%; }
-    .observations-section { margin-bottom: 8px; padding: 6px; background: white; color: #000; border-radius: 4px; font-size: 0.65rem; border: 1.5px solid #0f172a; position: relative; }
+    .observations-section { margin-bottom: 6px; padding: 5px; background: white; color: #000; border-radius: 4px; font-size: 0.62rem; border: 1.5px solid #0f172a; position: relative; }
     .observations-title { font-weight: 700; margin-bottom: 4px; text-transform: uppercase; color: #000; font-size: 0.6rem; }
     .observations-content { line-height: 1.2; font-weight: 500; color: #000; }
     .bottom-section { margin-top: auto; }
-    .notes-full-width { width: 100%; margin-bottom: 12px; }
-    .payment-summary-section { display: grid; grid-template-columns: 1fr 200px; gap: 10px; }
+    .notes-full-width { width: 100%; margin-bottom: 8px; }
+    .payment-summary-section { display: grid; grid-template-columns: 1fr 200px; gap: 8px; }
     .payment-info { background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 1.5px solid #0f172a; border-radius: 4px; padding: 6px; font-size: 0.6rem; position: relative; height: fit-content; }
     .payment-title { font-weight: 700; margin-bottom: 6px; border-bottom: 1.5px solid #1e3a8a; padding-bottom: 2px; color: #000; text-transform: uppercase; font-size: 0.6rem; }
     .banks-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 3px; }
@@ -177,14 +191,14 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
     .summary-table td:last-child { text-align: right; font-weight: 700; color: #000; }
     .summary-total { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white !important; font-weight: 700; font-size: 0.8rem; }
     .summary-total td { color: white !important; border-bottom: none; padding: 8px; }
-    .footer { text-align: center; font-size: 0.65rem; color: #333; border-top: 2px solid #1e3a8a; margin-top: 12px; padding-top: 8px; background: white; position: relative; }
+    .footer { text-align: center; font-size: 0.62rem; color: #333; border-top: 2px solid #1e3a8a; margin-top: 8px; padding-top: 5px; background: white; position: relative; }
     .footer p:first-child { font-weight: 700; color: #000; margin-bottom: 3px; }
     @media screen {
-      body { background: #e5e7eb; display: flex; justify-content: center; padding: 10mm; }
-      .invoice-container { width: 210mm; max-width: 210mm; min-height: 297mm; max-height: none; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12); }
+      body { background: #e5e7eb; display: flex; justify-content: center; padding: 8mm; }
+      .invoice-container { width: 206mm; max-width: 206mm; min-height: 293mm; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12); }
     }
     @media print {
-      body { font-size: 0.7rem; }
+      body { font-size: 0.68rem; }
       .invoice-container { box-shadow: none; padding: 0; max-width: none; margin: 0; }
       .control-buttons { display: none !important; }
       .watermark-logo { opacity: 0.06 !important; }
@@ -195,7 +209,7 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
       .observations-section { background: white !important; color: #1e40af !important; border-color: #0f172a !important; }
       .observations-title { color: #1e3a8a !important; }
       .observations-content { color: #1e40af !important; }
-      .footer { page-break-after: always; }
+      .footer { page-break-after: auto; break-after: auto; }
     }
     .header, .info-section, .products-table, .observations-section, .payment-info, .summary-section, .footer { background: white; position: relative; }
   </style>
@@ -321,7 +335,102 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
   </div>
 </div>
 
+<script src="${staticBase}/js/html2pdf.bundle.min.js"></script>
 <script>
+  const BASE_FILENAME = ${JSON.stringify(baseFilename)};
+  const A4_HEIGHT_MM = 297;
+  const PRINT_MARGIN_MM = 2;
+  const MIN_FIT_SCALE = 0.35;
+
+  function sanitizeFilename(value) {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\\u0300-\\u036f]/g, '')
+      .replace(/[<>:"/\\\\|?*\\x00-\\x1F]/g, '')
+      .replace(/\\s+/g, ' ')
+      .trim();
+  }
+
+  function buildPdfFilename() {
+    const cleaned = sanitizeFilename(BASE_FILENAME);
+    return (cleaned || 'COTIZACION') + '.pdf';
+  }
+
+  function mmToPx(mm) {
+    return (Number(mm) * 96) / 25.4;
+  }
+
+  function getPrintableHeightPx() {
+    return mmToPx(A4_HEIGHT_MM - PRINT_MARGIN_MM * 2);
+  }
+
+  function resetInvoiceScale(invoiceContent) {
+    if (!invoiceContent) return;
+    invoiceContent.style.transform = '';
+    invoiceContent.style.transformOrigin = '';
+    invoiceContent.style.width = '';
+  }
+
+  function fitInvoiceToSingleA4() {
+    const invoiceContent = document.getElementById('invoice-content');
+    if (!invoiceContent) {
+      return () => {};
+    }
+
+    resetInvoiceScale(invoiceContent);
+    const maxHeightPx = getPrintableHeightPx();
+    const naturalHeight = invoiceContent.scrollHeight;
+
+    if (!Number.isFinite(naturalHeight) || naturalHeight <= 0 || naturalHeight <= maxHeightPx) {
+      return () => resetInvoiceScale(invoiceContent);
+    }
+
+    let scale = maxHeightPx / naturalHeight;
+    scale = Math.max(MIN_FIT_SCALE, Math.min(scale, 1));
+    invoiceContent.style.transformOrigin = 'top left';
+    invoiceContent.style.transform = 'scale(' + scale + ')';
+    invoiceContent.style.width = (100 / scale) + '%';
+
+    const scaledHeight = invoiceContent.getBoundingClientRect().height;
+    if (scaledHeight > maxHeightPx) {
+      const correction = maxHeightPx / scaledHeight;
+      scale = Math.max(MIN_FIT_SCALE, Math.min(scale * correction, 1));
+      invoiceContent.style.transform = 'scale(' + scale + ')';
+      invoiceContent.style.width = (100 / scale) + '%';
+    }
+
+    return () => resetInvoiceScale(invoiceContent);
+  }
+
+  function waitForMediaReady() {
+    const images = Array.from(document.images || []).filter((img) => !img.complete);
+    if (!images.length) {
+      return Promise.resolve();
+    }
+    return Promise.all(
+      images.map(
+        (img) =>
+          new Promise((resolve) => {
+            img.addEventListener('load', resolve, { once: true });
+            img.addEventListener('error', resolve, { once: true });
+          })
+      )
+    ).then(() => undefined);
+  }
+
+  function setControlButtonsVisible(visible) {
+    const controlButtons = document.querySelector('.control-buttons');
+    if (controlButtons) {
+      controlButtons.style.display = visible ? '' : 'none';
+    }
+  }
+
+  function setButtonBusy(button, busyText, idleText, isBusy) {
+    if (!button) return;
+    button.textContent = isBusy ? busyText : idleText;
+    button.disabled = isBusy;
+  }
+
   function toggleBrandColumn() {
     const table = document.getElementById('productsTable');
     const button = document.querySelector('.brand-toggle-btn');
@@ -336,32 +445,71 @@ const buildHtmlCotizacion = ({ venta, detalles, esCotizacion, subtotalRegular, d
     }
   }
 
-  function downloadPDF() {
-    // Sin dependencias externas: usar impresion nativa para guardar PDF.
-    printPDF();
+  async function downloadPDF() {
+    const downloadButton = document.querySelector('.pdf-download-btn');
+    const invoiceContent = document.getElementById('invoice-content');
+    const filename = buildPdfFilename();
+    if (!invoiceContent) {
+      console.error('No se encontro el contenido de cotizacion para exportar.');
+      return;
+    }
+
+    setButtonBusy(downloadButton, 'Generando PDF...', 'Guardar como PDF', true);
+    setControlButtonsVisible(false);
+    let restoreFitScale = () => {};
+    try {
+      if (!window.html2pdf) {
+        throw new Error('html2pdf no disponible');
+      }
+
+      await waitForMediaReady();
+      restoreFitScale = fitInvoiceToSingleA4();
+
+      await window
+        .html2pdf()
+        .set({
+          margin: [0, 0, 0, 0],
+          filename,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { scale: 1.8, useCORS: true, logging: false },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+        })
+        .from(invoiceContent)
+        .save();
+    } catch (error) {
+      console.error('No se pudo descargar PDF directo:', error);
+    } finally {
+      restoreFitScale();
+      setControlButtonsVisible(true);
+      setButtonBusy(downloadButton, 'Generando PDF...', 'Guardar como PDF', false);
+    }
   }
 
-  function printPDF() {
+  async function printPDF(preferredFilename) {
     const button = document.querySelector('.pdf-print-btn');
-    const controlButtons = document.querySelector('.control-buttons');
-    if (button) {
-      button.textContent = 'Imprimiendo...';
-      button.disabled = true;
-    }
-    if (controlButtons) {
-      controlButtons.style.display = 'none';
-    }
+    const prevTitle = document.title;
+    const filename = preferredFilename || buildPdfFilename();
+    let restoreFitScale = () => {};
+
+    setButtonBusy(button, 'Imprimiendo...', 'Imprimir', true);
+    setControlButtonsVisible(false);
+    await waitForMediaReady();
+    restoreFitScale = fitInvoiceToSingleA4();
+    document.title = String(filename || '').replace(/[.]pdf$/i, '') || prevTitle;
+
+    let restored = false;
     const restore = () => {
-      if (controlButtons) {
-        controlButtons.style.display = '';
-      }
-      if (button) {
-        button.textContent = 'Imprimir';
-        button.disabled = false;
-      }
+      if (restored) return;
+      restored = true;
+      restoreFitScale();
+      setControlButtonsVisible(true);
+      setButtonBusy(button, 'Imprimiendo...', 'Imprimir', false);
+      document.title = prevTitle;
       window.removeEventListener('afterprint', restore);
     };
     window.addEventListener('afterprint', restore);
+    setTimeout(restore, 2000);
     setTimeout(() => window.print(), 50);
   }
 </script>
@@ -383,6 +531,39 @@ const getNextSerieCorrelativo = async (connection, serie) => {
 const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const isVentasOwnerScoped = (req) =>
+  req.usuario?.rol === 'ventas' && Number.isInteger(Number(req.usuario?.id));
+const getScopedUserId = (req) => {
+  const parsed = Number(req.usuario?.id);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+const isAdminUser = (req) => req.usuario?.rol === 'admin';
+const buildClientesFormularioQuery = (req) => {
+  if (isAdminUser(req)) {
+    return {
+      query: `SELECT id, tipo_cliente, dni, ruc, nombre, apellido, razon_social
+              FROM clientes ORDER BY id DESC`,
+      params: []
+    };
+  }
+  const scopedUserId = getScopedUserId(req);
+  if (!scopedUserId) {
+    return {
+      query: `SELECT id, tipo_cliente, dni, ruc, nombre, apellido, razon_social
+              FROM clientes WHERE 1 = 0`,
+      params: []
+    };
+  }
+  return {
+    query: `SELECT DISTINCT c.id, c.tipo_cliente, c.dni, c.ruc, c.nombre, c.apellido, c.razon_social
+            FROM clientes c
+            LEFT JOIN clientes_usuarios cu ON cu.cliente_id = c.id
+            WHERE (c.usuario_id = ? OR cu.usuario_id = ?)
+            ORDER BY c.id DESC`,
+    params: [scopedUserId, scopedUserId]
+  };
 };
 
 const crearCotizacionCabeceraConRetry = async (connection, payload) => {
@@ -472,17 +653,20 @@ exports.formularioCotizaciones = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const [clientes] = await connection.execute(
-      `SELECT id, tipo_cliente, dni, ruc, nombre, apellido, razon_social
-       FROM clientes ORDER BY id DESC`
-    );
+    const clientesQuery = buildClientesFormularioQuery(req);
+    const [clientes] = await connection.execute(clientesQuery.query, clientesQuery.params);
     const [tipos] = await connection.execute(
       'SELECT id, nombre FROM tipos_maquinas ORDER BY nombre'
     );
+    const ultimasScope = isVentasOwnerScoped(req) ? 'WHERE usuario_id = ?' : '';
+    const ultimasParams = isVentasOwnerScoped(req) ? [Number(req.usuario.id)] : [];
     const [ultimas] = await connection.execute(
       `SELECT id, fecha, total, descuento, serie, correlativo
-       FROM cotizaciones
-       ORDER BY id DESC LIMIT 10`
+        FROM cotizaciones
+       ${ultimasScope}
+        ORDER BY id DESC LIMIT 10`
+      ,
+      ultimasParams
     );
 
     res.json({ clientes, tipos, ultimas });
@@ -515,6 +699,10 @@ exports.listarCotizaciones = async (req, res) => {
     if (usuario_id) {
       query += ' AND c.usuario_id = ?';
       params.push(usuario_id);
+    }
+    if (isVentasOwnerScoped(req)) {
+      query += ' AND c.usuario_id = ?';
+      params.push(Number(req.usuario.id));
     }
     if (fecha_inicio) {
       query += ' AND c.fecha >= ?';
@@ -579,6 +767,10 @@ exports.listarHistorialCotizaciones = async (req, res) => {
       query += ' AND h.usuario_id = ?';
       params.push(usuario_id);
     }
+    if (isVentasOwnerScoped(req)) {
+      query += ' AND c.usuario_id = ?';
+      params.push(Number(req.usuario.id));
+    }
     if (fecha_inicio) {
       query += ' AND h.created_at >= ?';
       params.push(fecha_inicio);
@@ -603,10 +795,13 @@ exports.obtenerCotizacion = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const [cotizaciones] = await connection.execute(
-      'SELECT * FROM cotizaciones WHERE id = ?',
-      [req.params.id]
-    );
+    let cotizacionQuery = 'SELECT * FROM cotizaciones WHERE id = ?';
+    const cotizacionParams = [req.params.id];
+    if (isVentasOwnerScoped(req)) {
+      cotizacionQuery += ' AND usuario_id = ?';
+      cotizacionParams.push(Number(req.usuario.id));
+    }
+    const [cotizaciones] = await connection.execute(cotizacionQuery, cotizacionParams);
     if (!cotizaciones.length) {
       return res.status(404).json({ error: 'Cotizacion no encontrada' });
     }
@@ -632,6 +827,10 @@ exports.crearCotizacion = async (req, res) => {
 
   if (!items.length) {
     return res.status(400).json({ error: 'Debe agregar productos a la cotizacion' });
+  }
+  const validacionError = validarItemsCotizacion(items);
+  if (validacionError) {
+    return res.status(400).json({ error: validacionError });
   }
 
   let connection;
@@ -703,13 +902,21 @@ exports.editarCotizacion = async (req, res) => {
   if (!items.length) {
     return res.status(400).json({ error: 'Debe agregar productos a la cotizacion' });
   }
+  const validacionError = validarItemsCotizacion(items);
+  if (validacionError) {
+    return res.status(400).json({ error: validacionError });
+  }
 
   let connection;
   try {
     connection = await pool.getConnection();
-    const [prevCot] = await connection.execute('SELECT * FROM cotizaciones WHERE id = ?', [
-      req.params.id
-    ]);
+    let prevCotQuery = 'SELECT * FROM cotizaciones WHERE id = ?';
+    const prevCotParams = [req.params.id];
+    if (isVentasOwnerScoped(req)) {
+      prevCotQuery += ' AND usuario_id = ?';
+      prevCotParams.push(Number(req.usuario.id));
+    }
+    const [prevCot] = await connection.execute(prevCotQuery, prevCotParams);
     if (!prevCot.length) {
       return res.status(404).json({ error: 'Cotizacion no encontrada' });
     }
@@ -778,8 +985,7 @@ exports.verCotizacion = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const [ventas] = await connection.execute(
-      `SELECT v.*, c.tipo_cliente, c.dni as cliente_dni, c.ruc as cliente_ruc,
+    let ventaQuery = `SELECT v.*, c.tipo_cliente, c.dni as cliente_dni, c.ruc as cliente_ruc,
         c.nombre as cliente_nombre, c.apellido as cliente_apellido, c.razon_social,
         c.direccion as cliente_direccion, c.telefono as cliente_telefono,
         u.nombre as vendedor_nombre,
@@ -787,9 +993,13 @@ exports.verCotizacion = async (req, res) => {
        FROM cotizaciones v
        LEFT JOIN clientes c ON v.cliente_id = c.id
        LEFT JOIN usuarios u ON v.usuario_id = u.id
-       WHERE v.id = ?`,
-      [req.params.id]
-    );
+       WHERE v.id = ?`;
+    const ventaParams = [req.params.id];
+    if (isVentasOwnerScoped(req)) {
+      ventaQuery += ' AND v.usuario_id = ?';
+      ventaParams.push(Number(req.usuario.id));
+    }
+    const [ventas] = await connection.execute(ventaQuery, ventaParams);
 
     if (!ventas.length) {
       return res.status(404).json({ error: 'Cotizacion no encontrada' });
@@ -817,7 +1027,7 @@ exports.verCotizacion = async (req, res) => {
     }, 0);
     const total = Math.max(subtotalRegular - descuento, 0);
 
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const staticBase = buildStaticBase();
     const html = buildHtmlCotizacion({
       venta,
       detalles,
@@ -825,7 +1035,7 @@ exports.verCotizacion = async (req, res) => {
       subtotalRegular,
       descuento,
       total,
-      baseUrl
+      staticBase
     });
     res.send(html);
   } catch (error) {
@@ -840,8 +1050,7 @@ exports.pdfCotizacion = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const [ventas] = await connection.execute(
-      `SELECT v.*, c.tipo_cliente, c.dni as cliente_dni, c.ruc as cliente_ruc,
+    let ventaQuery = `SELECT v.*, c.tipo_cliente, c.dni as cliente_dni, c.ruc as cliente_ruc,
         c.nombre as cliente_nombre, c.apellido as cliente_apellido, c.razon_social,
         c.direccion as cliente_direccion, c.telefono as cliente_telefono,
         u.nombre as vendedor_nombre,
@@ -849,9 +1058,13 @@ exports.pdfCotizacion = async (req, res) => {
        FROM cotizaciones v
        LEFT JOIN clientes c ON v.cliente_id = c.id
        LEFT JOIN usuarios u ON v.usuario_id = u.id
-       WHERE v.id = ?`,
-      [req.params.id]
-    );
+       WHERE v.id = ?`;
+    const ventaParams = [req.params.id];
+    if (isVentasOwnerScoped(req)) {
+      ventaQuery += ' AND v.usuario_id = ?';
+      ventaParams.push(Number(req.usuario.id));
+    }
+    const [ventas] = await connection.execute(ventaQuery, ventaParams);
 
     if (!ventas.length) {
       return res.status(404).json({ error: 'Cotizacion no encontrada' });
@@ -879,7 +1092,7 @@ exports.pdfCotizacion = async (req, res) => {
     }, 0);
     const total = Math.max(subtotalRegular - descuento, 0);
 
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const staticBase = buildStaticBase();
     const html = buildHtmlCotizacion({
       venta,
       detalles,
@@ -887,7 +1100,7 @@ exports.pdfCotizacion = async (req, res) => {
       subtotalRegular,
       descuento,
       total,
-      baseUrl
+      staticBase
     });
     res.send(html);
   } catch (error) {
@@ -978,7 +1191,7 @@ exports.productosCotizacion = async (req, res) => {
   try {
     connection = await pool.getConnection();
     let query = `SELECT id, codigo, descripcion, marca, precio_venta, stock
-      FROM maquinas WHERE 1=1`;
+      FROM maquinas WHERE activo = TRUE`;
     const params = [];
     if (tipo) {
       query += ' AND tipo_maquina_id = ?';
@@ -998,4 +1211,8 @@ exports.productosCotizacion = async (req, res) => {
   } finally {
     releaseConnection(connection);
   }
+};
+
+exports._test = {
+  validarItemsCotizacion
 };

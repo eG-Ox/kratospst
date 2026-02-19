@@ -6,36 +6,68 @@ const RequerimientosPage = () => {
   const [requerimientos, setRequerimientos] = useState([]);
   const [busqueda, setBusqueda] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const cargarPendientes = useCallback(async () => {
     try {
+      setError('');
       setLoading(true);
       const resp = await ventasService.requerimientosPendientes({
-        q: busqueda.trim() || undefined
+        q: busqueda.trim() || undefined,
+        limite: 50
       });
-      setRequerimientos(resp.data || []);
+      const payload = resp?.data;
+      const rows = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.rows)
+          ? payload.rows
+          : Array.isArray(payload?.data)
+            ? payload.data
+            : [];
+
+      const normalizedRows = rows.map((item) => ({
+        id: item?.id ?? null,
+        ventaId: item?.ventaId ?? item?.venta_id ?? '',
+        fechaVenta: item?.fechaVenta ?? item?.fecha_venta ?? '',
+        cliente: item?.cliente ?? item?.cliente_nombre ?? '',
+        codigo: item?.codigo ?? '',
+        descripcion: item?.descripcion ?? '',
+        cantidad: Number(item?.cantidad || 0),
+        proveedor: item?.proveedor ?? '',
+        precioCompra: item?.precioCompra ?? item?.precio_compra ?? '',
+        precioVenta: item?.precioVenta ?? item?.precio_venta ?? ''
+      }));
+
+      setRequerimientos(normalizedRows);
     } catch (err) {
       console.error('Error cargando requerimientos:', err);
+      setRequerimientos([]);
+      setError(err?.response?.data?.error || 'No se pudo cargar requerimientos pendientes.');
     } finally {
       setLoading(false);
     }
   }, [busqueda]);
 
   useEffect(() => {
+    const delay = busqueda.trim() ? 250 : 0;
     const timeout = setTimeout(() => {
       cargarPendientes();
-    }, 250);
+    }, delay);
     return () => clearTimeout(timeout);
-  }, [cargarPendientes]);
+  }, [cargarPendientes, busqueda]);
 
   const actualizarFila = async (id, changes) => {
     try {
+      setError('');
       await ventasService.actualizarRequerimiento(id, changes);
       await cargarPendientes();
     } catch (err) {
       console.error('Error actualizando requerimiento:', err);
+      setError(err?.response?.data?.error || 'No se pudo actualizar el requerimiento.');
     }
   };
+
+  const rows = Array.isArray(requerimientos) ? requerimientos : [];
 
   return (
     <div className="requerimientos-container">
@@ -57,11 +89,13 @@ const RequerimientosPage = () => {
         </div>
       </div>
 
+      {error && <div className="error-message">{error}</div>}
+
       {loading ? (
         <div className="loading">Cargando...</div>
       ) : (
         <div className="table-container">
-          {requerimientos.length === 0 ? (
+          {rows.length === 0 ? (
             <div className="empty-message">No hay requerimientos pendientes.</div>
           ) : (
             <table className="ventas-table compact">
@@ -79,7 +113,7 @@ const RequerimientosPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {requerimientos.map((req) => (
+                {rows.map((req) => (
                   <tr key={req.id}>
                     <td>{req.ventaId}</td>
                     <td>{req.fechaVenta || '-'}</td>
