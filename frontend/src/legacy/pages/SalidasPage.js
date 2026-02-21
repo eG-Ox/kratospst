@@ -23,12 +23,23 @@ const extraerCodigoDesdeTexto = (texto) => {
   return tokens[0] || raw;
 };
 
+const extraerCodigoDesdeTextoComa = (texto) => {
+  const raw = String(texto || '').trim();
+  if (!raw) return '';
+  const tokens = raw
+    .replace(/\r/g, '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return tokens[0] || raw;
+};
+
 const extraerCodigoQR = (texto) => {
   const parsed = parseQRPayload(texto);
   if (parsed.ok && parsed.data?.codigo) {
     return parsed.data.codigo;
   }
-  return extraerCodigoDesdeTexto(texto);
+  return extraerCodigoDesdeTextoComa(texto);
 };
 
 const SalidasPage = ({ usuario }) => {

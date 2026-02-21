@@ -243,7 +243,7 @@ const InventarioGeneralPage = () => {
     }
     const tokens = raw
       .replace(/\r/g, '')
-      .split(/[\n,;/\s]+/g)
+      .split(',')
       .map((item) => item.trim())
       .filter(Boolean);
     const codigo = tokens[0] || raw;
@@ -409,14 +409,15 @@ const InventarioGeneralPage = () => {
   };
 
   const activarCamara = () => {
+    setError('');
+    habilitarAudio();
+    ultimoDetectadoRef.current = 0;
+    ultimoTextoRef.current = '';
+    ultimoTextoAtRef.current = 0;
     if (isNativeScannerAvailable()) {
       window.Android.openQrScanner();
       return;
     }
-    setError('');
-    habilitarAudio();
-    ultimoTextoRef.current = '';
-    ultimoTextoAtRef.current = 0;
     setCameraActive(true);
   };
 
@@ -454,41 +455,38 @@ const InventarioGeneralPage = () => {
       (result) => {
         if (result && scanActivoRef.current) {
           const ahora = Date.now();
-          if (ahora - ultimoDetectadoRef.current > 700) {
-            ultimoDetectadoRef.current = ahora;
-            const value = result.getText();
+          if (ahora - ultimoDetectadoRef.current < 220) {
+            return;
+          }
+          ultimoDetectadoRef.current = ahora;
+          const value = result.getText();
+          if (scanMode === 'zona') {
             const ahoraTexto = Date.now();
             if (value === ultimoTextoRef.current && ahoraTexto - ultimoTextoAtRef.current < 1200) {
               return;
             }
             ultimoTextoRef.current = value;
             ultimoTextoAtRef.current = ahoraTexto;
-            if (scanMode === 'zona') {
-              const zonaParsed = parsearZonaQR(value);
-              if (zonaParsed.error) {
-                setError(zonaParsed.error);
-                return;
-              }
-              setZonaLetra(zonaParsed.letra);
-              setZonaNumero(String(zonaParsed.numero));
-              setFaseConteo('scan');
-              setSuccess(`Zona activa: ${zonaParsed.letra}${zonaParsed.numero}`);
-              setTimeout(() => setSuccess(''), 1200);
-            } else {
-              const parsed = parsearQR(value);
-              if (!parsed) {
-                return;
-              }
-              if (parsed?.codigo) {
-                setCodigo(parsed.codigo);
-                agregarCodigo(parsed.codigo);
-              } else {
-                setCodigo(value);
-                agregarCodigo(value);
-              }
+            const zonaParsed = parsearZonaQR(value);
+            if (zonaParsed.error) {
+              setError(zonaParsed.error);
+              return;
             }
-            detenerCamara();
+            setZonaLetra(zonaParsed.letra);
+            setZonaNumero(String(zonaParsed.numero));
+            setFaseConteo('scan');
+            setSuccess(`Zona activa: ${zonaParsed.letra}${zonaParsed.numero}`);
+            setTimeout(() => setSuccess(''), 1200);
+          } else {
+            const parsed = parsearQR(value);
+            if (!parsed) {
+              return;
+            }
+            const code = parsed?.codigo ? parsed.codigo : value;
+            setCodigo(code);
+            agregarCodigo(code);
           }
+          detenerCamara();
         }
       }
     );
@@ -573,35 +571,35 @@ const InventarioGeneralPage = () => {
     const handler = (value) => {
       if (!value) return;
       const ahora = Date.now();
-      if (ahora - ultimoDetectadoRef.current > 1200) {
-        ultimoDetectadoRef.current = ahora;
-        const nowText = Date.now();
-        if (value === ultimoTextoRef.current && nowText - ultimoTextoAtRef.current < 2500) {
+      if (ahora - ultimoDetectadoRef.current < 220) {
+        return;
+      }
+      ultimoDetectadoRef.current = ahora;
+      if (scanMode === 'zona') {
+        if (value === ultimoTextoRef.current && ahora - ultimoTextoAtRef.current < 1200) {
           return;
         }
         ultimoTextoRef.current = value;
-        ultimoTextoAtRef.current = nowText;
-        if (scanMode === 'zona') {
-          const zonaParsed = parsearZonaQR(value);
-          if (zonaParsed.error) {
-            setError(zonaParsed.error);
-            return;
-          }
-          setZonaLetra(zonaParsed.letra);
-          setZonaNumero(String(zonaParsed.numero));
-          setSuccess(`Zona activa: ${zonaParsed.letra}${zonaParsed.numero}`);
-          setTimeout(() => setSuccess(''), 1200);
-        } else {
-          const parsed = parsearQR(value);
-          if (!parsed) {
-            return;
-          }
-          const code = parsed?.codigo ? parsed.codigo : String(value);
-          setCodigo(code);
-          agregarCodigo(code);
+        ultimoTextoAtRef.current = ahora;
+        const zonaParsed = parsearZonaQR(value);
+        if (zonaParsed.error) {
+          setError(zonaParsed.error);
+          return;
         }
-        detenerCamara();
+        setZonaLetra(zonaParsed.letra);
+        setZonaNumero(String(zonaParsed.numero));
+        setSuccess(`Zona activa: ${zonaParsed.letra}${zonaParsed.numero}`);
+        setTimeout(() => setSuccess(''), 1200);
+      } else {
+        const parsed = parsearQR(value);
+        if (!parsed) {
+          return;
+        }
+        const code = parsed?.codigo ? parsed.codigo : String(value);
+        setCodigo(code);
+        agregarCodigo(code);
       }
+      detenerCamara();
     };
     window.handleNativeQr = handler;
     return () => {

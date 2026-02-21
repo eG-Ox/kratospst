@@ -82,8 +82,7 @@ const IngresosPage = ({ usuario }) => {
     if (!raw) return '';
     const tokens = raw
       .replace(/\r/g, '')
-      .split(/[
-,;\/\s]+/g)
+      .split(',')
       .map((item) => item.trim())
       .filter(Boolean);
     return tokens[0] || raw;

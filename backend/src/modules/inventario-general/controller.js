@@ -236,7 +236,7 @@ exports.agregarConteo = async (req, res) => {
     const rawCodigo = String(codigo || '').trim();
     const tokenCodigo = rawCodigo
       .replace(/\r/g, '')
-      .split(/[\n,;]+/g)
+      .split(',')
       .map((item) => item.trim())
       .filter(Boolean)[0];
     const codigoFinal = tokenCodigo || rawCodigo;
@@ -280,8 +280,8 @@ exports.agregarConteo = async (req, res) => {
        (inventario_id, producto_id, ubicacion_letra, ubicacion_numero, stock_actual, conteo, diferencia)
        VALUES (?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
-         conteo = conteo + VALUES(conteo),
-         diferencia = (conteo + VALUES(conteo)) - stock_actual`,
+         diferencia = (conteo + VALUES(conteo)) - stock_actual,
+         conteo = conteo + VALUES(conteo)`,
       [
         req.params.id,
         producto.id,

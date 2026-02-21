@@ -5,8 +5,7 @@ export const parseQRPayload = (value) => {
   }
 
   const normalized = raw.replace(/\r/g, '');
-  const delimiter = normalized.includes('\n') ? '\n' : ',';
-  const parts = normalized.split(delimiter);
+  const parts = normalized.split(',');
   const tokens = parts
     .map((item) => String(item).trim().replace(/,+$/, ''))
     .filter((item) => item.length > 0);
