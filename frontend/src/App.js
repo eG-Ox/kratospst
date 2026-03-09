@@ -10,26 +10,70 @@ import './shared/styles/shared.css';
 import './shared/styles/animations.css';
 import './App.css';
 
+const CHUNK_RELOAD_FLAG = 'kratos_chunk_reload_once';
+
+const isChunkLoadError = (error) => {
+  const message = String(error?.message || '').toLowerCase();
+  const name = String(error?.name || '').toLowerCase();
+  return (
+    name.includes('chunkloaderror') ||
+    message.includes('loading chunk') ||
+    message.includes('loading css chunk')
+  );
+};
+
+const lazyWithRetry = (factory) =>
+  lazy(async () => {
+    try {
+      const module = await factory();
+      try {
+        sessionStorage.removeItem(CHUNK_RELOAD_FLAG);
+      } catch (_) {
+        // no-op
+      }
+      return module;
+    } catch (error) {
+      if (typeof window !== 'undefined' && isChunkLoadError(error)) {
+        let alreadyReloaded = false;
+        try {
+          alreadyReloaded = sessionStorage.getItem(CHUNK_RELOAD_FLAG) === '1';
+        } catch (_) {
+          alreadyReloaded = false;
+        }
+        if (!alreadyReloaded) {
+          try {
+            sessionStorage.setItem(CHUNK_RELOAD_FLAG, '1');
+          } catch (_) {
+            // no-op
+          }
+          window.location.reload();
+          return new Promise(() => {});
+        }
+      }
+      throw error;
+    }
+  });
+
 // Modulos (lazy por ruta para reducir carga inicial)
-const LoginPage = lazy(() => import('./modules/auth/pages/LoginPage'));
-const DashboardPage = lazy(() => import('./modules/dashboard/pages/DashboardPage'));
-const ProductosPage = lazy(() => import('./modules/productos/pages/ProductosPage'));
-const TiposMaquinasPage = lazy(() => import('./modules/tipos-maquinas/pages/TiposMaquinasPage'));
-const GestorInventarioPage = lazy(() => import('./modules/movimientos/pages/GestorInventarioPage'));
-const KitsPage = lazy(() => import('./modules/kits/pages/KitsPage'));
-const CotizacionesPage = lazy(() => import('./modules/cotizaciones/pages/CotizacionesPage'));
-const HistorialCotizacionesPage = lazy(() => import('./modules/cotizaciones/pages/HistorialCotizacionesPage'));
-const ClientesPage = lazy(() => import('./modules/clientes/pages/ClientesPage'));
-const UsuariosPage = lazy(() => import('./modules/usuarios/pages/UsuariosPage'));
-const BackupsPage = lazy(() => import('./modules/backups/pages/BackupsPage'));
-const HistorialPage = lazy(() => import('./modules/historial/pages/HistorialPage'));
-const PermisosPage = lazy(() => import('./modules/permisos/pages/PermisosPage'));
-const InventarioGeneralPage = lazy(() => import('./modules/inventario-general/pages/InventarioGeneralPage'));
-const VentasPage = lazy(() => import('./modules/ventas/pages/VentasPage'));
-const EnviosPage = lazy(() => import('./modules/ventas/pages/EnviosPage'));
-const VentasDetallePage = lazy(() => import('./modules/ventas/pages/VentasDetallePage'));
-const PickingPage = lazy(() => import('./modules/picking/pages/PickingPage'));
-const RotulosPage = lazy(() => import('./modules/rotulos/pages/RotulosPage'));
+const LoginPage = lazyWithRetry(() => import('./modules/auth/pages/LoginPage'));
+const DashboardPage = lazyWithRetry(() => import('./modules/dashboard/pages/DashboardPage'));
+const ProductosPage = lazyWithRetry(() => import('./modules/productos/pages/ProductosPage'));
+const TiposMaquinasPage = lazyWithRetry(() => import('./modules/tipos-maquinas/pages/TiposMaquinasPage'));
+const GestorInventarioPage = lazyWithRetry(() => import('./modules/movimientos/pages/GestorInventarioPage'));
+const KitsPage = lazyWithRetry(() => import('./modules/kits/pages/KitsPage'));
+const CotizacionesPage = lazyWithRetry(() => import('./modules/cotizaciones/pages/CotizacionesPage'));
+const HistorialCotizacionesPage = lazyWithRetry(() => import('./modules/cotizaciones/pages/HistorialCotizacionesPage'));
+const ClientesPage = lazyWithRetry(() => import('./modules/clientes/pages/ClientesPage'));
+const UsuariosPage = lazyWithRetry(() => import('./modules/usuarios/pages/UsuariosPage'));
+const BackupsPage = lazyWithRetry(() => import('./modules/backups/pages/BackupsPage'));
+const HistorialPage = lazyWithRetry(() => import('./modules/historial/pages/HistorialPage'));
+const PermisosPage = lazyWithRetry(() => import('./modules/permisos/pages/PermisosPage'));
+const InventarioGeneralPage = lazyWithRetry(() => import('./modules/inventario-general/pages/InventarioGeneralPage'));
+const VentasPage = lazyWithRetry(() => import('./modules/ventas/pages/VentasPage'));
+const EnviosPage = lazyWithRetry(() => import('./modules/ventas/pages/EnviosPage'));
+const VentasDetallePage = lazyWithRetry(() => import('./modules/ventas/pages/VentasDetallePage'));
+const PickingPage = lazyWithRetry(() => import('./modules/picking/pages/PickingPage'));
+const RotulosPage = lazyWithRetry(() => import('./modules/rotulos/pages/RotulosPage'));
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);

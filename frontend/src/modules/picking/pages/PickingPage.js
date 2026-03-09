@@ -171,8 +171,7 @@ const PickingPage = () => {
       const normalizeCode = (value) =>
         String(value || '')
           .trim()
-          .toUpperCase()
-          .replace(/[^A-Z0-9]/g, '');
+          .toUpperCase();
       let code = '';
       if (parsed.ok && parsed.data?.codigo) {
         code = parsed.data.codigo;

@@ -85,8 +85,7 @@ const IngresosPage = ({ usuario }) => {
   const normalizarCodigo = (value) =>
     String(value || '')
       .trim()
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, '');
+      .toUpperCase();
 
   const marcasMap = useMemo(() => {
     const map = {};

@@ -8,8 +8,7 @@ import '../styles/SalidasPage.css';
 const normalizarCodigo = (value) =>
   String(value || '')
     .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '');
+    .toUpperCase();
 
 const extraerCodigoDesdeTexto = (texto) => {
   const raw = String(texto || '').trim();

@@ -21,6 +21,451 @@ const DRY_RUN_DESTRUCTIVE_MIGRATION = parseBoolean(
   false
 );
 
+const safeParseJsonText = (value) => {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return null;
+  }
+};
+
+const asCleanText = (value) => {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text || null;
+};
+
+const trimText = (value, maxLength) => {
+  const text = asCleanText(value);
+  if (!text) return null;
+  if (!Number.isFinite(maxLength) || maxLength <= 0) return text;
+  return text.slice(0, maxLength);
+};
+
+const firstNonEmptyText = (...values) => {
+  for (const value of values) {
+    const clean = asCleanText(value);
+    if (clean !== null) return clean;
+  }
+  return null;
+};
+
+const toNullableNumber = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeAccionMov = (value) => {
+  const text = asCleanText(value);
+  return text ? text.toLowerCase() : null;
+};
+
+const resolveVariacionStockMov = (accion, beforeObj, afterObj) => {
+  const variacionDirecta = toNullableNumber(afterObj.variacion_stock);
+  if (variacionDirecta !== null) return variacionDirecta;
+
+  const stockAntes = toNullableNumber(beforeObj.stock);
+  const stockDespues = toNullableNumber(afterObj.stock);
+  if (stockAntes !== null && stockDespues !== null) {
+    return stockDespues - stockAntes;
+  }
+
+  const cantidad = toNullableNumber(afterObj.cantidad);
+  if (cantidad !== null) {
+    const tipoMovimiento = normalizeAccionMov(afterObj.tipo_movimiento || accion);
+    if (tipoMovimiento === 'ingreso') return Math.abs(cantidad);
+    if (tipoMovimiento === 'salida') return -Math.abs(cantidad);
+  }
+  return null;
+};
+
+const resolveCantidadMov = (afterObj, variacionStock) => {
+  const cantidadDirecta = toNullableNumber(afterObj.cantidad);
+  if (cantidadDirecta !== null) return Math.abs(cantidadDirecta);
+  if (variacionStock === null) return null;
+  return Math.abs(variacionStock);
+};
+
+const buildHistorialMovimientoBackfillRow = (row) => {
+  const beforeObj = safeParseJsonText(row.antes_json) || {};
+  const afterObj = safeParseJsonText(row.despues_json) || {};
+  const tipoMovimiento = trimText(firstNonEmptyText(afterObj.tipo_movimiento, row.accion), 50);
+  const motivo = trimText(afterObj.motivo, 255);
+  const tipoMotivo = trimText(
+    firstNonEmptyText(
+      afterObj.tipo_motivo_movimiento,
+      tipoMovimiento && motivo ? `${tipoMovimiento}: ${motivo}` : null,
+      tipoMovimiento,
+      motivo
+    ),
+    255
+  );
+  const movimientoId = trimText(
+    firstNonEmptyText(
+      afterObj.movimiento_id,
+      afterObj.movimiento_grupo_id,
+      beforeObj.movimiento_id,
+      beforeObj.movimiento_grupo_id,
+      row.entidad_id
+    ),
+    64
+  );
+  const movimientoGrupoId = trimText(
+    firstNonEmptyText(
+      afterObj.movimiento_grupo_id,
+      afterObj.movimiento_id,
+      beforeObj.movimiento_grupo_id,
+      beforeObj.movimiento_id,
+      row.entidad_id
+    ),
+    64
+  );
+  const movimientoDetalleId = toNullableNumber(
+    firstNonEmptyText(afterObj.movimiento_detalle_id, row.entidad_id)
+  );
+  const variacionStock = resolveVariacionStockMov(row.accion, beforeObj, afterObj);
+  const cantidad = resolveCantidadMov(afterObj, variacionStock);
+
+  return {
+    historial_id: row.id,
+    usuario_id: toNullableNumber(row.usuario_id),
+    accion: trimText(row.accion, 50),
+    descripcion_evento: trimText(row.descripcion, 255),
+    producto_id: toNullableNumber(
+      firstNonEmptyText(
+        afterObj.producto_id,
+        afterObj.maquina_id,
+        beforeObj.producto_id,
+        beforeObj.maquina_id
+      )
+    ),
+    codigo_producto: trimText(
+      firstNonEmptyText(
+        afterObj.codigo_producto,
+        afterObj.codigo,
+        afterObj.producto_codigo,
+        beforeObj.codigo_producto,
+        beforeObj.codigo,
+        beforeObj.producto_codigo
+      ),
+      100
+    ),
+    descripcion_producto: trimText(
+      firstNonEmptyText(
+        afterObj.descripcion_producto,
+        afterObj.descripcion,
+        beforeObj.descripcion_producto,
+        beforeObj.descripcion
+      ),
+      255
+    ),
+    tipo_movimiento: tipoMovimiento,
+    motivo,
+    tipo_motivo_movimiento: tipoMotivo,
+    documento_referencia_tipo: trimText(
+      firstNonEmptyText(
+        afterObj.documento_referencia_tipo,
+        beforeObj.documento_referencia_tipo
+      ),
+      40
+    ),
+    documento_referencia_valor: trimText(
+      firstNonEmptyText(
+        afterObj.documento_referencia_valor,
+        beforeObj.documento_referencia_valor
+      ),
+      120
+    ),
+    documento_referencia: trimText(
+      firstNonEmptyText(afterObj.documento_referencia, beforeObj.documento_referencia),
+      180
+    ),
+    movimiento_id: movimientoId,
+    movimiento_grupo_id: movimientoGrupoId,
+    movimiento_detalle_id: movimientoDetalleId,
+    inventario_id: toNullableNumber(
+      firstNonEmptyText(afterObj.inventario_id, beforeObj.inventario_id)
+    ),
+    cantidad,
+    variacion_stock: variacionStock,
+    stock_antes: toNullableNumber(beforeObj.stock),
+    stock_despues: toNullableNumber(afterObj.stock)
+  };
+};
+
+const backfillHistorialMovimientosFromJson = async (connection) => {
+  const batchSize = 500;
+  let totalInsertados = 0;
+
+  while (true) {
+    const [rows] = await connection.execute(
+      `SELECT h.id, h.entidad_id, h.usuario_id, h.accion, h.descripcion, h.antes_json, h.despues_json
+       FROM historial_acciones h
+       LEFT JOIN historial_movimientos hm ON hm.historial_id = h.id
+       WHERE h.entidad = 'movimientos'
+         AND hm.historial_id IS NULL
+       ORDER BY h.id ASC
+       LIMIT ${batchSize}`
+    );
+    if (!rows.length) {
+      break;
+    }
+
+    for (const row of rows) {
+      const item = buildHistorialMovimientoBackfillRow(row);
+      try {
+        await connection.execute(
+          `INSERT INTO historial_movimientos (
+            historial_id,
+            usuario_id,
+            accion,
+            descripcion_evento,
+            producto_id,
+            codigo_producto,
+            descripcion_producto,
+            tipo_movimiento,
+            motivo,
+            tipo_motivo_movimiento,
+            documento_referencia_tipo,
+            documento_referencia_valor,
+            documento_referencia,
+            movimiento_id,
+            movimiento_grupo_id,
+            movimiento_detalle_id,
+            inventario_id,
+            cantidad,
+            variacion_stock,
+            stock_antes,
+            stock_despues
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            item.historial_id,
+            item.usuario_id,
+            item.accion,
+            item.descripcion_evento,
+            item.producto_id,
+            item.codigo_producto,
+            item.descripcion_producto,
+            item.tipo_movimiento,
+            item.motivo,
+            item.tipo_motivo_movimiento,
+            item.documento_referencia_tipo,
+            item.documento_referencia_valor,
+            item.documento_referencia,
+            item.movimiento_id,
+            item.movimiento_grupo_id,
+            item.movimiento_detalle_id,
+            item.inventario_id,
+            item.cantidad,
+            item.variacion_stock,
+            item.stock_antes,
+            item.stock_despues
+          ]
+        );
+        totalInsertados += 1;
+      } catch (error) {
+        if (error.code === 'ER_DUP_ENTRY') {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (totalInsertados && totalInsertados % 500 === 0) {
+      console.log(`Backfill historial_movimientos: ${totalInsertados} registros`);
+    }
+  }
+
+  if (totalInsertados > 0) {
+    console.log(`âœ“ Backfill historial_movimientos completado: ${totalInsertados} registros`);
+  }
+};
+
+const extractLastParenthesisToken = (value) => {
+  const text = asCleanText(value);
+  if (!text) return null;
+  const match = text.match(/\(([^()]+)\)\s*$/);
+  if (!match) return null;
+  return asCleanText(match[1]);
+};
+
+const resolveIngresoSalidaIdForHistorial = async (connection, row) => {
+  const afterObj = safeParseJsonText(row.despues_json) || {};
+  const cantidad = toNullableNumber(afterObj.cantidad);
+  const motivo = asCleanText(afterObj.motivo);
+  const usuarioId = toNullableNumber(row.usuario_id);
+  const tipo = asCleanText(row.accion);
+  const referenciaFecha = row.created_at || null;
+  if (!cantidad || !tipo || !referenciaFecha) {
+    return null;
+  }
+
+  const token = extractLastParenthesisToken(row.descripcion);
+  const tokenAsNumber = toNullableNumber(token);
+  let extraSql = '';
+  const params = [usuarioId, tipo.toLowerCase(), Math.abs(cantidad), motivo || '', referenciaFecha];
+  if (tokenAsNumber !== null) {
+    extraSql = ' AND (i.maquina_id = ? OR UPPER(TRIM(COALESCE(m.codigo, \'\'))) = UPPER(TRIM(?)))';
+    params.push(tokenAsNumber, token || String(tokenAsNumber));
+  } else if (token) {
+    extraSql = ' AND UPPER(TRIM(COALESCE(m.codigo, \'\'))) = UPPER(TRIM(?))';
+    params.push(token);
+  }
+
+  const [rows] = await connection.execute(
+    `SELECT i.id
+     FROM ingresos_salidas i
+     LEFT JOIN maquinas m ON m.id = i.maquina_id
+     WHERE i.usuario_id <=> ?
+       AND i.tipo = ?
+       AND i.cantidad = ?
+       AND IFNULL(i.motivo, '') = ?
+       AND ABS(TIMESTAMPDIFF(SECOND, i.fecha, ?)) <= 5
+       ${extraSql}
+     ORDER BY ABS(TIMESTAMPDIFF(SECOND, i.fecha, ?)) ASC, i.id ASC
+     LIMIT 1`,
+    [...params, referenciaFecha]
+  );
+  return toNullableNumber(rows[0]?.id);
+};
+
+const backfillMissingMovimientoIds = async (connection) => {
+  const [rows] = await connection.execute(
+    `SELECT
+       h.id,
+       h.usuario_id,
+       h.accion,
+       h.descripcion,
+       h.created_at,
+       h.entidad_id,
+       h.despues_json,
+       hm.movimiento_id,
+       hm.movimiento_grupo_id,
+       hm.movimiento_detalle_id
+     FROM historial_acciones h
+     JOIN historial_movimientos hm ON hm.historial_id = h.id
+     WHERE h.entidad = 'movimientos'
+       AND (
+         h.entidad_id IS NULL
+         OR h.entidad_id = 0
+         OR hm.movimiento_detalle_id IS NULL
+         OR hm.movimiento_detalle_id = 0
+         OR hm.movimiento_id IS NULL
+         OR hm.movimiento_id = ''
+         OR hm.movimiento_grupo_id IS NULL
+         OR hm.movimiento_grupo_id = ''
+       )
+     ORDER BY h.id ASC`
+  );
+
+  let totalReparados = 0;
+  for (const row of rows) {
+    let movimientoDetalleId = toNullableNumber(
+      firstNonEmptyText(row.movimiento_detalle_id, row.entidad_id)
+    );
+    if (movimientoDetalleId === null) {
+      movimientoDetalleId = await resolveIngresoSalidaIdForHistorial(connection, row);
+    }
+    if (movimientoDetalleId === null) {
+      continue;
+    }
+
+    const movimientoDetalleText = String(movimientoDetalleId);
+    await connection.execute(
+      `UPDATE historial_acciones
+       SET entidad_id = ?
+       WHERE id = ?
+         AND entidad = 'movimientos'
+         AND (entidad_id IS NULL OR entidad_id = 0)`,
+      [movimientoDetalleId, row.id]
+    );
+
+    await connection.execute(
+      `UPDATE historial_movimientos
+       SET movimiento_detalle_id = COALESCE(NULLIF(movimiento_detalle_id, 0), ?),
+           movimiento_id = COALESCE(NULLIF(movimiento_id, ''), ?),
+           movimiento_grupo_id = COALESCE(NULLIF(movimiento_grupo_id, ''), ?)
+       WHERE historial_id = ?`,
+      [movimientoDetalleId, movimientoDetalleText, movimientoDetalleText, row.id]
+    );
+
+    const afterObj = safeParseJsonText(row.despues_json) || {};
+    let updatedAfter = false;
+    if (toNullableNumber(afterObj.movimiento_detalle_id) === null) {
+      afterObj.movimiento_detalle_id = movimientoDetalleId;
+      updatedAfter = true;
+    }
+    if (!asCleanText(afterObj.movimiento_id)) {
+      afterObj.movimiento_id = movimientoDetalleText;
+      updatedAfter = true;
+    }
+    if (!asCleanText(afterObj.movimiento_grupo_id)) {
+      afterObj.movimiento_grupo_id = movimientoDetalleText;
+      updatedAfter = true;
+    }
+    if (updatedAfter) {
+      await connection.execute(
+        'UPDATE historial_acciones SET despues_json = ? WHERE id = ?',
+        [JSON.stringify(afterObj), row.id]
+      );
+    }
+    totalReparados += 1;
+  }
+
+  if (totalReparados > 0) {
+    console.log(`âœ“ Backfill IDs de movimientos completado: ${totalReparados} registros reparados`);
+  }
+};
+
+const backfillOperacionIdsEnHistorialAcciones = async (connection) => {
+  // Priorizar IDs de movimiento cuando existan en la tabla estructurada.
+  await connection.execute(
+    `UPDATE historial_acciones h
+     LEFT JOIN historial_movimientos hm ON hm.historial_id = h.id
+     SET
+       h.operacion_madre_id = COALESCE(
+         NULLIF(h.operacion_madre_id, ''),
+         NULLIF(hm.movimiento_grupo_id, ''),
+         NULLIF(hm.movimiento_id, ''),
+         NULLIF(JSON_UNQUOTE(JSON_EXTRACT(h.despues_json, '$.movimiento_grupo_id')), ''),
+         NULLIF(JSON_UNQUOTE(JSON_EXTRACT(h.despues_json, '$.movimiento_id')), ''),
+         NULLIF(CAST(hm.movimiento_detalle_id AS CHAR), ''),
+         NULLIF(JSON_UNQUOTE(JSON_EXTRACT(h.despues_json, '$.movimiento_detalle_id')), ''),
+         NULLIF(CAST(h.entidad_id AS CHAR), ''),
+         CAST(h.id AS CHAR)
+       ),
+       h.operacion_transaccion_id = COALESCE(
+         NULLIF(h.operacion_transaccion_id, ''),
+         NULLIF(CAST(hm.movimiento_detalle_id AS CHAR), ''),
+         NULLIF(JSON_UNQUOTE(JSON_EXTRACT(h.despues_json, '$.movimiento_detalle_id')), ''),
+         NULLIF(CAST(h.entidad_id AS CHAR), ''),
+         CAST(h.id AS CHAR)
+       )
+     WHERE h.entidad = 'movimientos'`
+  );
+
+  // Para todo lo demas: transaccion = id historial; madre = transaccion.
+  await connection.execute(
+    `UPDATE historial_acciones
+     SET operacion_transaccion_id = COALESCE(NULLIF(operacion_transaccion_id, ''), CAST(id AS CHAR)),
+         operacion_madre_id = COALESCE(NULLIF(operacion_madre_id, ''), operacion_transaccion_id, CAST(id AS CHAR))
+     WHERE entidad <> 'movimientos' OR entidad IS NULL`
+  );
+
+  // Fallback final por si quedo algun nulo/empty.
+  await connection.execute(
+    `UPDATE historial_acciones
+     SET operacion_transaccion_id = COALESCE(NULLIF(operacion_transaccion_id, ''), CAST(id AS CHAR)),
+         operacion_madre_id = COALESCE(NULLIF(operacion_madre_id, ''), operacion_transaccion_id, CAST(id AS CHAR))
+     WHERE operacion_transaccion_id IS NULL
+        OR operacion_transaccion_id = ''
+        OR operacion_madre_id IS NULL
+        OR operacion_madre_id = ''`
+  );
+};
+
 const actualizarBusquedaMaquinas = async (connection) => {
   try {
     const [cols] = await connection.execute("SHOW COLUMNS FROM maquinas LIKE 'codigo_busqueda'");
@@ -468,12 +913,52 @@ CREATE TABLE IF NOT EXISTS historial_acciones (
   usuario_id INT,
   accion VARCHAR(50) NOT NULL,
   descripcion TEXT,
+  operacion_madre_id VARCHAR(64),
+  operacion_transaccion_id VARCHAR(64),
   antes_json TEXT,
   despues_json TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_entidad (entidad),
   INDEX idx_usuario (usuario_id),
-  INDEX idx_fecha (created_at)
+  INDEX idx_fecha (created_at),
+  INDEX idx_operacion_madre (operacion_madre_id),
+  INDEX idx_operacion_transaccion (operacion_transaccion_id)
+);
+`;
+
+// Tabla estructurada para historial de movimientos (reportes relacionales)
+const crearHistorialMovimientos = `
+CREATE TABLE IF NOT EXISTS historial_movimientos (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  historial_id INT NOT NULL,
+  usuario_id INT,
+  accion VARCHAR(50) NOT NULL,
+  descripcion_evento VARCHAR(255),
+  producto_id INT,
+  codigo_producto VARCHAR(100),
+  descripcion_producto VARCHAR(255),
+  tipo_movimiento VARCHAR(50),
+  motivo VARCHAR(255),
+  tipo_motivo_movimiento VARCHAR(255),
+  documento_referencia_tipo VARCHAR(40),
+  documento_referencia_valor VARCHAR(120),
+  documento_referencia VARCHAR(180),
+  movimiento_id VARCHAR(64),
+  movimiento_grupo_id VARCHAR(64),
+  movimiento_detalle_id INT,
+  inventario_id INT,
+  cantidad DECIMAL(18,4),
+  variacion_stock DECIMAL(18,4),
+  stock_antes DECIMAL(18,4),
+  stock_despues DECIMAL(18,4),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_historial_id (historial_id),
+  INDEX idx_mov_grupo_id (movimiento_grupo_id),
+  INDEX idx_mov_detalle_id (movimiento_detalle_id),
+  INDEX idx_mov_usuario (usuario_id),
+  INDEX idx_mov_producto (producto_id),
+  INDEX idx_mov_fecha (created_at),
+  FOREIGN KEY (historial_id) REFERENCES historial_acciones(id) ON DELETE CASCADE
 );
 `;
 
@@ -1426,6 +1911,47 @@ async function inicializarBaseDatos() {
     console.log('Creando tabla historial_acciones...');
     await connection.execute(crearHistorialAcciones);
     console.log('âœ“ Tabla historial_acciones creada exitosamente');
+    try {
+      await connection.execute('ALTER TABLE historial_acciones ADD COLUMN operacion_madre_id VARCHAR(64) NULL');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute('ALTER TABLE historial_acciones ADD COLUMN operacion_transaccion_id VARCHAR(64) NULL');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute('CREATE INDEX idx_operacion_madre ON historial_acciones (operacion_madre_id)');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute(
+        'CREATE INDEX idx_operacion_transaccion ON historial_acciones (operacion_transaccion_id)'
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME') {
+        throw error;
+      }
+    }
+
+    console.log('Creando tabla historial_movimientos...');
+    await connection.execute(crearHistorialMovimientos);
+    console.log('âœ“ Tabla historial_movimientos creada exitosamente');
+    try {
+      await backfillHistorialMovimientosFromJson(connection);
+      await backfillMissingMovimientoIds(connection);
+      await backfillOperacionIdsEnHistorialAcciones(connection);
+    } catch (error) {
+      console.log('Aviso backfill historial_movimientos:', error.message);
+    }
 
     console.log('Creando tabla roles...');
     await connection.execute(crearRoles);
@@ -1554,11 +2080,11 @@ async function inicializarBaseDatos() {
     
     // Insertar algunos tipos de mÃ¡quinas iniciales
     const tiposIniciales = [
-      ['Torno', 'MÃ¡quinas para trabajo de metal'],
-      ['Fresadora', 'MÃ¡quinas fresadoras para trabajo de precisiÃ³n'],
-      ['Soldadora', 'Equipos de soldadura elÃ©ctrica'],
-      ['Compresor', 'Compresores de aire'],
-      ['Generador', 'Generadores elÃ©ctricos']
+      ['TORNO', 'MAQUINAS PARA TRABAJO DE METAL'],
+      ['FRESADORA', 'MAQUINAS FRESADORAS PARA TRABAJO DE PRECISION'],
+      ['SOLDADORA', 'EQUIPOS DE SOLDADURA ELECTRICA'],
+      ['COMPRESOR', 'COMPRESORES DE AIRE'],
+      ['GENERADOR', 'GENERADORES ELECTRICOS']
     ];
     
     console.log('Insertando tipos de mÃ¡quinas iniciales...');

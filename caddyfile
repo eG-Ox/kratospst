@@ -12,14 +12,14 @@
 	}
 
 	@frontend_static path /static/* /assets/*
-	header @frontend_static Cache-Control "public, max-age=3600, must-revalidate"
+	header @frontend_static Cache-Control "no-store, no-cache, must-revalidate"
 	@spa_routes {
 		not path /api/* /static/* /assets/*
 	}
 	header @spa_routes Cache-Control "no-store, no-cache, must-revalidate"
 
 	route {
-		@backend_paths path /api/* /static/img/* /static/js/html2pdf.bundle.min.js
+		@backend_paths path /api/* /static/*
 		handle @backend_paths {
 			reverse_proxy {$API_UPSTREAM:127.0.0.1:5000}
 		}

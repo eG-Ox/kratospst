@@ -9,8 +9,7 @@ import '../styles/InventarioGeneralPage.css';
 const normalizarCodigo = (value) =>
   String(value || '')
     .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '');
+    .toUpperCase();
 
 const InventarioGeneralPage = () => {
   const [inventarioId, setInventarioId] = useState(null);

@@ -170,6 +170,11 @@ const VentasPage = () => {
           estadosEnvio={estadosEnvio}
           onConsultarDocumento={ventaForm.handleConsultarDocumento}
           onFormChange={ventaForm.onFormChange}
+          cotizacionNumero={ventaForm.cotizacionNumero}
+          setCotizacionNumero={ventaForm.setCotizacionNumero}
+          cargandoCotizacion={ventaForm.cargandoCotizacion}
+          cotizacionCargada={ventaForm.cotizacionCargada}
+          onCargarCotizacion={ventaForm.cargarDesdeCotizacion}
           tabProductos={ventaForm.tabProductos}
           tabProductosModo={ventaForm.tabProductosModo}
           tabReqModo={ventaForm.tabReqModo}

@@ -2,7 +2,7 @@ const pool = require('../../core/config/database');
 const { registrarHistorial } = require('../../shared/utils/historial');
 
 const normalizarCodigo = (value) => String(value || '').trim().toUpperCase();
-const normalizarNombre = (value) => String(value || '').trim();
+const normalizarNombre = (value) => String(value || '').trim().toUpperCase();
 
 const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);

@@ -75,9 +75,20 @@
 
 .cotizacion-grid {
   display: grid;
-  grid-template-columns: 1.1fr 0.9fr;
+  grid-template-columns: minmax(0, 1.55fr) minmax(340px, 0.75fr);
   gap: 14px;
   align-items: start;
+}
+
+.cotizacion-left {
+  min-width: 0;
+}
+
+.cotizacion-right {
+  min-width: 0;
+  max-width: 460px;
+  width: 100%;
+  justify-self: end;
 }
 
 .cotizacion-card,
@@ -91,6 +102,12 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   border: 1px solid #e9ecef;
   margin-bottom: 12px;
+}
+
+.cotizacion-right .cotizacion-card,
+.cotizacion-right .cotizacion-notas,
+.cotizacion-right .cotizacion-summary {
+  padding: 10px;
 }
 
 .tabs {
@@ -208,11 +225,13 @@
 
 .cotizacion-notas textarea {
   width: 100%;
-  min-height: 90px;
+  min-height: 72px;
+  max-height: 140px;
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid #d1d5db;
   font-size: 12px;
+  resize: vertical;
 }
 
 .cotizacion-summary {
@@ -235,16 +254,19 @@
 }
 
 .cliente-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
+  width: 100%;
 }
 
 .cliente-search {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  flex: 1;
+  width: 100%;
+  min-width: 0;
 }
 
 .cliente-resultados {
@@ -275,22 +297,65 @@
 }
 
 .cliente-search input,
-.cliente-search select {
+.cliente-selector-trigger {
+  min-width: 0;
   padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid #d1d5db;
   font-size: 12px;
 }
 
+.cliente-selector-trigger {
+  width: 100%;
+  background: #ffffff;
+  color: #111827;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cliente-selector-trigger span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cliente-selector-trigger.open {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.15);
+}
+
+.cliente-selector-icon {
+  flex: 0 0 auto;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.cliente-selector-trigger.open .cliente-selector-icon {
+  transform: rotate(180deg);
+}
+
+.cliente-row .btn-secondary {
+  white-space: nowrap;
+}
+
+.cliente-item.active {
+  background: #e5f3ff;
+  border-color: #b6d9fb;
+}
+
 .cliente-info {
   margin-top: 8px;
-  padding: 8px;
+  padding: 6px 8px;
   border-radius: 8px;
   background: #f8f9fa;
   border: 1px solid #ecf0f1;
   font-size: 12px;
   display: grid;
-  gap: 4px;
+  gap: 2px;
 }
 
 .tag-kit {
@@ -340,6 +405,11 @@
 @media (max-width: 960px) {
   .cotizacion-grid {
     grid-template-columns: 1fr;
+  }
+
+  .cotizacion-right {
+    max-width: none;
+    justify-self: stretch;
   }
 }
 

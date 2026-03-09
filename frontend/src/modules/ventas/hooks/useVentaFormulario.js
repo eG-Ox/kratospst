@@ -56,6 +56,9 @@ const useVentaFormulario = ({
   const [avisoStock, setAvisoStock] = useState('');
   const [editId, setEditId] = useState(null);
   const [tabProductos, setTabProductos] = useState('productos');
+  const [cotizacionNumero, setCotizacionNumero] = useState('');
+  const [cargandoCotizacion, setCargandoCotizacion] = useState(false);
+  const [cotizacionCargada, setCotizacionCargada] = useState(null);
 
   const [formData, setFormData] = useState(createInitialFormData);
 
@@ -282,6 +285,135 @@ const useVentaFormulario = ({
       producto.cantidad ??
       null;
     return stockRaw === null ? null : Number(stockRaw || 0);
+  };
+
+  const cargarDesdeCotizacion = async () => {
+    const numero = String(cotizacionNumero || '').trim();
+    if (!numero) {
+      setError('Ingresa el numero de cotizacion.');
+      return;
+    }
+
+    const hayContenidoActual =
+      Boolean(String(formData.documento || '').trim()) ||
+      Boolean(String(formData.clienteNombre || '').trim()) ||
+      Boolean(String(formData.clienteTelefono || '').trim()) ||
+      Boolean(String(formData.notas || '').trim()) ||
+      productos.length > 0 ||
+      requerimientos.length > 0 ||
+      regalos.length > 0 ||
+      regaloRequerimientos.length > 0;
+
+    if (hayContenidoActual) {
+      const confirmar = window.confirm(
+        'Se reemplazaran los datos actuales de la venta con la cotizacion. Continuar?'
+      );
+      if (!confirmar) return;
+    }
+
+    try {
+      setCargandoCotizacion(true);
+      setError('');
+      const resp = await ventasService.cargarCotizacion(numero);
+      if (mountedRef && !mountedRef.current) return;
+
+      const data = resp?.data || {};
+      const cliente = data.cliente || {};
+      const cotizacion = data.cotizacion || {};
+      const items = Array.isArray(data.items) ? data.items : [];
+
+      const nuevosProductos = [];
+      const nuevosRequerimientos = [];
+
+      items.forEach((item) => {
+        const cantidadTotal = Math.max(1, Number(item.cantidad || 1));
+        const stockRaw = item.stock === null || item.stock === undefined ? 0 : Number(item.stock || 0);
+        const stock = Number.isFinite(stockRaw) ? Math.max(0, stockRaw) : 0;
+        const cantidadConStock = Math.min(cantidadTotal, stock);
+        const cantidadSinStock = Math.max(cantidadTotal - cantidadConStock, 0);
+
+        const base = {
+          producto_id: item.productoId || null,
+          codigo: item.codigo || '',
+          descripcion: item.descripcion || '',
+          marca: item.marca || '',
+          stock,
+          precioVenta: Number(item.precioVenta || 0),
+          precioCompra: 0,
+          proveedor: ''
+        };
+
+        if (cantidadConStock > 0) {
+          nuevosProductos.push({
+            id: genId(),
+            tipo: 'stock',
+            ...base,
+            cantidad: cantidadConStock
+          });
+        }
+
+        if (cantidadSinStock > 0) {
+          nuevosRequerimientos.push({
+            id: genId(),
+            tipo: 'compra',
+            ...base,
+            cantidad: cantidadSinStock
+          });
+        }
+      });
+
+      setFormData((prev) => ({
+        ...prev,
+        documentoTipo: cliente.documentoTipo || prev.documentoTipo || 'dni',
+        documento: cliente.documento || '',
+        clienteNombre: cliente.nombre || '',
+        clienteTelefono: cliente.telefono || '',
+        notas: cotizacion.nota || ''
+      }));
+
+      setProductos(nuevosProductos);
+      setRequerimientos(nuevosRequerimientos);
+      setRegalos([]);
+      setRegaloRequerimientos([]);
+      setRequerimiento(createInitialRequerimiento());
+      setRegaloRequerimiento(createInitialRequerimiento());
+      setBusquedaProducto('');
+      setResultadosProducto([]);
+      setBusquedaRequerimiento('');
+      setResultadosRequerimiento([]);
+      setBusquedaRegalo('');
+      setResultadosRegalo([]);
+      setBusquedaReqRegalo('');
+      setResultadosReqRegalo([]);
+      setSugerenciaRequerimiento(null);
+      setSugerenciaRegalo(null);
+      setConsultaMensaje('');
+      setTabProductos(nuevosProductos.length > 0 ? 'productos' : 'requerimientos');
+      setCotizacionNumero(cotizacion.numero || numero.toUpperCase());
+      setCotizacionCargada({
+        id: cotizacion.id || null,
+        numero: cotizacion.numero || numero.toUpperCase(),
+        items: items.length
+      });
+      setStep(1);
+
+      if (nuevosRequerimientos.length > 0) {
+        setAvisoStock(
+          'Cotizacion cargada. Algunos items no tienen stock suficiente y pasaron a requerimientos.'
+        );
+      } else {
+        setAvisoStock('Cotizacion cargada en la venta.');
+      }
+    } catch (err) {
+      console.error('Error cargando cotizacion en venta:', err);
+      if (mountedRef && !mountedRef.current) return;
+      setCotizacionCargada(null);
+      setError(err.response?.data?.error || 'No se pudo cargar la cotizacion.');
+    } finally {
+      if (!mountedRef || mountedRef.current) {
+        setCargandoCotizacion(false);
+      }
+    }
   };
 
   const ajustarCantidadProductoStock = (itemId, rawCantidad) => {
@@ -878,6 +1010,9 @@ const useVentaFormulario = ({
     setError('');
     setStep(1);
     setEditId(null);
+    setCotizacionNumero('');
+    setCargandoCotizacion(false);
+    setCotizacionCargada(null);
     setTabProductos('productos');
     setTabProductosModo('avanzada');
     setTabReqModo('avanzada');
@@ -941,6 +1076,9 @@ const useVentaFormulario = ({
     setRequerimientos(ventaDetalle.requerimientos || []);
     setRegalos(ventaDetalle.regalos || []);
     setRegaloRequerimientos(ventaDetalle.regaloRequerimientos || []);
+    setCotizacionNumero('');
+    setCotizacionCargada(null);
+    setCargandoCotizacion(false);
     setModalOpen(true);
     setStep(1);
   };
@@ -1001,6 +1139,9 @@ const useVentaFormulario = ({
     avisoStock,
     editId,
     tabProductos,
+    cotizacionNumero,
+    cargandoCotizacion,
+    cotizacionCargada,
     formData,
     setFormData,
     onFormChange,
@@ -1045,6 +1186,8 @@ const useVentaFormulario = ({
     setRequerimiento,
     setRegaloRequerimiento,
     handleConsultarDocumento,
+    setCotizacionNumero,
+    cargarDesdeCotizacion,
     agregarProducto,
     agregarRequerimiento,
     agregarRegalo,

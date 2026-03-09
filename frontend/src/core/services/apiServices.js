@@ -160,6 +160,7 @@ export const backupsService = {
 export const ventasService = {
   listar: (params) => api.get('/ventas', { params }),
   obtener: (id) => api.get(`/ventas/${id}`),
+  cargarCotizacion: (numero) => api.get('/ventas/cotizaciones/cargar', { params: { numero } }),
   detalle: (params) => api.get('/ventas/detalle/listar', { params }),
   historialRequerimientos: (params) => api.get('/ventas/requerimientos/historial', { params }),
   crearRequerimientoProducto: (data) => api.post('/ventas/requerimientos/crear', data),

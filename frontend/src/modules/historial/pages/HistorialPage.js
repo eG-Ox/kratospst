@@ -3,6 +3,362 @@ import { historialService } from '../../../core/services/apiServices';
 import useMountedRef from '../../../shared/hooks/useMountedRef';
 import '../styles/HistorialPage.css';
 
+const asCleanString = (value) => {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text || null;
+};
+
+const firstNonEmptyValue = (...values) => {
+  for (const value of values) {
+    const clean = asCleanString(value);
+    if (clean !== null) return clean;
+  }
+  return null;
+};
+
+const toNumberOrNull = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeAction = (value) => {
+  const text = asCleanString(value);
+  return text ? text.toLowerCase() : null;
+};
+const DOCUMENTO_TOKEN_REGEX = /\b(?:DNI|RUC|GUIA|CAMBIO\s+CODIGO)\s*:\s*[^|]+/gi;
+const DOCUMENTO_TOKEN_SINGLE_REGEX = /\b(DNI|RUC|GUIA|CAMBIO\s+CODIGO)\s*:\s*([^|]+)/i;
+
+const safeParseJson = (value) => {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return null;
+  }
+};
+
+const formatDateTime = (value) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString();
+};
+
+const normalizeDocumentoLabel = (label) => (
+  String(label || '')
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+);
+
+const extractDocumentoFromText = (value) => {
+  const text = asCleanString(value);
+  if (!text) return null;
+  const match = text.match(DOCUMENTO_TOKEN_SINGLE_REGEX);
+  if (!match) return null;
+  const label = normalizeDocumentoLabel(match[1]);
+  const numero = asCleanString(match[2]);
+  if (!numero) return null;
+  return `${label}: ${numero}`;
+};
+
+const extractDocumentoFromMany = (...values) => {
+  for (const value of values) {
+    const documento = extractDocumentoFromText(value);
+    if (documento) return documento;
+  }
+  return null;
+};
+
+const stripDocumentoTokens = (value) => {
+  const text = asCleanString(value);
+  if (!text) return null;
+  let cleaned = String(text).replace(DOCUMENTO_TOKEN_REGEX, ' ');
+  cleaned = cleaned
+    .replace(/\s*\|\s*/g, ' | ')
+    .replace(/\s+/g, ' ')
+    .replace(/\|\s*\|/g, '|')
+    .replace(/^\s*\|\s*/, '')
+    .replace(/\s*\|\s*$/, '')
+    .trim();
+  return cleaned || null;
+};
+
+const normalizeMotivo = (value) => {
+  const text = stripDocumentoTokens(value);
+  if (!text) return null;
+  let cleaned = text
+    .replace(/\|/g, ' - ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/-\s*-/g, '-')
+    .replace(/^[:\-\s]+/, '')
+    .replace(/[:\-\s]+$/, '')
+    .trim();
+  return cleaned || null;
+};
+
+const parseTipoMotivoText = (value) => {
+  const text = stripDocumentoTokens(value);
+  if (!text) return { tipo: null, motivo: null };
+
+  const colonIndex = text.indexOf(':');
+  if (colonIndex > 0) {
+    return {
+      tipo: asCleanString(text.slice(0, colonIndex)),
+      motivo: normalizeMotivo(text.slice(colonIndex + 1))
+    };
+  }
+
+  const dashIndex = text.indexOf('-');
+  if (dashIndex > 0) {
+    return {
+      tipo: asCleanString(text.slice(0, dashIndex)),
+      motivo: normalizeMotivo(text.slice(dashIndex + 1))
+    };
+  }
+
+  return { tipo: null, motivo: normalizeMotivo(text) };
+};
+
+const formatTipoMotivoDisplay = (tipo, motivo) => {
+  const tipoText = asCleanString(tipo);
+  const motivoText = asCleanString(motivo);
+  if (tipoText && motivoText) return `${tipoText.toUpperCase()}-${motivoText.toUpperCase()}`;
+  if (tipoText) return tipoText.toUpperCase();
+  if (motivoText) return motivoText.toUpperCase();
+  return null;
+};
+
+const resolveCodigoProducto = (item, antes, despues) => (
+  firstNonEmptyValue(
+    item.mov_codigo_producto,
+    despues?.codigo_producto,
+    despues?.codigo,
+    despues?.producto_codigo,
+    antes?.codigo_producto,
+    antes?.codigo,
+    antes?.producto_codigo
+  )
+);
+
+const resolveDescripcion = (item, antes, despues) => (
+  firstNonEmptyValue(
+    item.mov_descripcion_producto,
+    despues?.descripcion_producto,
+    despues?.descripcion,
+    antes?.descripcion_producto,
+    antes?.descripcion,
+    item.descripcion
+  )
+);
+
+const resolveDocumentoReferencia = (item, antes, despues) => {
+  const referenciaDirecta = firstNonEmptyValue(
+    item.mov_documento_referencia,
+    despues?.documento_referencia,
+    antes?.documento_referencia
+  );
+  if (referenciaDirecta) {
+    return extractDocumentoFromText(referenciaDirecta) || referenciaDirecta;
+  }
+
+  const referenciaTipo = firstNonEmptyValue(
+    item.mov_documento_referencia_tipo,
+    despues?.documento_referencia_tipo,
+    antes?.documento_referencia_tipo
+  );
+  const referenciaValor = firstNonEmptyValue(
+    item.mov_documento_referencia_valor,
+    despues?.documento_referencia_valor,
+    antes?.documento_referencia_valor
+  );
+  if (referenciaValor) {
+    return referenciaTipo ? `${String(referenciaTipo).toUpperCase()}: ${referenciaValor}` : referenciaValor;
+  }
+
+  const referenciaDesdeTexto = extractDocumentoFromMany(
+    item.mov_tipo_motivo_movimiento,
+    item.mov_motivo,
+    despues?.tipo_motivo_movimiento,
+    despues?.motivo,
+    antes?.tipo_motivo_movimiento,
+    antes?.motivo
+  );
+  if (referenciaDesdeTexto) return referenciaDesdeTexto;
+
+  const dni = firstNonEmptyValue(despues?.dni, antes?.dni);
+  if (dni) return `DNI: ${dni}`;
+
+  const guia = firstNonEmptyValue(
+    despues?.guia,
+    despues?.guia_remision,
+    antes?.guia,
+    antes?.guia_remision
+  );
+  if (guia) return `GUIA: ${guia}`;
+
+  const ruc = firstNonEmptyValue(despues?.ruc, antes?.ruc);
+  if (ruc) return `RUC: ${ruc}`;
+
+  const codigoAntes = firstNonEmptyValue(antes?.codigo_producto, antes?.codigo);
+  const codigoDespues = firstNonEmptyValue(despues?.codigo_producto, despues?.codigo);
+  if (codigoAntes && codigoDespues && codigoAntes !== codigoDespues) {
+    return `CAMBIO CODIGO: ${codigoAntes} -> ${codigoDespues}`;
+  }
+
+  return null;
+};
+
+const resolveOperacionMadreId = (item, antes, despues) => (
+  firstNonEmptyValue(
+    item.operacion_madre_id,
+    item.mov_movimiento_grupo_id,
+    item.mov_movimiento_id,
+    item.mov_inventario_id ? `INV-${item.mov_inventario_id}` : null,
+    despues?.movimiento_grupo_id,
+    despues?.movimiento_id,
+    despues?.inventario_id ? `INV-${despues.inventario_id}` : null,
+    item.entidad === 'movimientos' ? item.entidad_id : null,
+    item.id,
+    antes?.movimiento_grupo_id,
+    antes?.movimiento_id
+  )
+);
+
+const resolveOperacionTransaccionId = (item, despues) => (
+  firstNonEmptyValue(
+    item.operacion_transaccion_id,
+    item.mov_movimiento_detalle_id,
+    despues?.movimiento_detalle_id,
+    item.entidad === 'movimientos' ? item.entidad_id : null,
+    item.id
+  )
+);
+
+const resolveVariacionStock = (item, antes, despues) => {
+  const variacionSql = toNumberOrNull(item.mov_variacion_stock);
+  if (variacionSql !== null) return variacionSql;
+
+  const variacionDirecta = toNumberOrNull(despues?.variacion_stock);
+  if (variacionDirecta !== null) return variacionDirecta;
+
+  const stockAntesSql = toNumberOrNull(item.mov_stock_antes);
+  const stockDespuesSql = toNumberOrNull(item.mov_stock_despues);
+  if (stockAntesSql !== null && stockDespuesSql !== null) {
+    return stockDespuesSql - stockAntesSql;
+  }
+
+  const stockAntes = toNumberOrNull(antes?.stock);
+  const stockDespues = toNumberOrNull(despues?.stock);
+  if (stockAntes !== null && stockDespues !== null) {
+    return stockDespues - stockAntes;
+  }
+
+  const cantidad = toNumberOrNull(despues?.cantidad);
+  if (cantidad !== null) {
+    const tipo = normalizeAction(despues?.tipo_movimiento || item.accion);
+    if (tipo === 'ingreso') return Math.abs(cantidad);
+    if (tipo === 'salida') return -Math.abs(cantidad);
+  }
+
+  return null;
+};
+
+const resolveCantidad = (item, despues, variacionStock) => {
+  const cantidadSql = toNumberOrNull(item.mov_cantidad);
+  if (cantidadSql !== null) return Math.abs(cantidadSql);
+
+  const cantidad = toNumberOrNull(despues?.cantidad);
+  if (cantidad !== null) return Math.abs(cantidad);
+  if (variacionStock === null) return null;
+  return Math.abs(variacionStock);
+};
+
+const resolveStockTotalActualizado = (item, despues) => {
+  const stockSql = toNumberOrNull(item.mov_stock_despues);
+  if (stockSql !== null) return stockSql;
+  return toNumberOrNull(despues?.stock);
+};
+
+const resolveTipoMotivo = (item, despues) => {
+  const rawTipoMotivo = firstNonEmptyValue(
+    item.mov_tipo_motivo_movimiento,
+    despues?.tipo_motivo_movimiento
+  );
+  const parsedTipoMotivo = parseTipoMotivoText(rawTipoMotivo);
+  const tipo = firstNonEmptyValue(
+    item.mov_tipo_movimiento,
+    despues?.tipo_movimiento,
+    parsedTipoMotivo.tipo,
+    item.accion
+  );
+  const motivo = firstNonEmptyValue(
+    normalizeMotivo(item.mov_motivo),
+    normalizeMotivo(despues?.motivo),
+    parsedTipoMotivo.motivo
+  );
+  const display = formatTipoMotivoDisplay(tipo, motivo);
+  if (display) return display;
+
+  return formatTipoMotivoDisplay(normalizeAction(item.accion), normalizeMotivo(item.descripcion));
+};
+
+const formatNumberCell = (value) => {
+  const numericValue = toNumberOrNull(value);
+  if (numericValue === null) return '-';
+  if (Number.isInteger(numericValue)) return String(numericValue);
+  return numericValue.toFixed(2);
+};
+
+const formatSignedNumber = (value) => {
+  const numericValue = toNumberOrNull(value);
+  if (numericValue === null) return '-';
+  if (numericValue > 0) return `+${formatNumberCell(numericValue)}`;
+  return formatNumberCell(numericValue);
+};
+
+const stockClass = (value) => {
+  const numericValue = toNumberOrNull(value);
+  if (numericValue === null) return '';
+  if (numericValue > 0) return 'stock-positive';
+  if (numericValue < 0) return 'stock-negative';
+  return '';
+};
+
+const normalizeHistorialRows = (payload) => {
+  if (Array.isArray(payload)) return payload.filter((row) => row && typeof row === 'object');
+  if (Array.isArray(payload?.rows)) return payload.rows.filter((row) => row && typeof row === 'object');
+  if (Array.isArray(payload?.items)) return payload.items.filter((row) => row && typeof row === 'object');
+  return [];
+};
+
+const buildProfessionalView = (item) => {
+  const source = item && typeof item === 'object' ? item : {};
+  const antes = safeParseJson(source.antes_json) || {};
+  const despues = safeParseJson(source.despues_json) || {};
+  const stockMovimiento = resolveVariacionStock(source, antes, despues);
+  const cantidad = resolveCantidad(source, despues, stockMovimiento);
+  const stockTotalActualizado = resolveStockTotalActualizado(source, despues);
+
+  return {
+    fechaHora: formatDateTime(source.created_at),
+    entidad: source.entidad || '-',
+    accion: source.accion || '-',
+    usuario: source.usuario_nombre || source.usuario_id || '-',
+    codigoProducto: resolveCodigoProducto(source, antes, despues) || '-',
+    descripcion: resolveDescripcion(source, antes, despues) || '-',
+    tipoMotivo: resolveTipoMotivo(source, despues) || '-',
+    documentoReferencia: resolveDocumentoReferencia(source, antes, despues) || '-',
+    operacionMadre: resolveOperacionMadreId(source, antes, despues) || '-',
+    idTransaccion: resolveOperacionTransaccionId(source, despues) || '-',
+    cantidad,
+    stockMovimiento,
+    stockTotalActualizado
+  };
+};
+
 const HistorialPage = () => {
   const mountedRef = useMountedRef();
   const [historial, setHistorial] = useState([]);
@@ -15,7 +371,6 @@ const HistorialPage = () => {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [expandido, setExpandido] = useState(null);
   const [exportando, setExportando] = useState(false);
 
   const cargarHistorial = useCallback(async () => {
@@ -23,7 +378,7 @@ const HistorialPage = () => {
       setLoading(true);
       const resp = await historialService.listar(filtros);
       if (!mountedRef.current) return;
-      setHistorial(resp.data || []);
+      setHistorial(normalizeHistorialRows(resp.data));
       setError('');
     } catch (err) {
       console.error('Error cargando historial:', err);
@@ -72,95 +427,6 @@ const HistorialPage = () => {
         setExportando(false);
       }
     }
-  };
-
-  const formatJson = (value) => {
-    if (!value) return '-';
-    try {
-      return JSON.stringify(JSON.parse(value), null, 2);
-    } catch (error) {
-      return value;
-    }
-  };
-
-  const buildResumen = (item, modo) => {
-    let antes = null;
-    let despues = null;
-    try {
-      antes = item.antes_json ? JSON.parse(item.antes_json) : null;
-      despues = item.despues_json ? JSON.parse(item.despues_json) : null;
-    } catch (error) {
-      return item.descripcion || '-';
-    }
-
-    if (item.entidad === 'movimientos') {
-      const stockAntes = antes?.stock ?? '-';
-      const stockDespues = despues?.stock ?? '-';
-      const cantidad = despues?.cantidad ?? '-';
-      const motivo = despues?.motivo ? ` | ${despues.motivo}` : '';
-      if (modo === 'antes') return `Stock: ${stockAntes}`;
-      if (modo === 'despues') return `Stock: ${stockDespues} | Cant: ${cantidad}${motivo}`;
-      return `Stock ${stockAntes} -> ${stockDespues} | Cant: ${cantidad}${motivo}`;
-    }
-
-    if (item.entidad === 'productos') {
-      const codigo = despues?.codigo || antes?.codigo || '-';
-      const stockAntes = antes?.stock ?? '-';
-      const stockDespues = despues?.stock ?? '-';
-      if (modo === 'antes') return `Codigo: ${codigo} | Stock: ${stockAntes}`;
-      if (modo === 'despues') return `Codigo: ${codigo} | Stock: ${stockDespues}`;
-      return `Codigo: ${codigo} | Stock ${stockAntes} -> ${stockDespues}`;
-    }
-
-    if (item.entidad === 'cotizaciones') {
-      const totalAntes = antes?.cotizacion?.total ?? antes?.total ?? '-';
-      const totalDespues = despues?.cotizacion?.total ?? despues?.total ?? '-';
-      const clienteAntes = antes?.cotizacion?.cliente_id ?? antes?.cliente_id ?? '-';
-      const clienteDespues = despues?.cotizacion?.cliente_id ?? despues?.cliente_id ?? '-';
-      if (modo === 'antes') return `Cliente: ${clienteAntes} | Total: ${totalAntes}`;
-      if (modo === 'despues') return `Cliente: ${clienteDespues} | Total: ${totalDespues}`;
-      return `Cliente ${clienteAntes} -> ${clienteDespues} | Total ${totalAntes} -> ${totalDespues}`;
-    }
-
-    if (item.entidad === 'clientes') {
-      const docAntes = antes?.dni || antes?.ruc || '-';
-      const docDespues = despues?.dni || despues?.ruc || '-';
-      const nombreAntes = antes?.razon_social || `${antes?.nombre || ''} ${antes?.apellido || ''}`.trim();
-      const nombreDespues = despues?.razon_social || `${despues?.nombre || ''} ${despues?.apellido || ''}`.trim();
-      if (modo === 'antes') return `Doc: ${docAntes} | ${nombreAntes || '-'}`;
-      if (modo === 'despues') return `Doc: ${docDespues} | ${nombreDespues || '-'}`;
-      return `Cliente ${docAntes} -> ${docDespues} | ${nombreAntes || '-'} -> ${nombreDespues || '-'}`;
-    }
-
-    if (item.entidad === 'kits') {
-      const nombreAntes = antes?.nombre || '-';
-      const nombreDespues = despues?.nombre || '-';
-      const precioAntes = antes?.precio_total ?? '-';
-      const precioDespues = despues?.precio_total ?? '-';
-      if (modo === 'antes') return `Kit: ${nombreAntes} | Total: ${precioAntes}`;
-      if (modo === 'despues') return `Kit: ${nombreDespues} | Total: ${precioDespues}`;
-      return `Kit ${nombreAntes} -> ${nombreDespues} | Total ${precioAntes} -> ${precioDespues}`;
-    }
-
-    if (item.entidad === 'usuarios') {
-      const nombreAntes = antes?.nombre || '-';
-      const nombreDespues = despues?.nombre || '-';
-      const rolAntes = antes?.rol || '-';
-      const rolDespues = despues?.rol || '-';
-      if (modo === 'antes') return `Usuario: ${nombreAntes} | Rol: ${rolAntes}`;
-      if (modo === 'despues') return `Usuario: ${nombreDespues} | Rol: ${rolDespues}`;
-      return `Usuario ${nombreAntes} -> ${nombreDespues} | Rol ${rolAntes} -> ${rolDespues}`;
-    }
-
-    if (item.entidad === 'tipos_maquinas') {
-      const nombreAntes = antes?.nombre || '-';
-      const nombreDespues = despues?.nombre || '-';
-      if (modo === 'antes') return `Tipo: ${nombreAntes}`;
-      if (modo === 'despues') return `Tipo: ${nombreDespues}`;
-      return `Tipo ${nombreAntes} -> ${nombreDespues}`;
-    }
-
-    return item.descripcion || '-';
   };
 
   return (
@@ -246,52 +512,49 @@ const HistorialPage = () => {
           <table className="historial-table">
             <thead>
               <tr>
-                <th>Fecha</th>
+                <th>Fecha y hora</th>
                 <th>Entidad</th>
                 <th>Accion</th>
                 <th>Usuario</th>
-                <th>Antes</th>
-                <th>Despues</th>
-                <th></th>
+                <th>Codigo prod</th>
+                <th>Descripcion</th>
+                <th>Tipo motivo movimiento</th>
+                <th>DNI/GUIA/RUC/Cambio codigo</th>
+                <th>N° operacion madre</th>
+                <th>ID transaccion</th>
+                <th>Cantidad</th>
+                <th>Stock movimiento</th>
+                <th>Stock total actualizado</th>
               </tr>
             </thead>
             <tbody>
-              {historial.map((item) => (
-                <React.Fragment key={item.id}>
-                  <tr>
-                    <td>{new Date(item.created_at).toLocaleString()}</td>
-                    <td>{item.entidad}</td>
-                    <td>{item.accion}</td>
-                    <td>{item.usuario_nombre || item.usuario_id || '-'}</td>
-                    <td>{buildResumen(item, 'antes')}</td>
-                    <td>{buildResumen(item, 'despues')}</td>
-                    <td>
-                      <button
-                        className="btn-secondary"
-                        onClick={() => setExpandido(expandido === item.id ? null : item.id)}
-                      >
-                        {expandido === item.id ? 'Ocultar' : 'Ver'}
-                      </button>
+              {historial.length === 0 && (
+                <tr>
+                  <td colSpan="13" className="historial-empty">Sin registros</td>
+                </tr>
+              )}
+              {historial.map((item) => {
+                const view = buildProfessionalView(item);
+                return (
+                  <tr key={item.id}>
+                    <td>{view.fechaHora}</td>
+                    <td>{view.entidad}</td>
+                    <td>{view.accion}</td>
+                    <td>{view.usuario}</td>
+                    <td className="cell-wrap">{view.codigoProducto}</td>
+                    <td className="cell-wrap">{view.descripcion}</td>
+                    <td className="cell-wrap">{view.tipoMotivo}</td>
+                    <td className="cell-wrap">{view.documentoReferencia}</td>
+                    <td>{view.operacionMadre}</td>
+                    <td>{view.idTransaccion}</td>
+                    <td className="cell-numeric">{formatNumberCell(view.cantidad)}</td>
+                    <td className={`cell-numeric ${stockClass(view.stockMovimiento)}`}>
+                      {formatSignedNumber(view.stockMovimiento)}
                     </td>
+                    <td className="cell-numeric">{formatNumberCell(view.stockTotalActualizado)}</td>
                   </tr>
-                  {expandido === item.id && (
-                    <tr className="historial-detalle">
-                      <td colSpan="7">
-                        <div className="detalle-grid">
-                          <div>
-                            <h4>Antes</h4>
-                            <pre>{formatJson(item.antes_json)}</pre>
-                          </div>
-                          <div>
-                            <h4>Despues</h4>
-                            <pre>{formatJson(item.despues_json)}</pre>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -301,6 +564,5 @@ const HistorialPage = () => {
 };
 
 export default HistorialPage;
-
 
 

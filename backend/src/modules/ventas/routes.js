@@ -5,6 +5,7 @@ const { autorizar } = require('../../core/middleware/auth');
 const router = express.Router();
 
 router.get('/', autorizar('ventas.ver'), controller.listarVentas);
+router.get('/cotizaciones/cargar', autorizar('ventas.editar'), controller.cargarCotizacionParaVenta);
 router.get('/detalle/listar', autorizar('ventas.ver'), controller.listarDetalleVentas);
 router.get('/requerimientos/historial', autorizar('ventas.ver'), controller.historialRequerimientos);
 router.get('/requerimientos/pendientes', autorizar('ventas.ver'), controller.listarRequerimientosPendientes);

@@ -28,6 +28,7 @@ const VentasModalFooter = ({ step, onBack, onNext, onSave, editId }) => (
 );
 
 const VentasStepDatos = ({
+  editId,
   formData,
   consultaMensaje,
   consultando,
@@ -35,9 +36,51 @@ const VentasStepDatos = ({
   agencias,
   estadosEnvio,
   onConsultarDocumento,
-  onFormChange
+  onFormChange,
+  cotizacionNumero,
+  setCotizacionNumero,
+  cargandoCotizacion,
+  cotizacionCargada,
+  onCargarCotizacion
 }) => (
   <div className="ventas-step-panel">
+    {!editId && (
+      <div className="form-group">
+        <label>Cargar cotizacion existente</label>
+        <div className="ventas-row ventas-row--cotizacion">
+          <input
+            type="text"
+            placeholder="Ejemplo: COT-123, #123 o 123"
+            value={cotizacionNumero}
+            onChange={(e) => setCotizacionNumero(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                onCargarCotizacion();
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={onCargarCotizacion}
+            disabled={cargandoCotizacion || !cotizacionNumero.trim()}
+          >
+            {cargandoCotizacion ? 'Cargando' : 'Cargar'}
+          </button>
+        </div>
+        {cotizacionCargada ? (
+          <span className="helper-text">
+            Cotizacion cargada: {cotizacionCargada.numero} ({cotizacionCargada.items} items)
+          </span>
+        ) : (
+          <span className="helper-text">
+            Carga cliente y productos desde una cotizacion ya registrada.
+          </span>
+        )}
+      </div>
+    )}
+
     <div className="form-row">
       <div className="form-group">
         <label>Documento (DNI/RUC)</label>
@@ -961,6 +1004,11 @@ const VentaFormModal = ({
   estadosEnvio,
   onConsultarDocumento,
   onFormChange,
+  cotizacionNumero,
+  setCotizacionNumero,
+  cargandoCotizacion,
+  cotizacionCargada,
+  onCargarCotizacion,
   tabProductos,
   tabProductosModo,
   tabReqModo,
@@ -1021,6 +1069,7 @@ const VentaFormModal = ({
 
     {step === 1 && (
       <VentasStepDatos
+        editId={editId}
         formData={formData}
         consultaMensaje={consultaMensaje}
         consultando={consultando}
@@ -1029,6 +1078,11 @@ const VentaFormModal = ({
         estadosEnvio={estadosEnvio}
         onConsultarDocumento={onConsultarDocumento}
         onFormChange={onFormChange}
+        cotizacionNumero={cotizacionNumero}
+        setCotizacionNumero={setCotizacionNumero}
+        cargandoCotizacion={cargandoCotizacion}
+        cotizacionCargada={cotizacionCargada}
+        onCargarCotizacion={onCargarCotizacion}
       />
     )}
     {step === 2 && (

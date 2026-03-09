@@ -21,6 +21,8 @@ const normalizarBusqueda = (value) =>
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^A-Z0-9]/g, '');
 
+const normalizarTextoMayus = (value) => String(value || '').trim().toUpperCase();
+
 const parseNumero = (value, fallback = 0) => {
   const parsed = Number(String(value).replace(',', '.'));
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -291,7 +293,7 @@ exports.obtenerUbicaciones = async (req, res) => {
 
 // Obtener una maquina por codigo
 exports.getMaquinaPorCodigo = async (req, res) => {
-  const codigo = String(req.params.codigo || '').trim();
+  const codigo = normalizarTextoMayus(req.params.codigo);
   if (!codigo) {
     return res.status(400).json({ error: 'Codigo requerido' });
   }
@@ -340,13 +342,16 @@ exports.crearMaquina = async (req, res) => {
     precio_minimo,
     ficha_web
   } = req.body;
+  const codigoNormalizado = normalizarTextoMayus(codigo);
+  const marcaNormalizada = normalizarTextoMayus(marca);
+  const descripcionNormalizada = normalizarTextoMayus(descripcion);
 
   // Validar campos requeridos
   const precioCompraVacio =
     precio_compra === undefined || precio_compra === null || precio_compra === '';
   const precioVentaVacio =
     precio_venta === undefined || precio_venta === null || precio_venta === '';
-  if (!codigo || !tipo_maquina_id || !marca || precioCompraVacio || precioVentaVacio) {
+  if (!codigoNormalizado || !tipo_maquina_id || !marcaNormalizada || precioCompraVacio || precioVentaVacio) {
     return res.status(400).json({
       error: 'Campos requeridos: codigo, tipo de maquina, marca, precio de compra y precio de venta'
     });
@@ -375,8 +380,8 @@ exports.crearMaquina = async (req, res) => {
   }
   const fichaWebValue = fichaWebValidation.value;
 
-  const codigoBusqueda = normalizarBusqueda(codigo);
-  const descripcionBusqueda = normalizarBusqueda(descripcion);
+  const codigoBusqueda = normalizarBusqueda(codigoNormalizado);
+  const descripcionBusqueda = normalizarBusqueda(descripcionNormalizada);
 
   let connection;
   try {
@@ -407,7 +412,7 @@ exports.crearMaquina = async (req, res) => {
 
     const [existente] = await connection.execute(
       'SELECT * FROM maquinas WHERE codigo = ? LIMIT 1',
-      [codigo]
+      [codigoNormalizado]
     );
 
     let ficha_tecnica_ruta = null;
@@ -424,8 +429,8 @@ exports.crearMaquina = async (req, res) => {
          WHERE id = ?`,
         [
           tipo_maquina_id,
-          marca,
-          descripcion || null,
+          marcaNormalizada,
+          descripcionNormalizada || null,
           codigoBusqueda,
           descripcionBusqueda,
           ubicacionParse.letra,
@@ -450,13 +455,13 @@ exports.crearMaquina = async (req, res) => {
         entidad_id: existente[0].id,
         usuario_id: req.usuario?.id,
         accion: 'reactivar',
-        descripcion: `Producto reactivado (${codigo})`,
+        descripcion: `Producto reactivado (${codigoNormalizado})`,
         antes: existente[0],
         despues: {
           ...existente[0],
           tipo_maquina_id,
-          marca,
-          descripcion: descripcion || null,
+          marca: marcaNormalizada,
+          descripcion: descripcionNormalizada || null,
           ubicacion_letra: ubicacionParse.letra,
           ubicacion_numero: ubicacionParse.numero,
           stock: stockValue,
@@ -473,10 +478,10 @@ exports.crearMaquina = async (req, res) => {
       connection = null;
       return res.status(200).json({
         id: existente[0].id,
-        codigo,
+        codigo: codigoNormalizado,
         tipo_maquina_id,
-        marca,
-        descripcion,
+        marca: marcaNormalizada,
+        descripcion: descripcionNormalizada || null,
         ubicacion_letra: ubicacionParse.letra,
         ubicacion_numero: ubicacionParse.numero,
          stock: stockValue,
@@ -496,10 +501,10 @@ exports.crearMaquina = async (req, res) => {
         ficha_web, ficha_tecnica_ruta, activo) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
       [
-        codigo,
+        codigoNormalizado,
         tipo_maquina_id,
-        marca,
-        descripcion || null,
+        marcaNormalizada,
+        descripcionNormalizada || null,
         codigoBusqueda,
         descripcionBusqueda,
         ubicacionParse.letra,
@@ -523,14 +528,14 @@ exports.crearMaquina = async (req, res) => {
       entidad_id: result.insertId,
       usuario_id: req.usuario?.id,
       accion: 'crear',
-      descripcion: `Producto creado (${codigo})`,
+      descripcion: `Producto creado (${codigoNormalizado})`,
       antes: null,
       despues: {
         id: result.insertId,
-        codigo,
+        codigo: codigoNormalizado,
         tipo_maquina_id,
-        marca,
-        descripcion: descripcion || null,
+        marca: marcaNormalizada,
+        descripcion: descripcionNormalizada || null,
         ubicacion_letra: ubicacionParse.letra,
         ubicacion_numero: ubicacionParse.numero,
         stock: stockValue,
@@ -545,10 +550,10 @@ exports.crearMaquina = async (req, res) => {
 
     res.status(201).json({
       id: result.insertId,
-      codigo,
+      codigo: codigoNormalizado,
       tipo_maquina_id,
-      marca,
-      descripcion,
+      marca: marcaNormalizada,
+      descripcion: descripcionNormalizada || null,
       ubicacion_letra: ubicacionParse.letra,
       ubicacion_numero: ubicacionParse.numero,
       stock: stockValue,
@@ -593,8 +598,11 @@ exports.actualizarMaquina = async (req, res) => {
     precio_minimo,
     ficha_web
   } = req.body;
+  const codigoNormalizado = normalizarTextoMayus(codigo);
+  const marcaNormalizada = normalizarTextoMayus(marca);
+  const descripcionNormalizada = normalizarTextoMayus(descripcion);
 
-  if (!codigo || !tipo_maquina_id || !marca) {
+  if (!codigoNormalizado || !tipo_maquina_id || !marcaNormalizada) {
     return res.status(400).json({ error: 'Campos requeridos: codigo, tipo de maquina, marca' });
   }
 
@@ -639,8 +647,8 @@ exports.actualizarMaquina = async (req, res) => {
     const precioVentaNum = toNumber(precioVentaInput);
     const precioMinimoNum = toNumber(precioMinimoInput) ?? 0;
     const stockNum = toNumber(stockInput);
-    const codigoBusqueda = normalizarBusqueda(codigo);
-    const descripcionBusqueda = normalizarBusqueda(descripcion);
+    const codigoBusqueda = normalizarBusqueda(codigoNormalizado);
+    const descripcionBusqueda = normalizarBusqueda(descripcionNormalizada);
     const fichaWebInputPresent = Object.prototype.hasOwnProperty.call(req.body, 'ficha_web');
 
     if (!isNonNegative(precioCompraNum) || !isNonNegative(precioVentaNum)) {
@@ -726,10 +734,10 @@ exports.actualizarMaquina = async (req, res) => {
            ficha_web = ?, ficha_tecnica_ruta = ?
        WHERE id = ?`,
       [
-        codigo,
+        codigoNormalizado,
         tipo_maquina_id,
-        marca,
-        descripcion || null,
+        marcaNormalizada,
+        descripcionNormalizada || null,
         codigoBusqueda,
         descripcionBusqueda,
         ubicacionParse.letra,
@@ -754,14 +762,14 @@ exports.actualizarMaquina = async (req, res) => {
       entidad_id: req.params.id,
       usuario_id: req.usuario?.id,
       accion: 'editar',
-      descripcion: `Producto actualizado (${codigo})`,
+      descripcion: `Producto actualizado (${codigoNormalizado})`,
       antes: maquinaActual[0],
       despues: {
         id: req.params.id,
-        codigo,
+        codigo: codigoNormalizado,
         tipo_maquina_id,
-        marca,
-        descripcion: descripcion || null,
+        marca: marcaNormalizada,
+        descripcion: descripcionNormalizada || null,
         ubicacion_letra: ubicacionParse.letra,
         ubicacion_numero: ubicacionParse.numero,
         stock: stockNum,
@@ -776,10 +784,10 @@ exports.actualizarMaquina = async (req, res) => {
 
     res.json({
       id: req.params.id,
-      codigo,
+      codigo: codigoNormalizado,
       tipo_maquina_id,
-      marca,
-      descripcion,
+      marca: marcaNormalizada,
+      descripcion: descripcionNormalizada || null,
       ubicacion_letra: ubicacionParse.letra,
       ubicacion_numero: ubicacionParse.numero,
       stock: stockNum,
@@ -856,9 +864,22 @@ exports.exportarExcel = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
-    const [rows] = await connection.execute(`
+    const [rowsPorUbicacion] = await connection.execute(`
       SELECT m.codigo, t.nombre as tipo_maquina, m.marca, m.descripcion,
-        m.ubicacion_letra, m.ubicacion_numero,
+        COALESCE(mu.ubicacion_letra, m.ubicacion_letra) as ubicacion_letra,
+        COALESCE(mu.ubicacion_numero, m.ubicacion_numero) as ubicacion_numero,
+        COALESCE(mu.stock, m.stock) as stock,
+        m.precio_compra, m.precio_venta, m.precio_minimo
+      FROM maquinas m
+      JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id
+      LEFT JOIN maquinas_ubicaciones mu
+        ON mu.producto_id = m.id
+       AND mu.stock > 0
+      WHERE m.activo = TRUE
+      ORDER BY m.codigo, ubicacion_letra, ubicacion_numero
+    `);
+    const [rowsStockTotal] = await connection.execute(`
+      SELECT m.codigo, t.nombre as tipo_maquina, m.marca, m.descripcion,
         m.stock, m.precio_compra, m.precio_venta, m.precio_minimo
       FROM maquinas m
       JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id
@@ -869,19 +890,31 @@ exports.exportarExcel = async (req, res) => {
     connection = null;
     const puedeVerPrecioCompra = tienePermiso(req, 'productos.precio_compra.ver');
 
-    const data = rows.map((row) => ({
+    const dataPorUbicacion = rowsPorUbicacion.map((row) => ({
       codigo: row.codigo,
       tipo_maquina: row.tipo_maquina,
       marca: row.marca,
       descripcion: row.descripcion,
-      ubicacion: row.ubicacion_letra ? `${row.ubicacion_letra}${row.ubicacion_numero || ''}` : '',
+      ubicacion_letra: row.ubicacion_letra || '',
+      ubicacion_numero: row.ubicacion_numero || '',
       stock: row.stock,
       precio_compra: puedeVerPrecioCompra ? row.precio_compra : null,
       precio_venta: row.precio_venta,
       precio_minimo: row.precio_minimo
     }));
+    const dataStockTotal = rowsStockTotal.map((row) => ({
+      codigo: row.codigo,
+      tipo_maquina: row.tipo_maquina,
+      marca: row.marca,
+      descripcion: row.descripcion,
+      stock_total: row.stock,
+      precio_compra: puedeVerPrecioCompra ? row.precio_compra : null,
+      precio_venta: row.precio_venta,
+      precio_minimo: row.precio_minimo
+    }));
     const workbook = new ExcelJS.Workbook();
-    addSheetFromObjects(workbook, 'Productos', data);
+    addSheetFromObjects(workbook, 'Productos_por_ubicacion', dataPorUbicacion);
+    addSheetFromObjects(workbook, 'Productos_stock_total', dataStockTotal);
     const buffer = await workbookToBuffer(workbook);
     res.setHeader(
       'Content-Type',
@@ -978,7 +1011,7 @@ exports.importarExcel = async (req, res) => {
         normalized[normalizarHeader(key)] = row[key];
       });
 
-      const codigo = String(normalized.codigo || '').trim();
+      const codigo = normalizarTextoMayus(normalized.codigo);
       if (!codigo) {
         continue;
       }
@@ -995,9 +1028,9 @@ exports.importarExcel = async (req, res) => {
         continue;
       }
 
-      const tipoNombre = String(
+      const tipoNombre = normalizarTextoMayus(
         normalized.tipomaquina || normalized.tipo || normalized.tipomaquinaid || ''
-      ).trim();
+      );
       let tipoId = tiposMap.get(tipoNombre.toLowerCase());
       if (!tipoId) {
         if (!tipoNombre) {
@@ -1006,13 +1039,13 @@ exports.importarExcel = async (req, res) => {
         }
         const [tipoInsert] = await connection.execute(
           'INSERT INTO tipos_maquinas (nombre, descripcion) VALUES (?, ?)',
-          [tipoNombre, 'Creado desde importacion']
+          [tipoNombre, 'CREADO DESDE IMPORTACION']
         );
         tipoId = tipoInsert.insertId;
         tiposMap.set(tipoNombre.toLowerCase(), tipoId);
       }
 
-      const marca = String(normalized.marca || '').trim();
+      const marca = normalizarTextoMayus(normalized.marca);
       const precioCompraRaw = normalized.preciocompra;
       const precioVentaRaw = normalized.precioventa;
       const precioCompra = parseNumeroNullable(precioCompraRaw);
@@ -1032,7 +1065,7 @@ exports.importarExcel = async (req, res) => {
         continue;
       }
 
-      const descripcion = String(normalized.descripcion || '').trim();
+      const descripcion = normalizarTextoMayus(normalized.descripcion);
       const codigoBusqueda = normalizarBusqueda(codigo);
       const descripcionBusqueda = normalizarBusqueda(descripcion);
       const stockRaw = parseNumeroNullable(normalized.stock);

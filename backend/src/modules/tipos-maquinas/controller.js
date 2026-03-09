@@ -1,6 +1,8 @@
 const pool = require('../../core/config/database');
 const { registrarHistorial } = require('../../shared/utils/historial');
 
+const normalizarTextoMayus = (value) => String(value || '').trim().toUpperCase();
+
 const releaseConnection = (connection) => {
   if (!connection) return;
   try {
@@ -61,7 +63,8 @@ exports.getTipoMaquina = async (req, res) => {
 
 // Crear nuevo tipo de máquina
 exports.crearTipoMaquina = async (req, res) => {
-  const { nombre, descripcion } = req.body;
+  const nombre = normalizarTextoMayus(req.body?.nombre);
+  const descripcion = normalizarTextoMayus(req.body?.descripcion);
 
   if (!nombre) {
     return res.status(400).json({ error: 'El nombre es requerido' });
@@ -105,7 +108,8 @@ exports.crearTipoMaquina = async (req, res) => {
 
 // Actualizar tipo de máquina
 exports.actualizarTipoMaquina = async (req, res) => {
-  const { nombre, descripcion } = req.body;
+  const nombre = normalizarTextoMayus(req.body?.nombre);
+  const descripcion = normalizarTextoMayus(req.body?.descripcion);
 
   let connection;
   try {

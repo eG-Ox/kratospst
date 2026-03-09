@@ -4,11 +4,134 @@ const { isPositiveInt, isNonEmptyString } = require('../../shared/utils/validati
 const { syncUbicacionPrincipal } = require('../../shared/utils/ubicaciones');
 
 const STOCK_ALERTA = Number(process.env.STOCK_ALERTA || 2);
+const REFERENCIA_TIPO_LABELS = {
+  dni: 'DNI',
+  ruc: 'RUC',
+  guia: 'GUIA',
+  cambio_codigo: 'CAMBIO CODIGO',
+  inventario: 'INVENTARIO',
+  otro: 'OTRO'
+};
+const DOCUMENTO_TOKEN_SINGLE_REGEX = /\b(DNI|RUC|GUIA|CAMBIO\s+CODIGO)\s*:\s*([^|]+)/i;
+const DOCUMENTO_TOKEN_REGEX = /\b(?:DNI|RUC|GUIA|CAMBIO\s+CODIGO)\s*:\s*[^|]+/gi;
+
+const normalizeOptionalText = (value) => {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+};
+
+const normalizeDocumentoLabel = (label) => (
+  String(label || '')
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+);
+
+const extractDocumentoFromText = (value) => {
+  const text = normalizeOptionalText(value);
+  if (!text) return null;
+  const match = text.match(DOCUMENTO_TOKEN_SINGLE_REGEX);
+  if (!match) return null;
+  const referenciaEtiqueta = normalizeDocumentoLabel(match[1]);
+  const referenciaValor = normalizeOptionalText(match[2]);
+  if (!referenciaValor) return null;
+
+  const referenciaTipo = referenciaEtiqueta
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+
+  return {
+    referencia_tipo: referenciaTipo,
+    referencia_valor: referenciaValor,
+    documento_referencia: `${referenciaEtiqueta}: ${referenciaValor}`
+  };
+};
+
+const sanitizeMotivo = (value) => {
+  const text = normalizeOptionalText(value);
+  if (!text) return null;
+  let cleaned = String(text).replace(DOCUMENTO_TOKEN_REGEX, ' ');
+  cleaned = cleaned
+    .replace(/\|/g, ' - ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/-\s*-/g, '-')
+    .replace(/^[:\-\s]+/, '')
+    .replace(/[:\-\s]+$/, '')
+    .trim();
+  return cleaned || null;
+};
+
+const parseReferenciaPayload = (payload = {}) => {
+  const referenciaDesdeDocumento = extractDocumentoFromText(payload.documento_referencia);
+  const referenciaDesdeMotivo = extractDocumentoFromText(payload.motivo);
+  const referenciaTipoRaw = normalizeOptionalText(
+    payload.referencia_tipo
+      || payload.documento_tipo
+      || referenciaDesdeDocumento?.referencia_tipo
+      || referenciaDesdeMotivo?.referencia_tipo
+      || null
+  );
+  const referenciaValor = normalizeOptionalText(
+    payload.referencia_numero
+      || payload.referencia_documento
+      || referenciaDesdeDocumento?.referencia_valor
+      || referenciaDesdeMotivo?.referencia_valor
+      || payload.documento_referencia
+      || null
+  );
+
+  if (referenciaTipoRaw && referenciaTipoRaw.length > 40) {
+    return { error: 'Tipo de referencia invalido (maximo 40 caracteres)' };
+  }
+  if (referenciaValor && referenciaValor.length > 120) {
+    return { error: 'Referencia invalida (maximo 120 caracteres)' };
+  }
+
+  const referenciaTipo = referenciaTipoRaw
+    ? referenciaTipoRaw.toLowerCase().replace(/\s+/g, '_')
+    : null;
+  const referenciaEtiqueta = referenciaTipo
+    ? REFERENCIA_TIPO_LABELS[referenciaTipo] || referenciaTipoRaw.toUpperCase()
+    : null;
+  const documentoReferencia = referenciaValor
+    ? referenciaEtiqueta
+      ? `${referenciaEtiqueta}: ${referenciaValor}`
+      : referenciaValor
+    : null;
+
+  return {
+    referencia_tipo: referenciaTipo,
+    referencia_valor: referenciaValor,
+    documento_referencia: documentoReferencia
+  };
+};
+
+const toMovimientoCantidad = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const buildTipoMotivo = (tipo, motivo) => {
+  const tipoNormalizado = normalizeOptionalText(tipo);
+  const motivoNormalizado = sanitizeMotivo(motivo);
+  if (tipoNormalizado && motivoNormalizado) {
+    return `${tipoNormalizado.toUpperCase()}-${motivoNormalizado.toUpperCase()}`;
+  }
+  if (tipoNormalizado) return tipoNormalizado.toUpperCase();
+  if (motivoNormalizado) return motivoNormalizado.toUpperCase();
+  return null;
+};
 
 // Registrar ingreso o salida
 exports.registrarMovimiento = async (req, res) => {
   const { maquina_id, tipo, cantidad, motivo } = req.body;
   const usuario_id = req.usuario.id;
+  const motivoLimpio = sanitizeMotivo(motivo);
+  const referencia = parseReferenciaPayload(req.body || {});
+  if (referencia.error) {
+    return res.status(400).json({ error: referencia.error });
+  }
 
   if (!maquina_id || !tipo || !cantidad) {
     return res.status(400).json({ error: 'Campos requeridos: maquina_id, tipo, cantidad' });
@@ -20,7 +143,7 @@ exports.registrarMovimiento = async (req, res) => {
   if (!isPositiveInt(cantidad)) {
     return res.status(400).json({ error: 'Cantidad invalida' });
   }
-  if (tipo === 'salida' && !isNonEmptyString(motivo)) {
+  if (tipo === 'salida' && !isNonEmptyString(motivoLimpio)) {
     return res.status(400).json({ error: 'Motivo requerido para salida' });
   }
 
@@ -29,9 +152,12 @@ exports.registrarMovimiento = async (req, res) => {
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
-    // Verificar que la máquina existe y obtener stock actual
+    // Verificar que la mÃƒÂ¡quina existe y obtener stock actual
     const [maquinas] = await connection.execute(
-      'SELECT stock, ubicacion_letra, ubicacion_numero FROM maquinas WHERE id = ? AND activo = TRUE FOR UPDATE',
+      `SELECT id, codigo, descripcion, stock, ubicacion_letra, ubicacion_numero
+       FROM maquinas
+       WHERE id = ? AND activo = TRUE
+       FOR UPDATE`,
       [maquina_id]
     );
 
@@ -41,7 +167,8 @@ exports.registrarMovimiento = async (req, res) => {
       return res.status(404).json({ error: 'Maquina no encontrada o inactiva' });
     }
 
-    const stockActual = maquinas[0].stock;
+    const maquina = maquinas[0];
+    const stockActual = Number(maquina.stock || 0);
 
     // Validar que no haya salida sin stock
     if (tipo === 'salida' && stockActual < cantidad) {
@@ -59,29 +186,57 @@ exports.registrarMovimiento = async (req, res) => {
     const [result] = await connection.execute(
       `INSERT INTO ingresos_salidas (maquina_id, usuario_id, tipo, cantidad, motivo) 
        VALUES (?, ?, ?, ?, ?)`,
-      [maquina_id, usuario_id, tipo, cantidad, motivo || null]
+      [maquina_id, usuario_id, tipo, cantidad, motivoLimpio || null]
     );
+    const movimientoDetalleId = Number(result.insertId || 0) || null;
+    const movimientoGrupoId = movimientoDetalleId ? String(movimientoDetalleId) : null;
+    const variacionStock = tipo === 'ingreso'
+      ? toMovimientoCantidad(cantidad)
+      : -toMovimientoCantidad(cantidad);
 
-    // Actualizar stock de la máquina
+    // Actualizar stock de la mÃƒÂ¡quina
     await connection.execute(
       'UPDATE maquinas SET stock = ? WHERE id = ?',
       [nuevoStock, maquina_id]
     );
     await syncUbicacionPrincipal(connection, {
       id: maquina_id,
-      ubicacion_letra: maquinas[0].ubicacion_letra,
-      ubicacion_numero: maquinas[0].ubicacion_numero,
+      ubicacion_letra: maquina.ubicacion_letra,
+      ubicacion_numero: maquina.ubicacion_numero,
       stock: nuevoStock
     });
 
     await registrarHistorial(connection, {
       entidad: 'movimientos',
-      entidad_id: result.insertId,
+      entidad_id: movimientoDetalleId,
       usuario_id,
       accion: tipo,
-      descripcion: `Movimiento ${tipo} (${maquina_id})`,
-      antes: { stock: stockActual },
-      despues: { stock: nuevoStock, cantidad, motivo: motivo || null }
+      descripcion: `Movimiento ${tipo} (${maquina.codigo || maquina_id})`,
+      antes: {
+        stock: stockActual,
+        producto_id: Number(maquina.id || maquina_id),
+        maquina_id: Number(maquina.id || maquina_id),
+        codigo_producto: maquina.codigo || null,
+        descripcion_producto: maquina.descripcion || null
+      },
+      despues: {
+        stock: nuevoStock,
+        cantidad: toMovimientoCantidad(cantidad),
+        variacion_stock: variacionStock,
+        producto_id: Number(maquina.id || maquina_id),
+        maquina_id: Number(maquina.id || maquina_id),
+        codigo_producto: maquina.codigo || null,
+        descripcion_producto: maquina.descripcion || null,
+        tipo_movimiento: tipo,
+        motivo: motivoLimpio || null,
+        tipo_motivo_movimiento: buildTipoMotivo(tipo, motivoLimpio || null),
+        documento_referencia: referencia.documento_referencia,
+        documento_referencia_tipo: referencia.referencia_tipo,
+        documento_referencia_valor: referencia.referencia_valor,
+        movimiento_id: movimientoGrupoId,
+        movimiento_grupo_id: movimientoGrupoId,
+        movimiento_detalle_id: movimientoDetalleId
+      }
     });
     await connection.commit();
     connection.release();
@@ -92,7 +247,9 @@ exports.registrarMovimiento = async (req, res) => {
       usuario_id,
       tipo,
       cantidad,
-      motivo,
+      motivo: motivoLimpio || null,
+      documento_referencia: referencia.documento_referencia,
+      movimiento_grupo_id: movimientoGrupoId,
       nuevo_stock: nuevoStock
     });
   } catch (error) {
@@ -117,11 +274,16 @@ exports.registrarMovimientosBatch = async (req, res) => {
   }
 
   const normalizados = [];
-  for (const item of items) {
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index] || {};
     const maquina_id = Number(item.maquina_id);
     const tipo = item.tipo;
     const cantidad = Number(item.cantidad);
-    const motivo = item.motivo || null;
+    const motivo = sanitizeMotivo(item.motivo || null);
+    const referencia = parseReferenciaPayload(item);
+    if (referencia.error) {
+      return res.status(400).json({ error: referencia.error });
+    }
     if (!maquina_id || !tipo || !cantidad) {
       return res.status(400).json({ error: 'Campos requeridos: maquina_id, tipo, cantidad' });
     }
@@ -134,7 +296,16 @@ exports.registrarMovimientosBatch = async (req, res) => {
     if (tipo === 'salida' && !isNonEmptyString(motivo)) {
       return res.status(400).json({ error: 'Motivo requerido para salida' });
     }
-    normalizados.push({ maquina_id, tipo, cantidad, motivo });
+    normalizados.push({
+      maquina_id,
+      tipo,
+      cantidad,
+      motivo,
+      referencia_tipo: referencia.referencia_tipo,
+      referencia_valor: referencia.referencia_valor,
+      documento_referencia: referencia.documento_referencia,
+      batch_index: index
+    });
   }
 
   let connection;
@@ -145,7 +316,7 @@ exports.registrarMovimientosBatch = async (req, res) => {
     const ids = Array.from(new Set(normalizados.map((item) => item.maquina_id)));
     const placeholders = ids.map(() => '?').join(',');
     const [rows] = await connection.execute(
-      `SELECT id, stock, ubicacion_letra, ubicacion_numero
+      `SELECT id, codigo, descripcion, stock, ubicacion_letra, ubicacion_numero
        FROM maquinas
        WHERE id IN (${placeholders}) AND activo = TRUE
        FOR UPDATE`,
@@ -157,6 +328,8 @@ exports.registrarMovimientosBatch = async (req, res) => {
         Number(row.id),
         {
           stock: Number(row.stock || 0),
+          codigo: row.codigo || null,
+          descripcion: row.descripcion || null,
           ubicacion_letra: row.ubicacion_letra,
           ubicacion_numero: row.ubicacion_numero
         }
@@ -189,6 +362,8 @@ exports.registrarMovimientosBatch = async (req, res) => {
 
     const chunkSize = 500;
     let insertResult = null;
+    const movimientoDetalleIds = new Array(normalizados.length).fill(null);
+    let movimientoGrupoId = null;
     for (let i = 0; i < normalizados.length; i += chunkSize) {
       const chunk = normalizados.slice(i, i + chunkSize);
       const valuesSql = chunk.map(() => '(?, ?, ?, ?, ?)').join(',');
@@ -204,6 +379,18 @@ exports.registrarMovimientosBatch = async (req, res) => {
       if (!insertResult) {
         insertResult = result;
       }
+      const startId = Number(result.insertId || 0);
+      if (!movimientoGrupoId && Number.isFinite(startId) && startId > 0) {
+        movimientoGrupoId = String(startId);
+      }
+      if (Number.isFinite(startId) && startId > 0) {
+        chunk.forEach((item, chunkIndex) => {
+          movimientoDetalleIds[item.batch_index] = startId + chunkIndex;
+        });
+      }
+    }
+    if (!movimientoGrupoId && insertResult?.insertId) {
+      movimientoGrupoId = String(insertResult.insertId);
     }
 
     for (const [maquinaId, delta] of deltaMap.entries()) {
@@ -230,21 +417,50 @@ exports.registrarMovimientosBatch = async (req, res) => {
       const stockAntes = Number(runningStockMap.get(item.maquina_id) || 0);
       const delta = item.tipo === 'ingreso' ? Number(item.cantidad || 0) : -Number(item.cantidad || 0);
       const stockDespues = stockAntes + delta;
+      const stockInfo = stockMap.get(item.maquina_id) || {};
+      const movimientoDetalleId = movimientoDetalleIds[item.batch_index];
       runningStockMap.set(item.maquina_id, stockDespues);
       await registrarHistorial(connection, {
         entidad: 'movimientos',
-        entidad_id: null,
+        entidad_id: movimientoDetalleId,
         usuario_id,
         accion: item.tipo,
-        descripcion: `Movimiento ${item.tipo} (${item.maquina_id})`,
-        antes: { stock: stockAntes },
-        despues: { stock: stockDespues, cantidad: item.cantidad, motivo: item.motivo }
+        descripcion: `Movimiento ${item.tipo} (${stockInfo.codigo || item.maquina_id})`,
+        antes: {
+          stock: stockAntes,
+          producto_id: Number(item.maquina_id),
+          maquina_id: Number(item.maquina_id),
+          codigo_producto: stockInfo.codigo || null,
+          descripcion_producto: stockInfo.descripcion || null
+        },
+        despues: {
+          stock: stockDespues,
+          cantidad: toMovimientoCantidad(item.cantidad),
+          variacion_stock: delta,
+          producto_id: Number(item.maquina_id),
+          maquina_id: Number(item.maquina_id),
+          codigo_producto: stockInfo.codigo || null,
+          descripcion_producto: stockInfo.descripcion || null,
+          tipo_movimiento: item.tipo,
+          motivo: item.motivo,
+          tipo_motivo_movimiento: buildTipoMotivo(item.tipo, item.motivo),
+          documento_referencia: item.documento_referencia,
+          documento_referencia_tipo: item.referencia_tipo,
+          documento_referencia_valor: item.referencia_valor,
+          movimiento_id: movimientoGrupoId,
+          movimiento_grupo_id: movimientoGrupoId,
+          movimiento_detalle_id: movimientoDetalleId
+        }
       });
     }
 
     await connection.commit();
     connection.release();
-    res.status(201).json({ ok: true, total: normalizados.length });
+    res.status(201).json({
+      ok: true,
+      total: normalizados.length,
+      movimiento_grupo_id: movimientoGrupoId
+    });
   } catch (error) {
     console.error('Error registrando movimientos batch:', error);
     if (connection) {
@@ -320,7 +536,7 @@ exports.obtenerMovimientos = async (req, res) => {
   }
 };
 
-// Obtener movimientos de una máquina específica
+// Obtener movimientos de una mÃƒÂ¡quina especÃƒÂ­fica
 exports.obtenerMovimientosPorMaquina = async (req, res) => {
   const { maquina_id } = req.params;
   const { limite = 20, pagina = 1 } = req.query;
@@ -409,3 +625,4 @@ exports.obtenerEstadisticas = async (req, res) => {
     }
   }
 };
+

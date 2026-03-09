@@ -463,11 +463,23 @@ exports.aplicarStock = async (req, res) => {
       await connection.rollback();
       return res.status(400).json({ error: 'Inventario debe estar cerrado' });
     }
+    const [cierreRows] = await connection.execute(
+      `SELECT created_at
+       FROM historial_acciones
+       WHERE entidad = 'inventario_general'
+         AND entidad_id = ?
+         AND accion = 'cerrar'
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+      [req.params.id]
+    );
+    const fechaReferencia = formatLocalDate(
+      cierreRows[0]?.created_at || inventario.created_at
+    );
     const hoy = formatLocalDate(new Date());
-    const fechaInventario = formatLocalDate(inventario.created_at);
-    if (hoy !== fechaInventario) {
+    if (hoy !== fechaReferencia) {
       await connection.rollback();
-      return res.status(400).json({ error: 'Solo se puede aplicar stock el mismo dia' });
+      return res.status(400).json({ error: 'Solo se puede aplicar stock el mismo dia del cierre' });
     }
     if (inventario.aplicado_at) {
       await connection.rollback();
@@ -475,7 +487,7 @@ exports.aplicarStock = async (req, res) => {
     }
 
     const [detalles] = await connection.execute(
-      `SELECT d.*, m.codigo, m.descripcion
+      `SELECT d.*, m.codigo, m.descripcion, m.stock AS stock_sistema
        FROM inventario_detalle d
        JOIN maquinas m ON d.producto_id = m.id
        WHERE d.inventario_id = ?`,
@@ -490,7 +502,7 @@ exports.aplicarStock = async (req, res) => {
 
     // Detectar productos no escaneados en este inventario
     const [noEscaneados] = await connection.execute(
-      `SELECT m.id, m.codigo
+      `SELECT m.id, m.codigo, m.descripcion, m.stock
        FROM maquinas m
        WHERE m.activo = TRUE
          AND NOT EXISTS (
@@ -516,6 +528,42 @@ exports.aplicarStock = async (req, res) => {
         await handler(ids.slice(i, i + chunkSize));
       }
     };
+    const ajustesInventario = [];
+    const productoVistos = new Set();
+
+    detalles.forEach((detalle) => {
+      const productoId = Number(detalle.producto_id);
+      if (productoVistos.has(productoId)) return;
+      productoVistos.add(productoId);
+
+      const stockAntes = Number(detalle.stock_sistema || 0);
+      const stockDespues = Number(stockPorProducto.get(productoId) || 0);
+      const variacion = stockDespues - stockAntes;
+      if (variacion === 0) return;
+
+      ajustesInventario.push({
+        producto_id: productoId,
+        codigo_producto: detalle.codigo || null,
+        descripcion_producto: detalle.descripcion || null,
+        stock_antes: stockAntes,
+        stock_despues: stockDespues,
+        variacion_stock: variacion
+      });
+    });
+
+    noEscaneados.forEach((item) => {
+      const stockAntes = Number(item.stock || 0);
+      const variacion = -stockAntes;
+      if (variacion === 0) return;
+      ajustesInventario.push({
+        producto_id: Number(item.id),
+        codigo_producto: item.codigo || null,
+        descripcion_producto: item.descripcion || null,
+        stock_antes: stockAntes,
+        stock_despues: 0,
+        variacion_stock: variacion
+      });
+    });
 
     if (productoIdList.length) {
       await chunkIds(productoIdList, async (chunk) => {
@@ -586,6 +634,77 @@ exports.aplicarStock = async (req, res) => {
         );
       });
     }
+    let movimientoGrupoId = null;
+    if (ajustesInventario.length) {
+      const motivoAjuste = `Ajuste inventario general #${req.params.id}`;
+      const chunkMovimientos = 500;
+      for (let i = 0; i < ajustesInventario.length; i += chunkMovimientos) {
+        const chunk = ajustesInventario.slice(i, i + chunkMovimientos);
+        const valuesSql = chunk.map(() => '(?, ?, ?, ?, ?)').join(',');
+        const params = [];
+        chunk.forEach((item) => {
+          const tipoMovimiento = item.variacion_stock > 0 ? 'ingreso' : 'salida';
+          const cantidad = Math.abs(Number(item.variacion_stock || 0));
+          params.push(item.producto_id, req.usuario.id, tipoMovimiento, cantidad, motivoAjuste);
+        });
+        const [insertResult] = await connection.execute(
+          `INSERT INTO ingresos_salidas (maquina_id, usuario_id, tipo, cantidad, motivo)
+           VALUES ${valuesSql}`,
+          params
+        );
+        const startId = Number(insertResult.insertId || 0);
+        if (!movimientoGrupoId && Number.isFinite(startId) && startId > 0) {
+          movimientoGrupoId = String(startId);
+        }
+        if (Number.isFinite(startId) && startId > 0) {
+          chunk.forEach((item, index) => {
+            item.movimiento_detalle_id = startId + index;
+          });
+        }
+      }
+      if (!movimientoGrupoId) {
+        movimientoGrupoId = `INV-${req.params.id}`;
+      }
+
+      for (const ajuste of ajustesInventario) {
+        const variacion = Number(ajuste.variacion_stock || 0);
+        const tipoMovimiento = variacion > 0 ? 'ingreso' : 'salida';
+        await registrarHistorial(connection, {
+          entidad: 'movimientos',
+          entidad_id: ajuste.movimiento_detalle_id || null,
+          usuario_id: req.usuario.id,
+          accion: tipoMovimiento,
+          descripcion: `Ajuste inventario ${req.params.id} (${ajuste.codigo_producto || ajuste.producto_id})`,
+          antes: {
+            stock: Number(ajuste.stock_antes || 0),
+            producto_id: Number(ajuste.producto_id || 0) || null,
+            maquina_id: Number(ajuste.producto_id || 0) || null,
+            codigo_producto: ajuste.codigo_producto || null,
+            descripcion_producto: ajuste.descripcion_producto || null
+          },
+          despues: {
+            stock: Number(ajuste.stock_despues || 0),
+            cantidad: Math.abs(variacion),
+            variacion_stock: variacion,
+            producto_id: Number(ajuste.producto_id || 0) || null,
+            maquina_id: Number(ajuste.producto_id || 0) || null,
+            codigo_producto: ajuste.codigo_producto || null,
+            descripcion_producto: ajuste.descripcion_producto || null,
+            tipo_movimiento: tipoMovimiento,
+            motivo: motivoAjuste,
+            tipo_motivo_movimiento: `${String(tipoMovimiento).toUpperCase()}-${String(motivoAjuste).toUpperCase()}`,
+            documento_referencia: `INVENTARIO: ${req.params.id}`,
+            documento_referencia_tipo: 'inventario',
+            documento_referencia_valor: String(req.params.id),
+            movimiento_id: movimientoGrupoId,
+            movimiento_grupo_id: movimientoGrupoId,
+            movimiento_detalle_id: ajuste.movimiento_detalle_id || null,
+            origen: 'inventario_general',
+            inventario_id: Number(req.params.id)
+          }
+        });
+      }
+    }
 
     await connection.execute(
       `UPDATE inventarios
@@ -601,11 +720,20 @@ exports.aplicarStock = async (req, res) => {
       accion: 'aplicar',
       descripcion: 'Stock actualizado desde inventario general',
       antes: { estado: inventario.estado },
-      despues: { estado: 'aplicado' }
+      despues: {
+        estado: 'aplicado',
+        movimiento_id: movimientoGrupoId,
+        movimiento_grupo_id: movimientoGrupoId,
+        movimientos_generados: ajustesInventario.length
+      }
     });
 
     await connection.commit();
-    res.json({ mensaje: 'Stock actualizado' });
+    res.json({
+      mensaje: 'Stock actualizado',
+      movimiento_id: movimientoGrupoId,
+      movimientos_generados: ajustesInventario.length
+    });
   } catch (error) {
     console.error('Error aplicando stock:', error);
     if (connection) {

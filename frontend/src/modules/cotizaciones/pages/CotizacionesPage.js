@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   clientesService,
@@ -45,6 +45,8 @@ const CotizacionesPage = () => {
   const [kits, setKits] = useState([]);
   const [kitSeleccionado, setKitSeleccionado] = useState('');
   const [items, setItems] = useState([]);
+  const [mostrarClientesMenu, setMostrarClientesMenu] = useState(false);
+  const clientePickerRef = useRef(null);
   const location = useLocation();
 
   const cargarClientes = useCallback(async () => {
@@ -160,6 +162,27 @@ const CotizacionesPage = () => {
   }, [clientes, clienteSearch]);
 
   const modoEdicion = Boolean(cotizacionEditId);
+
+  const clienteSeleccionadoLabel = useMemo(() => {
+    const cliente = clientes.find((c) => String(c.id) === String(clienteId));
+    if (!cliente) return '';
+    const nombre = cliente.tipo_cliente === 'natural' || cliente.tipo_cliente === 'ce'
+      ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim()
+      : cliente.razon_social || '';
+    const documento = cliente.dni || cliente.ruc || '';
+    return `${nombre} (${documento})`.trim();
+  }, [clientes, clienteId]);
+
+  useEffect(() => {
+    if (!mostrarClientesMenu) return undefined;
+    const onClickOutside = (event) => {
+      if (!clientePickerRef.current?.contains(event.target)) {
+        setMostrarClientesMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [mostrarClientesMenu]);
 
 
   const agregarItemCotizacion = (nuevo) => {
@@ -324,6 +347,8 @@ const CotizacionesPage = () => {
     setItems([]);
     setNotas('');
     setClienteId('');
+    setClienteSearch('');
+    setMostrarClientesMenu(false);
     setCotizacionEditId(null);
     setError('');
   };
@@ -722,26 +747,38 @@ const CotizacionesPage = () => {
             <div className="cotizacion-section">
               <label>Cliente</label>
               <div className="cliente-row">
-                <div className="cliente-search">
+                <div className="cliente-search" ref={clientePickerRef}>
                   <input
                     type="text"
                     placeholder="Buscar cliente por nombre o documento"
                     value={clienteSearch}
-                    onChange={(e) => setClienteSearch(e.target.value)}
+                    onFocus={() => setMostrarClientesMenu(true)}
+                    onChange={(e) => {
+                      setClienteSearch(e.target.value);
+                      setMostrarClientesMenu(true);
+                    }}
                   />
-                  <select value={clienteId} onChange={(e) => setClienteId(e.target.value)}>
-                    <option value="">Selecciona un cliente</option>
-                    {clientesFiltrados.map((cliente) => (
-                      <option key={cliente.id} value={cliente.id}>
-                        {cliente.tipo_cliente === 'natural' || cliente.tipo_cliente === 'ce'
-                          ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim()
-                          : cliente.razon_social}{' '}
-                        ({cliente.dni || cliente.ruc})
-                      </option>
-                    ))}
-                  </select>
-                  {clienteSearch.trim().length > 0 && (
+                  <button
+                    type="button"
+                    className={`cliente-selector-trigger ${mostrarClientesMenu ? 'open' : ''}`}
+                    onClick={() => setMostrarClientesMenu((prev) => !prev)}
+                  >
+                    <span>{clienteSeleccionadoLabel || 'Selecciona un cliente'}</span>
+                    <span className="cliente-selector-icon">▾</span>
+                  </button>
+                  {mostrarClientesMenu && (
                     <div className="cliente-resultados">
+                      <button
+                        type="button"
+                        className={`cliente-item ${!clienteId ? 'active' : ''}`}
+                        onClick={() => {
+                          setClienteId('');
+                          setClienteSearch('');
+                          setMostrarClientesMenu(false);
+                        }}
+                      >
+                        Selecciona un cliente
+                      </button>
                       {clientesFiltrados.slice(0, 10).map((cliente) => {
                         const label = cliente.tipo_cliente === 'natural' || cliente.tipo_cliente === 'ce'
                           ? `${cliente.nombre || ''} ${cliente.apellido || ''}`.trim()
@@ -751,10 +788,11 @@ const CotizacionesPage = () => {
                           <button
                             type="button"
                             key={cliente.id}
-                            className="cliente-item"
+                            className={`cliente-item ${String(cliente.id) === String(clienteId) ? 'active' : ''}`}
                             onClick={() => {
                               setClienteId(String(cliente.id));
                               setClienteSearch(label);
+                              setMostrarClientesMenu(false);
                             }}
                           >
                             {label} ({doc})

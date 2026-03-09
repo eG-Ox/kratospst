@@ -16,8 +16,7 @@ const normalizarMarcaCodigo = (value) => String(value || '').trim().toUpperCase(
 const normalizarCodigo = (value) =>
   String(value || '')
     .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '');
+    .toUpperCase();
 
 const GestorInventarioPage = () => {
   const mountedRef = useMountedRef();

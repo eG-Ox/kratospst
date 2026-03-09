@@ -3,6 +3,7 @@ const { ExcelJS, addSheetFromObjects, workbookToBuffer } = require('../../shared
 const { isNonEmptyString, isNonNegative, isPositiveInt, validateDocumento, toNumber } = require('../../shared/utils/validation');
 const { syncUbicacionPrincipal } = require('../../shared/utils/ubicaciones');
 const { tienePermiso } = require('../../core/middleware/auth');
+const { registrarHistorial } = require('../../shared/utils/historial');
 
 const formatDate = (value) => {
   if (!value) return null;
@@ -20,6 +21,30 @@ const DOCUMENTO_TIPOS_VALIDOS = new Set(['dni', 'ruc']);
 const AGENCIAS_VALIDAS = new Set(['SHALOM', 'MARVISUR', 'OLVA', 'OTROS', 'TIENDA']);
 const ESTADOS_ENVIO_VALIDOS = new Set(['PENDIENTE', 'ENVIADO', 'CANCELADO', 'VISITA']);
 const PERMISO_VER_PRECIO_COMPRA = 'productos.precio_compra.ver';
+const OPERACION_ID_MAX_LENGTH = 64;
+
+const normalizarOperacionToken = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '');
+
+const recortarOperacionId = (value) => {
+  const text = String(value || '').trim();
+  return text ? text.slice(0, OPERACION_ID_MAX_LENGTH) : null;
+};
+
+const crearOperacionScope = (...parts) => {
+  const token = Date.now().toString(36).toUpperCase();
+  const base = recortarOperacionId(
+    [...parts.map((part) => normalizarOperacionToken(part)).filter(Boolean), token].join('-')
+  ) || token;
+  return {
+    operacionMadreId: base,
+    transaccionId: (suffix = 'TX') =>
+      recortarOperacionId(`${base}-${normalizarOperacionToken(suffix) || 'TX'}`) || base
+  };
+};
 
 const mapVentaRow = (row) => ({
   id: row.id,
@@ -142,6 +167,16 @@ const rollbackSilently = async (connection) => {
   }
 };
 
+const beginTransactionSilently = async (connection) => {
+  if (!connection || typeof connection.beginTransaction !== 'function') return;
+  await connection.beginTransaction();
+};
+
+const commitSilently = async (connection) => {
+  if (!connection || typeof connection.commit !== 'function') return;
+  await connection.commit();
+};
+
 const normalizarDocumentoTipo = (value) => String(value || '').trim().toLowerCase();
 const normalizarAgencia = (value) => String(value || '').trim().toUpperCase();
 const normalizarEstadoEnvio = (value) => String(value || 'PENDIENTE').trim().toUpperCase();
@@ -156,6 +191,55 @@ const appendOwnerScope = (req, params, alias = 'v') => {
   }
   params.push(ownerUserId);
   return ` AND ${alias}.usuario_id = ?`;
+};
+
+const parseNumeroCotizacion = (value) => {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '');
+  if (!normalized) return [];
+
+  const candidates = [];
+  const seen = new Set();
+  const pushCandidate = (candidate) => {
+    const key =
+      candidate.type === 'id'
+        ? `id:${candidate.id}`
+        : `serie:${candidate.serie}:${candidate.correlativo}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(candidate);
+  };
+
+  const serieMatch = normalized.match(/^([A-Z0-9]{1,10})-(\d{1,10})$/);
+  if (serieMatch) {
+    pushCandidate({
+      type: 'serie',
+      serie: serieMatch[1],
+      correlativo: Number.parseInt(serieMatch[2], 10)
+    });
+    return candidates;
+  }
+
+  const hashMatch = normalized.match(/^#(\d{1,10})$/);
+  if (hashMatch) {
+    pushCandidate({
+      type: 'id',
+      id: Number.parseInt(hashMatch[1], 10)
+    });
+    return candidates;
+  }
+
+  const numericMatch = normalized.match(/^(\d{1,10})$/);
+  if (numericMatch) {
+    const numericValue = Number.parseInt(numericMatch[1], 10);
+    pushCandidate({ type: 'id', id: numericValue });
+    pushCandidate({ type: 'serie', serie: 'COT', correlativo: numericValue });
+    return candidates;
+  }
+
+  return [];
 };
 
 
@@ -180,12 +264,58 @@ const validarDetalleItems = (items, label) => {
   return null;
 };
 const normalizarTexto = (value) => String(value || '').trim();
+const normalizarTextoMayus = (value) => normalizarTexto(value).toUpperCase();
 const normalizarClave = (value) =>
   normalizarTexto(value)
     .toUpperCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^A-Z0-9]/g, '');
+
+const normalizarEntero = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const obtenerVentaConDetalle = async (connection, ventaId) => {
+  const [ventaRows] = await connection.execute(
+    `SELECT id, usuario_id, documento_tipo, documento, cliente_nombre, cliente_telefono,
+            agencia, agencia_otro, destino, fecha_venta, estado_envio, estado_pedido,
+            fecha_despacho, fecha_cancelacion, adelanto, p_venta, rastreo_estado, ticket, guia, retiro, notas
+       FROM ventas
+      WHERE id = ?
+      LIMIT 1`,
+    [ventaId]
+  );
+  if (!ventaRows.length) {
+    return null;
+  }
+  const [detalleRows] = await connection.execute(
+    `SELECT id, producto_id, tipo, codigo, descripcion, marca, cantidad, cantidad_picked,
+            precio_venta, precio_compra, proveedor, stock
+       FROM ventas_detalle
+      WHERE venta_id = ?
+      ORDER BY id ASC`,
+    [ventaId]
+  );
+  return {
+    ...ventaRows[0],
+    detalle: (detalleRows || []).map((row) => ({
+      id: Number(row.id),
+      producto_id: row.producto_id ? Number(row.producto_id) : null,
+      tipo: row.tipo,
+      codigo: row.codigo,
+      descripcion: row.descripcion,
+      marca: row.marca,
+      cantidad: normalizarEntero(row.cantidad),
+      cantidad_picked: normalizarEntero(row.cantidad_picked),
+      precio_venta: Number(row.precio_venta || 0),
+      precio_compra: Number(row.precio_compra || 0),
+      proveedor: row.proveedor || null,
+      stock: row.stock === null ? null : Number(row.stock || 0)
+    }))
+  };
+};
 
 const obtenerTipoRequerimientoId = async (connection) => {
   const nombre = 'REQUERIMIENTO';
@@ -249,8 +379,8 @@ const buscarProductoPorClave = async (connection, clave) => {
 };
 
 const buscarProductoRequerimiento = async (connection, item) => {
-  const codigo = normalizarTexto(item.codigo);
-  const descripcion = normalizarTexto(item.descripcion);
+  const codigo = normalizarTextoMayus(item.codigo);
+  const descripcion = normalizarTextoMayus(item.descripcion);
   if (codigo) {
     const porCodigo = await buscarProductoPorClave(connection, codigo);
     if (porCodigo) return porCodigo;
@@ -264,9 +394,9 @@ const buscarProductoRequerimiento = async (connection, item) => {
 
 const crearProductoDesdeRequerimiento = async (connection, item) => {
   const tipoId = await obtenerTipoRequerimientoId(connection);
-  const codigoPreferido = normalizarTexto(item.codigo);
-  const descripcion = normalizarTexto(item.descripcion) || 'Requerimiento';
-  const marca = normalizarTexto(item.marca) || 'REQUERIMIENTO';
+  const codigoPreferido = normalizarTextoMayus(item.codigo);
+  const descripcion = normalizarTextoMayus(item.descripcion) || 'REQUERIMIENTO';
+  const marca = normalizarTextoMayus(item.marca) || 'REQUERIMIENTO';
   const precioCompra = Number(item.precioCompra || item.precio_compra || 0);
   const precioVenta = Number(item.precioVenta || item.precio_venta || 0);
   const precioMinimo = Number(item.precioMinimo || item.precio_minimo || precioVenta || 0);
@@ -327,7 +457,7 @@ const crearProductoDesdeRequerimiento = async (connection, item) => {
 
 const buscarDetallePendientePorCodigo = async (connection, codigo, ventaId, ownerUserId) => {
   const normalizada = normalizarClave(codigo);
-  const codigoExacto = normalizarTexto(codigo);
+  const codigoExacto = normalizarTextoMayus(codigo);
   if (!normalizada && !codigoExacto) return null;
 
   const whereVentaId = ventaId ? ' AND d.venta_id = ?' : '';
@@ -537,6 +667,136 @@ exports.obtenerVenta = async (req, res) => {
   }
 };
 
+exports.cargarCotizacionParaVenta = async (req, res) => {
+  const numeroRaw = String(req.query.numero || '').trim();
+  if (!numeroRaw) {
+    return res.status(400).json({ error: 'Numero de cotizacion requerido' });
+  }
+
+  const candidates = parseNumeroCotizacion(numeroRaw);
+  if (!candidates.length) {
+    return res.status(400).json({
+      error: 'Formato invalido. Use COT-123, #123 o 123.'
+    });
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    let cotizacion = null;
+
+    for (const candidate of candidates) {
+      const params = [];
+      let where = '';
+      if (candidate.type === 'id') {
+        where = 'c.id = ?';
+        params.push(candidate.id);
+      } else {
+        where = 'c.serie = ? AND c.correlativo = ?';
+        params.push(candidate.serie, candidate.correlativo);
+      }
+      const ownerScope = appendOwnerScope(req, params, 'c');
+      const [rows] = await connection.execute(
+        `SELECT c.id, c.usuario_id, c.cliente_id, c.fecha, c.total, c.descuento, c.nota, c.serie, c.correlativo,
+                cl.tipo_cliente,
+                cl.dni AS cliente_dni,
+                cl.ruc AS cliente_ruc,
+                cl.nombre AS cliente_nombre,
+                cl.apellido AS cliente_apellido,
+                cl.razon_social AS cliente_razon_social,
+                cl.telefono AS cliente_telefono
+           FROM cotizaciones c
+           LEFT JOIN clientes cl ON c.cliente_id = cl.id
+          WHERE ${where}${ownerScope}
+          LIMIT 1`,
+        params
+      );
+      if (rows.length) {
+        cotizacion = rows[0];
+        break;
+      }
+    }
+
+    if (!cotizacion) {
+      return res.status(404).json({ error: 'Cotizacion no encontrada' });
+    }
+
+    const [detalleRows] = await connection.execute(
+      `SELECT d.id,
+              d.producto_id,
+              d.cantidad,
+              d.precio_unitario,
+              d.precio_regular,
+              d.almacen_origen,
+              m.codigo,
+              m.descripcion,
+              m.marca,
+              m.stock
+         FROM detalle_cotizacion d
+         JOIN maquinas m ON m.id = d.producto_id
+        WHERE d.cotizacion_id = ?
+        ORDER BY d.id ASC`,
+      [cotizacion.id]
+    );
+
+    if (!detalleRows.length) {
+      return res.status(400).json({ error: 'La cotizacion no tiene productos.' });
+    }
+
+    const dni = String(cotizacion.cliente_dni || '').trim();
+    const ruc = String(cotizacion.cliente_ruc || '').trim();
+    const tipoCliente = String(cotizacion.tipo_cliente || '').trim().toLowerCase();
+    const documentoTipo =
+      (tipoCliente === 'juridico' && ruc) || (!dni && ruc) ? 'ruc' : 'dni';
+    const documento = documentoTipo === 'ruc' ? ruc : dni;
+    const nombreNatural = `${cotizacion.cliente_nombre || ''} ${
+      cotizacion.cliente_apellido || ''
+    }`.trim();
+    const clienteNombre = String(cotizacion.cliente_razon_social || nombreNatural || '').trim();
+    const clienteTelefono = String(cotizacion.cliente_telefono || '').trim();
+    const serie = String(cotizacion.serie || 'COT').trim() || 'COT';
+    const correlativo = Number(cotizacion.correlativo || 0);
+
+    const items = detalleRows.map((row) => ({
+      id: Number(row.id),
+      productoId: row.producto_id ? Number(row.producto_id) : null,
+      codigo: row.codigo || '',
+      descripcion: row.descripcion || '',
+      marca: row.marca || '',
+      cantidad: Number(row.cantidad || 0),
+      precioVenta: Number(row.precio_unitario || 0),
+      precioRegular: Number(row.precio_regular || 0),
+      stock: row.stock === null ? null : Number(row.stock || 0),
+      almacenOrigen: row.almacen_origen || 'productos'
+    }));
+
+    return res.json({
+      cotizacion: {
+        id: Number(cotizacion.id),
+        serie,
+        correlativo,
+        numero: `${serie}-${correlativo}`,
+        fecha: cotizacion.fecha || null,
+        total: Number(cotizacion.total || 0),
+        descuento: Number(cotizacion.descuento || 0),
+        nota: cotizacion.nota || ''
+      },
+      cliente: {
+        documentoTipo,
+        documento,
+        nombre: clienteNombre,
+        telefono: clienteTelefono
+      },
+      items
+    });
+  } catch (error) {
+    console.error('Error cargando cotizacion para venta:', error);
+    return res.status(500).json({ error: 'Error al cargar cotizacion para venta' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
 exports.crearVenta = async (req, res) => {
   const usuarioId = req.usuario?.id;
   try {
@@ -646,6 +906,7 @@ exports.crearVenta = async (req, res) => {
       );
 
       const ventaId = result.insertId;
+      const operacion = crearOperacionScope('VENTA', ventaId, 'CREAR');
       const requerimientosPreparados = await prepararRequerimientos(connection, requerimientosList);
       const regalosPreparados = await prepararRequerimientos(connection, regalosList);
       const regalosReqPreparados = await prepararRequerimientos(connection, regalosReqList);
@@ -689,6 +950,18 @@ exports.crearVenta = async (req, res) => {
           );
         }
       }
+
+      const ventaDespues = await obtenerVentaConDetalle(connection, ventaId);
+      await registrarHistorial(connection, {
+        entidad: 'ventas',
+        entidad_id: ventaId,
+        usuario_id: usuarioId || null,
+        accion: 'crear',
+        descripcion: `Venta creada (${ventaId})`,
+        despues: ventaDespues,
+        operacion_madre_id: operacion.operacionMadreId,
+        operacion_transaccion_id: operacion.transaccionId('VENTA')
+      });
 
       await connection.commit();
       res.json({ ok: true, id: ventaId });
@@ -810,6 +1083,8 @@ exports.editarVenta = async (req, res) => {
           error: 'No se puede editar una venta con picking iniciado. Cree una nueva venta.'
         });
       }
+      const operacion = crearOperacionScope('VENTA', req.params.id, 'EDITAR');
+      const ventaAntes = await obtenerVentaConDetalle(connection, req.params.id);
 
       await connection.execute(
         `UPDATE ventas SET
@@ -893,6 +1168,19 @@ exports.editarVenta = async (req, res) => {
         }
       }
 
+      const ventaDespues = await obtenerVentaConDetalle(connection, req.params.id);
+      await registrarHistorial(connection, {
+        entidad: 'ventas',
+        entidad_id: Number(req.params.id),
+        usuario_id: req.usuario?.id || null,
+        accion: 'editar',
+        descripcion: `Venta actualizada (${req.params.id})`,
+        antes: ventaAntes,
+        despues: ventaDespues,
+        operacion_madre_id: operacion.operacionMadreId,
+        operacion_transaccion_id: operacion.transaccionId('VENTA')
+      });
+
       await connection.commit();
       res.json({ ok: true });
     } catch (innerError) {
@@ -922,24 +1210,28 @@ exports.actualizarEstadoVenta = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
+    await beginTransactionSilently(connection);
     const selectParams = [req.params.id];
-    let selectQuery = 'SELECT estado_pedido FROM ventas WHERE id = ?';
+    let selectQuery = `
+      SELECT id, estado_envio, estado_pedido, fecha_despacho, fecha_cancelacion, rastreo_estado
+      FROM ventas
+      WHERE id = ?
+    `;
     selectQuery += appendOwnerScope(req, selectParams, 'ventas');
+    selectQuery += ' FOR UPDATE';
+    const [rows] = await connection.execute(selectQuery, selectParams);
+    if (!rows.length) {
+      await rollbackSilently(connection);
+      return res.status(404).json({ error: 'Venta no encontrada' });
+    }
+    const ventaAntes = rows[0];
     if (['ENVIADO', 'CANCELADO'].includes(estadoEnvioValue)) {
-      const [rows] = await connection.execute(selectQuery, selectParams);
-      if (!rows.length) {
-        return res.status(404).json({ error: 'Venta no encontrada' });
-      }
-      const estadoPedido = rows[0]?.estado_pedido;
+      const estadoPedido = ventaAntes?.estado_pedido;
       if (estadoPedido && estadoPedido !== 'PEDIDO_LISTO') {
+        await rollbackSilently(connection);
         return res.status(400).json({
           error: 'El pedido debe estar en PEDIDO_LISTO para enviar o cancelar.'
         });
-      }
-    } else {
-      const [rows] = await connection.execute(selectQuery, selectParams);
-      if (!rows.length) {
-        return res.status(404).json({ error: 'Venta no encontrada' });
       }
     }
     const updateParams = [
@@ -961,10 +1253,41 @@ exports.actualizarEstadoVenta = async (req, res) => {
       updateParams
     );
     if (!updateResult.affectedRows) {
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Venta no encontrada' });
     }
+
+    const operacion = crearOperacionScope('VENTA', req.params.id, 'ESTADO');
+    await registrarHistorial(connection, {
+      entidad: 'ventas',
+      entidad_id: Number(req.params.id),
+      usuario_id: req.usuario?.id || null,
+      accion: 'editar',
+      descripcion: `Estado de venta actualizado (${req.params.id})`,
+      antes: {
+        id: Number(req.params.id),
+        estado_envio: ventaAntes.estado_envio,
+        estado_pedido: ventaAntes.estado_pedido,
+        fecha_despacho: ventaAntes.fecha_despacho,
+        fecha_cancelacion: ventaAntes.fecha_cancelacion,
+        rastreo_estado: ventaAntes.rastreo_estado
+      },
+      despues: {
+        id: Number(req.params.id),
+        estado_envio: estadoEnvioValue,
+        estado_pedido: ventaAntes.estado_pedido,
+        fecha_despacho: fechaDespacho || null,
+        fecha_cancelacion: fechaCancelacion || null,
+        rastreo_estado: rastreoEstado || null
+      },
+      operacion_madre_id: operacion.operacionMadreId,
+      operacion_transaccion_id: operacion.transaccionId('VENTA')
+    });
+
+    await commitSilently(connection);
     return res.json({ ok: true });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error actualizando estado de venta:', error);
     return res.status(500).json({ error: 'Error al actualizar estado' });
   } finally {
@@ -977,20 +1300,63 @@ exports.actualizarEnvioVenta = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
+    await beginTransactionSilently(connection);
+
+    const selectParams = [req.params.id];
+    let selectQuery = `
+      SELECT id, ticket, guia, retiro, rastreo_estado
+      FROM ventas
+      WHERE id = ?
+    `;
+    selectQuery += appendOwnerScope(req, selectParams, 'ventas');
+    selectQuery += ' FOR UPDATE';
+    const [ventaRows] = await connection.execute(selectQuery, selectParams);
+    if (!Array.isArray(ventaRows) || !ventaRows.length) {
+      await rollbackSilently(connection);
+      return res.status(404).json({ error: 'Venta no encontrada' });
+    }
+    const ventaAntes = ventaRows[0];
+
     const params = [ticket || null, guia || null, retiro || null, rastreoEstado || null, req.params.id];
     let query = `UPDATE ventas
        SET ticket = ?, guia = ?, retiro = ?, rastreo_estado = ?
        WHERE id = ?`;
     query += appendOwnerScope(req, params, 'ventas');
-    const [updateResult] = await connection.execute(
-      query,
-      params
-    );
+    const [updateResult] = await connection.execute(query, params);
     if (!updateResult.affectedRows) {
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Venta no encontrada' });
     }
+
+    const operacion = crearOperacionScope('VENTA', req.params.id, 'ENVIO');
+    await registrarHistorial(connection, {
+      entidad: 'ventas',
+      entidad_id: Number(req.params.id),
+      usuario_id: req.usuario?.id || null,
+      accion: 'editar',
+      descripcion: `Datos de envio actualizados (${req.params.id})`,
+      antes: {
+        id: Number(req.params.id),
+        ticket: ventaAntes.ticket || null,
+        guia: ventaAntes.guia || null,
+        retiro: ventaAntes.retiro || null,
+        rastreo_estado: ventaAntes.rastreo_estado || null
+      },
+      despues: {
+        id: Number(req.params.id),
+        ticket: ticket || null,
+        guia: guia || null,
+        retiro: retiro || null,
+        rastreo_estado: rastreoEstado || null
+      },
+      operacion_madre_id: operacion.operacionMadreId,
+      operacion_transaccion_id: operacion.transaccionId('VENTA')
+    });
+
+    await commitSilently(connection);
     return res.json({ ok: true });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error actualizando envio:', error);
     return res.status(500).json({ error: 'Error al actualizar envio' });
   } finally {
@@ -1034,6 +1400,20 @@ exports.eliminarVenta = async (req, res) => {
         error: 'No se puede eliminar una venta con picking iniciado.'
       });
     }
+
+    const operacion = crearOperacionScope('VENTA', req.params.id, 'ELIMINAR');
+    const ventaAntes = await obtenerVentaConDetalle(connection, req.params.id);
+    await registrarHistorial(connection, {
+      entidad: 'ventas',
+      entidad_id: Number(req.params.id),
+      usuario_id: req.usuario?.id || null,
+      accion: 'eliminar',
+      descripcion: `Venta eliminada (${req.params.id})`,
+      antes: ventaAntes,
+      despues: null,
+      operacion_madre_id: operacion.operacionMadreId,
+      operacion_transaccion_id: operacion.transaccionId('VENTA')
+    });
 
     await connection.execute('DELETE FROM ventas WHERE id = ?', [req.params.id]);
     await connection.commit();
@@ -1202,20 +1582,24 @@ exports.actualizarRequerimiento = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
+    await beginTransactionSilently(connection);
     const selectParams = [detalleId];
     let selectQuery = `
-      SELECT d.id, d.tipo
+      SELECT d.id, d.venta_id, d.tipo, d.codigo, d.descripcion, d.proveedor, d.precio_compra, d.precio_venta
       FROM ventas_detalle d
       JOIN ventas v ON d.venta_id = v.id
       WHERE d.id = ?
     `;
     selectQuery += appendOwnerScope(req, selectParams, 'v');
-    selectQuery += ' LIMIT 1';
+    selectQuery += ' LIMIT 1 FOR UPDATE';
     const [detalleRows] = await connection.execute(selectQuery, selectParams);
     if (!detalleRows.length) {
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Detalle no encontrado' });
     }
-    if (!['requerimiento', 'regalo_requerimiento'].includes(detalleRows[0].tipo)) {
+    const detalleAntes = detalleRows[0];
+    if (!['requerimiento', 'regalo_requerimiento'].includes(detalleAntes.tipo)) {
+      await rollbackSilently(connection);
       return res.status(400).json({
         error: 'Solo se pueden actualizar items de tipo requerimiento.'
       });
@@ -1227,10 +1611,45 @@ exports.actualizarRequerimiento = async (req, res) => {
       [proveedorValue, precioCompraNum, precioVentaNum, detalleId]
     );
     if (!updateResult.affectedRows) {
+      await rollbackSilently(connection);
       return res.status(404).json({ error: 'Detalle no encontrado' });
     }
+
+    const operacion = crearOperacionScope('VENTA', detalleAntes.venta_id, 'REQ');
+    await registrarHistorial(connection, {
+      entidad: 'ventas',
+      entidad_id: Number(detalleAntes.venta_id),
+      usuario_id: req.usuario?.id || null,
+      accion: 'editar',
+      descripcion: `Requerimiento actualizado (detalle ${detalleId})`,
+      antes: {
+        venta_id: Number(detalleAntes.venta_id),
+        detalle_id: Number(detalleAntes.id),
+        tipo: detalleAntes.tipo,
+        codigo: detalleAntes.codigo || null,
+        descripcion: detalleAntes.descripcion || null,
+        proveedor: detalleAntes.proveedor || null,
+        precio_compra: Number(detalleAntes.precio_compra || 0),
+        precio_venta: Number(detalleAntes.precio_venta || 0)
+      },
+      despues: {
+        venta_id: Number(detalleAntes.venta_id),
+        detalle_id: Number(detalleAntes.id),
+        tipo: detalleAntes.tipo,
+        codigo: detalleAntes.codigo || null,
+        descripcion: detalleAntes.descripcion || null,
+        proveedor: proveedorValue,
+        precio_compra: precioCompraNum,
+        precio_venta: precioVentaNum
+      },
+      operacion_madre_id: operacion.operacionMadreId,
+      operacion_transaccion_id: operacion.transaccionId(`DET${detalleId}`)
+    });
+
+    await commitSilently(connection);
     return res.json({ ok: true });
   } catch (error) {
+    await rollbackSilently(connection);
     console.error('Error actualizando requerimiento:', error);
     return res.status(500).json({ error: 'Error al actualizar requerimiento' });
   } finally {
@@ -1247,8 +1666,9 @@ exports.crearRequerimientoProducto = async (req, res) => {
     precioVenta,
     precioMinimo
   } = req.body || {};
-  const descripcionTxt = normalizarTexto(descripcion);
-  const codigoTxt = normalizarTexto(codigo);
+  const descripcionTxt = normalizarTextoMayus(descripcion);
+  const codigoTxt = normalizarTextoMayus(codigo);
+  const marcaTxt = normalizarTextoMayus(marca);
   if (!descripcionTxt && !codigoTxt) {
     return res.status(400).json({ error: 'Debe ingresar descripcion o codigo.' });
   }
@@ -1264,6 +1684,30 @@ exports.crearRequerimientoProducto = async (req, res) => {
         if (Number(existente.activo) === 0) {
           await connection.execute('UPDATE maquinas SET activo = TRUE WHERE id = ?', [existente.id]);
         }
+        const operacionExistente = crearOperacionScope('PRODUCTO', existente.id, 'REQUERIMIENTO');
+        await registrarHistorial(connection, {
+          entidad: 'productos',
+          entidad_id: Number(existente.id),
+          usuario_id: req.usuario?.id || null,
+          accion: 'editar',
+          descripcion: `Producto de requerimiento reutilizado (${existente.codigo})`,
+          antes: {
+            id: Number(existente.id),
+            codigo: existente.codigo,
+            marca: existente.marca || null,
+            descripcion: existente.descripcion || null,
+            activo: Number(existente.activo || 0)
+          },
+          despues: {
+            id: Number(existente.id),
+            codigo: existente.codigo,
+            marca: existente.marca || null,
+            descripcion: existente.descripcion || null,
+            activo: 1
+          },
+          operacion_madre_id: operacionExistente.operacionMadreId,
+          operacion_transaccion_id: operacionExistente.transaccionId('PRODUCTO')
+        });
         await connection.commit();
         return res.json({
           ok: true,
@@ -1278,10 +1722,26 @@ exports.crearRequerimientoProducto = async (req, res) => {
       const creado = await crearProductoDesdeRequerimiento(connection, {
         descripcion: descripcionTxt,
         codigo: codigoTxt,
-        marca,
+        marca: marcaTxt,
         precioCompra,
         precioVenta,
         precioMinimo
+      });
+      const operacionCreacion = crearOperacionScope('PRODUCTO', creado.id, 'REQUERIMIENTO');
+      await registrarHistorial(connection, {
+        entidad: 'productos',
+        entidad_id: Number(creado.id),
+        usuario_id: req.usuario?.id || null,
+        accion: 'crear',
+        descripcion: `Producto de requerimiento creado (${creado.codigo})`,
+        despues: {
+          id: Number(creado.id),
+          codigo: creado.codigo,
+          marca: creado.marca || null,
+          descripcion: creado.descripcion || null
+        },
+        operacion_madre_id: operacionCreacion.operacionMadreId,
+        operacion_transaccion_id: operacionCreacion.transaccionId('PRODUCTO')
       });
       await connection.commit();
       return res.json({
@@ -1510,6 +1970,7 @@ exports.confirmarPicking = async (req, res) => {
       await connection.rollback();
       return res.status(404).json({ error: 'Detalle no encontrado.' });
     }
+    const operacion = crearOperacionScope('VENTA', detalle.venta_id, 'PICKING');
     if (detalle.tipo !== 'producto') {
       await connection.rollback();
       return res.status(400).json({ error: 'Solo se puede pickear productos.' });
@@ -1544,14 +2005,18 @@ exports.confirmarPicking = async (req, res) => {
       await connection.rollback();
       return res.status(400).json({ error: 'Stock insuficiente para salida.' });
     }
+    const stockAntes = Number(maquina.stock || 0);
+    const motivoPicking = `Picking venta #${detalle.venta_id}`;
 
-    await connection.execute(
+    const [movimientoResult] = await connection.execute(
       `INSERT INTO ingresos_salidas (maquina_id, usuario_id, tipo, cantidad, motivo)
        VALUES (?, ?, 'salida', ?, ?)`,
-      [maquina.id, usuarioId, cantidadNum, `Picking venta #${detalle.venta_id}`]
+      [maquina.id, usuarioId, cantidadNum, motivoPicking]
     );
+    const movimientoDetalleId = Number(movimientoResult?.insertId || 0) || null;
+    const movimientoGrupoId = movimientoDetalleId ? String(movimientoDetalleId) : null;
 
-    const nuevoStock = Number(maquina.stock || 0) - cantidadNum;
+    const nuevoStock = stockAntes - cantidadNum;
     await connection.execute('UPDATE maquinas SET stock = stock - ? WHERE id = ?', [
       cantidadNum,
       maquina.id
@@ -1575,6 +2040,40 @@ exports.confirmarPicking = async (req, res) => {
       [cantidadNum, detalleTargetId]
     );
 
+    await registrarHistorial(connection, {
+      entidad: 'movimientos',
+      entidad_id: movimientoDetalleId,
+      usuario_id: usuarioId || null,
+      accion: 'salida',
+      descripcion: `Picking salida (${detalle.codigo || maquina.id})`,
+      antes: {
+        stock: stockAntes,
+        producto_id: Number(maquina.id),
+        maquina_id: Number(maquina.id),
+        codigo_producto: detalle.codigo || null,
+        descripcion_producto: detalle.descripcion || null
+      },
+      despues: {
+        stock: nuevoStock,
+        cantidad: cantidadNum,
+        variacion_stock: -Math.abs(cantidadNum),
+        producto_id: Number(maquina.id),
+        maquina_id: Number(maquina.id),
+        codigo_producto: detalle.codigo || null,
+        descripcion_producto: detalle.descripcion || null,
+        tipo_movimiento: 'salida',
+        motivo: motivoPicking,
+        tipo_motivo_movimiento: 'SALIDA-PICKING',
+        movimiento_id: movimientoGrupoId,
+        movimiento_grupo_id: movimientoGrupoId,
+        movimiento_detalle_id: movimientoDetalleId
+      },
+      operacion_madre_id: operacion.operacionMadreId,
+      operacion_transaccion_id: operacion.transaccionId(
+        movimientoDetalleId ? `MOV${movimientoDetalleId}` : 'MOV'
+      )
+    });
+
     const [pendientes] = await connection.execute(
       `SELECT COUNT(*) as total
        FROM ventas_detalle
@@ -1585,6 +2084,25 @@ exports.confirmarPicking = async (req, res) => {
       await connection.execute(`UPDATE ventas SET estado_pedido = 'PEDIDO_LISTO' WHERE id = ?`, [
         detalle.venta_id
       ]);
+      if (detalle.estado_pedido !== 'PEDIDO_LISTO') {
+        await registrarHistorial(connection, {
+          entidad: 'ventas',
+          entidad_id: Number(detalle.venta_id),
+          usuario_id: usuarioId || null,
+          accion: 'editar',
+          descripcion: `Pedido listo por picking (${detalle.venta_id})`,
+          antes: {
+            id: Number(detalle.venta_id),
+            estado_pedido: detalle.estado_pedido || null
+          },
+          despues: {
+            id: Number(detalle.venta_id),
+            estado_pedido: 'PEDIDO_LISTO'
+          },
+          operacion_madre_id: operacion.operacionMadreId,
+          operacion_transaccion_id: operacion.transaccionId('VENTA')
+        });
+      }
     }
 
     await connection.commit();
@@ -1609,7 +2127,7 @@ exports.cerrarPedido = async (req, res) => {
     connection = await pool.getConnection();
     await connection.beginTransaction();
     const ventaParams = [ventaId];
-    let ventaQuery = 'SELECT id FROM ventas WHERE id = ?';
+    let ventaQuery = 'SELECT id, estado_pedido FROM ventas WHERE id = ?';
     if (ownerUserId) {
       ventaQuery += ' AND usuario_id = ?';
       ventaParams.push(ownerUserId);
@@ -1644,6 +2162,25 @@ exports.cerrarPedido = async (req, res) => {
       await connection.rollback();
       return res.status(404).json({ error: 'Venta no encontrada' });
     }
+
+    const operacion = crearOperacionScope('VENTA', ventaId, 'CERRAR');
+    await registrarHistorial(connection, {
+      entidad: 'ventas',
+      entidad_id: Number(ventaId),
+      usuario_id: req.usuario?.id || null,
+      accion: 'editar',
+      descripcion: `Pedido cerrado (${ventaId})`,
+      antes: {
+        id: Number(ventaId),
+        estado_pedido: ventaRows[0]?.estado_pedido || null
+      },
+      despues: {
+        id: Number(ventaId),
+        estado_pedido: 'PEDIDO_LISTO'
+      },
+      operacion_madre_id: operacion.operacionMadreId,
+      operacion_transaccion_id: operacion.transaccionId('VENTA')
+    });
 
     await connection.commit();
     return res.json({ ok: true });
