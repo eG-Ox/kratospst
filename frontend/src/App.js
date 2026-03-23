@@ -58,11 +58,14 @@ const lazyWithRetry = (factory) =>
 const LoginPage = lazyWithRetry(() => import('./modules/auth/pages/LoginPage'));
 const DashboardPage = lazyWithRetry(() => import('./modules/dashboard/pages/DashboardPage'));
 const ProductosPage = lazyWithRetry(() => import('./modules/productos/pages/ProductosPage'));
+const ListaProductosPage = lazyWithRetry(() => import('./modules/lista-productos/pages/ListaProductosPage'));
 const TiposMaquinasPage = lazyWithRetry(() => import('./modules/tipos-maquinas/pages/TiposMaquinasPage'));
 const GestorInventarioPage = lazyWithRetry(() => import('./modules/movimientos/pages/GestorInventarioPage'));
 const KitsPage = lazyWithRetry(() => import('./modules/kits/pages/KitsPage'));
 const CotizacionesPage = lazyWithRetry(() => import('./modules/cotizaciones/pages/CotizacionesPage'));
 const HistorialCotizacionesPage = lazyWithRetry(() => import('./modules/cotizaciones/pages/HistorialCotizacionesPage'));
+const ComprobantesPage = lazyWithRetry(() => import('./modules/comprobantes/pages/ComprobantesPage'));
+const HistorialComprobantesPage = lazyWithRetry(() => import('./modules/comprobantes/pages/HistorialComprobantesPage'));
 const ClientesPage = lazyWithRetry(() => import('./modules/clientes/pages/ClientesPage'));
 const UsuariosPage = lazyWithRetry(() => import('./modules/usuarios/pages/UsuariosPage'));
 const BackupsPage = lazyWithRetry(() => import('./modules/backups/pages/BackupsPage'));
@@ -240,6 +243,14 @@ function App() {
               }
             />
             <Route
+              path="/lista-productos"
+              element={
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="productos.ver">
+                  <ListaProductosPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/tipos-maquinas"
               element={
                 <ProtectedRoute {...protectedRouteProps} requiredPermissions="tipos_maquinas.ver">
@@ -289,6 +300,25 @@ function App() {
                   requiredPermissions="cotizaciones.historial.ver"
                 >
                   <HistorialCotizacionesPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/comprobantes"
+              element={
+                <ProtectedRoute {...protectedRouteProps} requiredPermissions="comprobantes.ver">
+                  <ComprobantesPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/comprobantes-historial"
+              element={
+                <ProtectedRoute
+                  {...protectedRouteProps}
+                  requiredPermissions="comprobantes.historial.ver"
+                >
+                  <HistorialComprobantesPage />
                 </ProtectedRoute>
               }
             />

@@ -15,8 +15,7 @@ const LoginPage = ({ onLoginSuccess }) => {
     <div className="login-page">
       <div className="login-container">
         <div className="login-header">
-          <h1>Sistema de Inventario</h1>
-          <p>Maquinas y Equipos</p>
+          <img src="/static/img/KRATOS_LOGO.png" alt="Kratos" className="login-logo" />
         </div>
         <LoginForm onLoginSuccess={handleLoginSuccess} />
       </div>

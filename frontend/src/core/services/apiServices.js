@@ -92,6 +92,64 @@ export const productosService = {
     api.get(`/productos/descargar/${filename}`, { responseType: 'blob' }),
 };
 
+// Servicios para Lista de Productos (modulo independiente)
+export const listaProductosService = {
+  getAll: (params = {}) =>
+    api.get('/lista-productos', {
+      params: { _ts: Date.now(), ...params },
+      headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
+    }),
+  getById: (id) => api.get(`/lista-productos/${id}`),
+  getByCodigo: (codigo) => api.get(`/lista-productos/codigo/${encodeURIComponent(codigo)}`),
+  listarTipos: () => api.get('/lista-productos/tipos'),
+  crearTipo: (data) => api.post('/lista-productos/tipos', data),
+  actualizarTipo: (id, data) => api.put(`/lista-productos/tipos/${id}`, data),
+  listarMarcas: () => api.get('/lista-productos/marcas'),
+  descargarPlantilla: () =>
+    api.get('/lista-productos/plantilla', { responseType: 'blob' }),
+  exportarExcel: () =>
+    api.get('/lista-productos/exportar', { responseType: 'blob' }),
+  importarExcel: (data) =>
+    api.post('/lista-productos/importar', data, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    }),
+  create: (data) => {
+    if (data?.ficha_tecnica instanceof File) {
+      const formData = new FormData();
+      Object.keys(data).forEach((key) => {
+        if (data[key] !== null && data[key] !== undefined) {
+          formData.append(key, data[key]);
+        }
+      });
+      return api.post('/lista-productos', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+    }
+    const payload = { ...data };
+    delete payload.ficha_tecnica;
+    return api.post('/lista-productos', payload);
+  },
+  update: (id, data) => {
+    if (data?.ficha_tecnica instanceof File) {
+      const formData = new FormData();
+      Object.keys(data).forEach((key) => {
+        if (data[key] !== null && data[key] !== undefined) {
+          formData.append(key, data[key]);
+        }
+      });
+      return api.put(`/lista-productos/${id}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+    }
+    const payload = { ...data };
+    delete payload.ficha_tecnica;
+    return api.put(`/lista-productos/${id}`, payload);
+  },
+  delete: (id) => api.delete(`/lista-productos/${id}`),
+  descargarFichaTecnica: (filename) =>
+    api.get(`/lista-productos/descargar/${filename}`, { responseType: 'blob' })
+};
+
 // Servicios para Movimientos (Ingresos/Salidas)
 export const movimientosService = {
   registrar: (data) => api.post('/movimientos', data),
@@ -139,6 +197,23 @@ export const cotizacionesService = {
   obtenerProducto: (id, params) => api.get(`/cotizaciones/api/producto/${id}`, { params }),
   filtrosCotizacion: (params) => api.get('/cotizaciones/api/filtros_cotizacion', { params }),
   productosCotizacion: (params) => api.get('/cotizaciones/api/productos_cotizacion', { params }),
+  tiposPorAlmacen: (params) => api.get('/tipos_por_almacen', { params }),
+};
+
+// Servicios para Simulador de Comprobantes
+export const comprobantesService = {
+  formulario: () => api.get('/comprobantes'),
+  listar: (params) => api.get('/comprobantes/listar', { params }),
+  historial: (params) => api.get('/comprobantes/historial', { params }),
+  obtener: (id) => api.get(`/comprobantes/${id}`),
+  crear: (data) => api.post('/comprobantes', data),
+  editar: (id, data) => api.put(`/comprobantes/${id}`, data),
+  ver: (id) => api.get(`/comprobantes/ver/${id}`),
+  pdf: (id) => api.get(`/comprobantes/pdf/${id}`, { responseType: 'blob' }),
+  buscarProductos: (params) => api.get('/comprobantes/api/buscar-productos', { params }),
+  obtenerProducto: (id, params) => api.get(`/comprobantes/api/producto/${id}`, { params }),
+  filtrosComprobante: (params) => api.get('/comprobantes/api/filtros_comprobante', { params }),
+  productosComprobante: (params) => api.get('/comprobantes/api/productos_comprobante', { params }),
   tiposPorAlmacen: (params) => api.get('/tipos_por_almacen', { params }),
 };
 

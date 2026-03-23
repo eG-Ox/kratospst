@@ -32,6 +32,8 @@
 }
 
 .rotulos-card .form-row {
+  display: grid;
+  gap: 12px;
   grid-template-columns: 1fr 1fr;
 }
 
@@ -45,17 +47,48 @@
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.rotulos-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-color);
+  border-radius: 12px;
+  background: var(--surface-alt);
+  color: var(--dark-color);
+}
+
+.rotulos-preview__label {
+  font-size: 11px;
+  color: var(--gray-color);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .rotulos-card .helper-text {
-  display: inline-block;
+  display: block;
   margin-top: 4px;
   color: var(--gray-color);
   font-size: 10px;
 }
 
+.rotulos-card .helper-text--muted {
+  opacity: 0.85;
+}
+
 @media (max-width: 768px) {
   .rotulos-card .form-row {
     grid-template-columns: 1fr;
+  }
+
+  .rotulos-actions {
+    justify-content: flex-end;
+  }
+
+  .rotulos-actions .btn-primary {
+    width: 100%;
   }
 }

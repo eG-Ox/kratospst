@@ -795,6 +795,43 @@ CREATE TABLE IF NOT EXISTS maquinas (
 );
 `;
 
+// Crear tabla de tipos para lista de productos (modulo independiente)
+const crearListaProductosTipos = `
+CREATE TABLE IF NOT EXISTS lista_productos_tipos (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  nombre VARCHAR(120) NOT NULL UNIQUE,
+  descripcion TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+`;
+
+// Crear tabla independiente para lista de productos de compra
+const crearListaProductos = `
+CREATE TABLE IF NOT EXISTS lista_productos (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  codigo VARCHAR(80) NOT NULL UNIQUE,
+  tipo_id INT NOT NULL,
+  marca VARCHAR(120) NOT NULL,
+  descripcion TEXT,
+  proveedor VARCHAR(120),
+  stock INT NOT NULL DEFAULT 0,
+  precio_compra DECIMAL(10, 2) NOT NULL,
+  precio_venta DECIMAL(10, 2) NOT NULL,
+  precio_minimo DECIMAL(10, 2) NOT NULL DEFAULT 0,
+  ficha_web VARCHAR(255),
+  ficha_tecnica_ruta VARCHAR(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (tipo_id) REFERENCES lista_productos_tipos(id) ON DELETE RESTRICT,
+  INDEX idx_lista_productos_codigo (codigo),
+  INDEX idx_lista_productos_tipo (tipo_id),
+  INDEX idx_lista_productos_marca (marca),
+  INDEX idx_lista_productos_proveedor (proveedor),
+  INDEX idx_lista_productos_stock (stock)
+);
+`;
+
 // Crear tabla de ingresos y salidas
 const crearIngresouSalidas = `
 CREATE TABLE IF NOT EXISTS ingresos_salidas (
@@ -866,6 +903,62 @@ CREATE TABLE IF NOT EXISTS historial_cotizaciones (
   FOREIGN KEY (cotizacion_id) REFERENCES cotizaciones(id) ON DELETE CASCADE,
   FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE RESTRICT,
   INDEX idx_cotizacion (cotizacion_id),
+  INDEX idx_usuario (usuario_id)
+);
+`;
+
+// Crear tabla comprobantes simulados
+const crearComprobantes = `
+CREATE TABLE IF NOT EXISTS comprobantes (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  usuario_id INT NOT NULL,
+  cliente_id INT,
+  tipo_comprobante ENUM('boleta', 'factura') NOT NULL DEFAULT 'boleta',
+  fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  total DECIMAL(10, 2) NOT NULL DEFAULT 0,
+  descuento DECIMAL(10, 2) NOT NULL DEFAULT 0,
+  nota TEXT,
+  estado VARCHAR(30) DEFAULT 'pendiente',
+  serie VARCHAR(10),
+  correlativo INT,
+  UNIQUE KEY uniq_comprobante_serie_correlativo (serie, correlativo),
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE RESTRICT,
+  INDEX idx_usuario (usuario_id),
+  INDEX idx_cliente (cliente_id),
+  INDEX idx_tipo_comprobante (tipo_comprobante)
+);
+`;
+
+// Crear tabla detalle_comprobante
+const crearDetalleComprobante = `
+CREATE TABLE IF NOT EXISTS detalle_comprobante (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  comprobante_id INT NOT NULL,
+  producto_id INT NOT NULL,
+  cantidad INT NOT NULL,
+  precio_unitario DECIMAL(10, 2) NOT NULL,
+  precio_regular DECIMAL(10, 2) NOT NULL,
+  subtotal DECIMAL(10, 2) NOT NULL,
+  almacen_origen VARCHAR(30) DEFAULT 'productos',
+  FOREIGN KEY (comprobante_id) REFERENCES comprobantes(id) ON DELETE CASCADE,
+  FOREIGN KEY (producto_id) REFERENCES maquinas(id) ON DELETE RESTRICT,
+  INDEX idx_comprobante (comprobante_id),
+  INDEX idx_producto (producto_id)
+);
+`;
+
+// Crear tabla historial_comprobantes
+const crearHistorialComprobantes = `
+CREATE TABLE IF NOT EXISTS historial_comprobantes (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  comprobante_id INT NOT NULL,
+  usuario_id INT NOT NULL,
+  accion VARCHAR(50) NOT NULL,
+  descripcion TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (comprobante_id) REFERENCES comprobantes(id) ON DELETE CASCADE,
+  FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE RESTRICT,
+  INDEX idx_comprobante (comprobante_id),
   INDEX idx_usuario (usuario_id)
 );
 `;
@@ -1238,6 +1331,14 @@ async function inicializarBaseDatos() {
     await connection.execute(crearMaquinas);
     console.log('âœ“ Tabla maquinas creada exitosamente');
 
+    console.log('Creando tabla lista_productos_tipos...');
+    await connection.execute(crearListaProductosTipos);
+    console.log('âœ“ Tabla lista_productos_tipos creada exitosamente');
+
+    console.log('Creando tabla lista_productos...');
+    await connection.execute(crearListaProductos);
+    console.log('âœ“ Tabla lista_productos creada exitosamente');
+
     // Asegurar columnas de ubicacion en maquinas
     try {
       await connection.execute('ALTER TABLE maquinas ADD COLUMN ubicacion_letra CHAR(1) NULL AFTER descripcion');
@@ -1368,6 +1469,32 @@ async function inicializarBaseDatos() {
     console.log('Creando tabla historial_cotizaciones...');
     await connection.execute(crearHistorialCotizaciones);
     console.log('âœ“ Tabla historial_cotizaciones creada exitosamente');
+
+    console.log('Creando tabla comprobantes...');
+    await connection.execute(crearComprobantes);
+    try {
+      await connection.execute(
+        'CREATE UNIQUE INDEX uniq_comprobante_serie_correlativo ON comprobantes (serie, correlativo)'
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_KEYNAME' && error.code !== 'ER_DUP_ENTRY') {
+        throw error;
+      }
+      if (error.code === 'ER_DUP_ENTRY') {
+        console.log(
+          'Aviso: existen comprobantes duplicados en (serie, correlativo). No se pudo crear indice unico.'
+        );
+      }
+    }
+    console.log('âœ“ Tabla comprobantes creada exitosamente');
+
+    console.log('Creando tabla detalle_comprobante...');
+    await connection.execute(crearDetalleComprobante);
+    console.log('âœ“ Tabla detalle_comprobante creada exitosamente');
+
+    console.log('Creando tabla historial_comprobantes...');
+    await connection.execute(crearHistorialComprobantes);
+    console.log('âœ“ Tabla historial_comprobantes creada exitosamente');
 
     console.log('Creando tabla kits...');
     await connection.execute(crearKits);
@@ -1997,6 +2124,9 @@ async function inicializarBaseDatos() {
       { clave: 'cotizaciones.ver', descripcion: 'Ver cotizaciones', grupo: 'Cotizaciones' },
       { clave: 'cotizaciones.editar', descripcion: 'Crear/Editar cotizaciones', grupo: 'Cotizaciones' },
       { clave: 'cotizaciones.historial.ver', descripcion: 'Ver historial de cotizaciones', grupo: 'Cotizaciones' },
+      { clave: 'comprobantes.ver', descripcion: 'Ver simulador de comprobantes', grupo: 'Comprobantes' },
+      { clave: 'comprobantes.editar', descripcion: 'Crear/Editar comprobantes simulados', grupo: 'Comprobantes' },
+      { clave: 'comprobantes.historial.ver', descripcion: 'Ver historial de comprobantes simulados', grupo: 'Comprobantes' },
       { clave: 'clientes.ver', descripcion: 'Ver clientes', grupo: 'Clientes' },
       { clave: 'clientes.editar', descripcion: 'Crear/Editar clientes', grupo: 'Clientes' },
       { clave: 'usuarios.ver', descripcion: 'Ver usuarios', grupo: 'Cuentas' },
@@ -2021,6 +2151,9 @@ async function inicializarBaseDatos() {
         'cotizaciones.ver',
         'cotizaciones.editar',
         'cotizaciones.historial.ver',
+        'comprobantes.ver',
+        'comprobantes.editar',
+        'comprobantes.historial.ver',
         'clientes.ver',
         'clientes.editar',
         'ventas.ver',

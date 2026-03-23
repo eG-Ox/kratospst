@@ -7,6 +7,7 @@ const tiposMaquinasRoutes = require('../../modules/tipos-maquinas/routes');
 const movimientosRoutes = require('../../modules/movimientos/routes');
 const kitsRoutes = require('../../modules/kits/routes');
 const cotizacionesRoutes = require('../../modules/cotizaciones/routes');
+const comprobantesRoutes = require('../../modules/comprobantes/routes');
 const clientesRoutes = require('../../modules/clientes/routes');
 const usuariosRoutes = require('../../modules/usuarios/routes');
 const historialRoutes = require('../../modules/historial/routes');
@@ -15,6 +16,7 @@ const marcasRoutes = require('../../modules/marcas/routes');
 const inventarioGeneralRoutes = require('../../modules/inventario-general/routes');
 const ventasRoutes = require('../../modules/ventas/routes');
 const backupsRoutes = require('../../modules/backups/routes');
+const listaProductosRoutes = require('../../modules/lista-productos/routes');
 const pool = require('../config/database');
 
 const router = express.Router();
@@ -29,6 +31,7 @@ router.use('/productos', autenticar, productosRoutes);
 router.use('/movimientos', autenticar, movimientosRoutes);
 router.use('/kits', autenticar, kitsRoutes);
 router.use('/cotizaciones', autenticar, cotizacionesRoutes);
+router.use('/comprobantes', autenticar, comprobantesRoutes);
 router.use('/clientes', autenticar, clientesRoutes);
 router.use('/usuarios', usuariosRoutes);
 router.use('/historial', historialRoutes);
@@ -36,6 +39,7 @@ router.use('/permisos', permisosRoutes);
 router.use('/inventario-general', autenticar, inventarioGeneralRoutes);
 router.use('/ventas', autenticar, ventasRoutes);
 router.use('/backups', backupsRoutes);
+router.use('/lista-productos', autenticar, listaProductosRoutes);
 
 // Tipos por almacen
 router.get('/tipos_por_almacen', autenticar, async (req, res) => {

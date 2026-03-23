@@ -21,6 +21,11 @@ const Navbar = ({ usuario, permisos = [], onLogout }) => {
       items: [
         { to: '/productos', label: 'Productos', requiredPermissions: ['productos.ver'] },
         {
+          to: '/lista-productos',
+          label: 'Lista de Productos',
+          requiredPermissions: ['productos.ver']
+        },
+        {
           to: '/tipos-maquinas',
           label: 'Tipos de Maquinas',
           requiredPermissions: ['tipos_maquinas.ver']
@@ -51,6 +56,16 @@ const Navbar = ({ usuario, permisos = [], onLogout }) => {
           to: '/cotizaciones-historial',
           label: 'Historial Cotizaciones',
           requiredPermissions: ['cotizaciones.historial.ver']
+        },
+        {
+          to: '/comprobantes',
+          label: 'Simular Boletas/Facturas',
+          requiredPermissions: ['comprobantes.ver']
+        },
+        {
+          to: '/comprobantes-historial',
+          label: 'Historial Comprobantes',
+          requiredPermissions: ['comprobantes.historial.ver']
         }
       ]
     },

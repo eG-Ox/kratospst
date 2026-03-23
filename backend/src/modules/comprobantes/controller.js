@@ -1,0 +1,1255 @@
+const pool = require('../../core/config/database');
+const { isNonNegative } = require('../../shared/utils/validation');
+const { registrarHistorial } = require('../../shared/utils/historial');
+const isDuplicateKeyError = (error) => error?.code === 'ER_DUP_ENTRY';
+
+const MAX_HISTORIAL_LIMIT = 500;
+const MAX_PRODUCTOS_BUSQUEDA = 100;
+
+const releaseConnection = (connection) => {
+  if (!connection) return;
+  try {
+    connection.release();
+  } catch (_) {
+    // no-op
+  }
+};
+
+const escapeHtml = (value) => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+};
+
+const formatDate = (dateValue) => {
+  if (!dateValue) return 'Fecha no disponible';
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return 'Fecha no disponible';
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
+};
+
+const formatDateTime = (dateValue) => {
+  if (!dateValue) return 'Fecha no disponible';
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return 'Fecha no disponible';
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${day}/${month}/${year} ${hours}:${minutes}`;
+};
+
+const CORRELATIVO_INICIAL_COMPROBANTE = 3201;
+
+const padCorrelativo = (value) => String(value || 0).padStart(7, '0');
+
+const normalizeTipoComprobante = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'factura' ? 'factura' : 'boleta';
+};
+
+const resolveSerieComprobante = (tipoComprobante) =>
+  normalizeTipoComprobante(tipoComprobante) === 'factura' ? 'F001' : 'B001';
+
+const buildStaticBase = () => {
+  const rawBase = String(process.env.PUBLIC_BASE_URL || process.env.PUBLIC_BASE_PATH || '').trim();
+  if (!rawBase) {
+    return '/static';
+  }
+  if (/^https?:\/\//i.test(rawBase)) {
+    return `${rawBase.replace(/\/+$/, '')}/static`;
+  }
+  const normalizedPath = `/${rawBase.replace(/^\/+|\/+$/g, '')}`;
+  return `${normalizedPath}/static`;
+};
+
+const buildHtmlComprobante = ({ venta, detalles, total, staticBase }) => {
+  const logosBase = `${staticBase}/img/LOGOS%20PDF`;
+  const clienteNombre = venta.cliente_nombre || '';
+  const clienteApellido = venta.cliente_apellido || '';
+  const clienteRazon = venta.razon_social || '';
+  const clienteDisplay = clienteRazon || `${clienteNombre} ${clienteApellido}`.trim();
+  const clienteDocumento = venta.cliente_ruc || venta.cliente_dni || '—';
+  const notas = venta.nota || '';
+  const fecha = formatDate(venta.fecha);
+  const fechaCompleta = formatDateTime(venta.fecha);
+  const tipoComprobante = normalizeTipoComprobante(venta.tipo_comprobante);
+  const documentType = tipoComprobante.toUpperCase();
+  const correlativo = padCorrelativo(venta.correlativo);
+  const numeroComprobante = `${venta.serie || resolveSerieComprobante(tipoComprobante)}-${correlativo}`;
+  const nombreDocumento = (clienteDisplay || 'CLIENTE').trim() || 'CLIENTE';
+  const baseFilename = `${numeroComprobante} ${nombreDocumento}`;
+
+  const rowsHtml = detalles
+    .map((item) => {
+      const isKit = item.almacen_origen === 'kit';
+      const descripcion = isKit ? `Kit<br>${escapeHtml(item.descripcion || '')}` : escapeHtml(item.descripcion || '');
+      const marca = isKit ? 'Kit' : escapeHtml(item.marca || '');
+      const monto = Number(item.monto || item.precio_unitario || 0);
+
+      return `
+        <tr>
+          <td>${escapeHtml(item.codigo || '')}</td>
+          <td>${descripcion}</td>
+          <td>${marca}</td>
+          <td style="text-align:center;">${escapeHtml(item.cantidad || 0)}</td>
+          <td>S/. ${monto.toFixed(2)}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  const totalLine = `<tr class="summary-total"><td>TOTAL:</td><td>S/. ${Number(total || 0).toFixed(2)}</td></tr>`;
+
+  const notasHtml = notas
+    ? `<div class="notes-full-width">
+        <div class="observations-section">
+          <div class="observations-title">Notas Adicionales</div>
+          <div class="observations-content">${escapeHtml(notas)}</div>
+        </div>
+      </div>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${documentType} #${venta.id || 'N/A'} - KRATOS MAQUINARIAS</title>
+  <style>
+    @page { size: A4; margin: 2mm; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; line-height: 1.08; color: #1f2937; background: #fff; font-size: 0.68rem; }
+    .control-buttons { position: fixed; top: 15px; right: 15px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
+    .pdf-download-btn, .brand-toggle-btn, .pdf-print-btn { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; box-shadow: 0 3px 8px rgba(15, 23, 42, 0.25); font-size: 0.7rem; }
+    .brand-toggle-btn.active { background: linear-gradient(135deg, #064e3b 0%, #065f46 100%); }
+    .invoice-container { width: 206mm; max-width: 206mm; margin: 0 auto; padding: 1.5mm; background: white; min-height: 293mm; display: flex; flex-direction: column; position: relative; overflow: visible; }
+    .watermark-logo { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); opacity: 0.05; z-index: 1; width: 400%; height: 250px; background-image: url('${staticBase}/img/KRATOS_LOGO.png'); background-size: contain; background-repeat: no-repeat; background-position: center; pointer-events: none; max-width: 100%; max-height: 100%; }
+    .brands-logos-only { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; padding: 0 2px; }
+    .brand-logo-color { height: 12px; object-fit: contain; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 5px; padding-bottom: 5px; border-bottom: 2px solid #0f172a; background: white; position: relative; }
+    .company-info { max-width: 58%; }
+    .company-logo { width: 75px; margin-bottom: 4px; }
+    .company-name { font-size: 0.85rem; font-weight: 700; margin-bottom: 3px; color: #000; }
+    .company-details { font-size: 0.6rem; color: #333; line-height: 1.2; }
+    .company-details div { margin-bottom: 1px; }
+    .company-details strong { color: #000; }
+    .document-info { text-align: right; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white; padding: 8px; border-radius: 4px; min-width: 160px; border: 2px solid #0f172a; }
+    .document-type { font-size: 0.8rem; font-weight: 700; }
+    .document-number { font-size: 0.75rem; margin-top: 2px; font-weight: 700; }
+    .document-date { font-size: 0.65rem; margin-top: 2px; font-weight: 600; }
+    .info-section { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 5px; padding: 5px; background: #f8fafc; font-size: 0.58rem; position: relative; }
+    .info-column h3 { font-size: 0.65rem; margin-bottom: 3px; border-bottom: 1.5px solid #1e3a8a; padding-bottom: 1px; color: #000; font-weight: 700; text-transform: uppercase; }
+    .info-row { display: flex; margin-bottom: 2px; align-items: center; }
+    .info-label { min-width: 70px; font-weight: 700; color: #000; }
+    .info-value { flex: 1; color: #000; font-weight: 500; }
+    .products-table { width: 100%; border-collapse: collapse; margin-bottom: 6px; font-size: 0.58rem; border-radius: 4px; overflow: hidden; border: 2px solid #0f172a; background: white; position: relative; }
+    .products-table th { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white !important; padding: 5px 3px; text-align: left; font-weight: 700; text-transform: uppercase; border-bottom: 2px solid #0f172a; font-size: 0.52rem; }
+    .products-table td { padding: 3px; border-bottom: 1px solid #e5e7eb; background: white; color: #000; font-weight: 500; vertical-align: top; }
+    .products-table tr:nth-child(even) td { background: #f9fafb; }
+    .products-table td:last-child, .products-table th:last-child { text-align: right; font-weight: 700; color: #000; }
+    .products-table td:nth-child(4), .products-table th:nth-child(4) { text-align: center; }
+    .products-table.hide-brand th:nth-child(3), .products-table.hide-brand td:nth-child(3) { display: none; }
+    .products-table.hide-brand th:nth-child(2), .products-table.hide-brand td:nth-child(2) { width: 60%; }
+    .observations-section { margin-bottom: 6px; padding: 5px; background: white; color: #000; border-radius: 4px; font-size: 0.62rem; border: 1.5px solid #0f172a; position: relative; }
+    .observations-title { font-weight: 700; margin-bottom: 4px; text-transform: uppercase; color: #000; font-size: 0.6rem; }
+    .observations-content { line-height: 1.2; font-weight: 500; color: #000; }
+    .bottom-section { margin-top: auto; }
+    .notes-full-width { width: 100%; margin-bottom: 8px; }
+    .payment-summary-section { display: grid; grid-template-columns: 1fr 200px; gap: 8px; }
+    .payment-info { background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); border: 1.5px solid #0f172a; border-radius: 4px; padding: 6px; font-size: 0.6rem; position: relative; height: fit-content; }
+    .payment-title { font-weight: 700; margin-bottom: 6px; border-bottom: 1.5px solid #1e3a8a; padding-bottom: 2px; color: #000; text-transform: uppercase; font-size: 0.6rem; }
+    .banks-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 3px; }
+    .bank-section { padding: 3px 4px; border-radius: 3px; font-size: 0.5rem; border: 1px solid; display: flex; align-items: center; gap: 4px; min-height: 24px; }
+    .bank-section.bcp { background: white; border-color: #0369a1; border-left: 2px solid #0369a1; }
+    .bank-section.bcp-soles { background: white; border-color: #0369a1; border-left: 2px solid #0369a1; }
+    .bank-section.bbva { background: white; border-color: #1e40af; border-left: 2px solid #1e40af; }
+    .bank-section.yape { background: white; border-color: #16a34a; border-left: 2px solid #16a34a; }
+    .bank-logo { width: 24px; height: 14px; object-fit: contain; flex-shrink: 0; margin-left: auto; }
+    .bank-info { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+    .bank-cta { font-weight: 700; color: #000; white-space: nowrap; font-size: 0.52rem; }
+    .bank-cci { font-weight: 600; color: #333; white-space: nowrap; font-size: 0.48rem; }
+    .summary-section { border: 2px solid #0f172a; border-radius: 8px; font-size: 0.65rem; background: white; position: relative; height: fit-content; align-self: start; }
+    .summary-table { width: 100%; border-collapse: collapse; }
+    .summary-table td { padding: 6px 8px; border-bottom: 1px solid #ccc; }
+    .summary-table td:first-child { font-weight: 700; color: #000; }
+    .summary-table td:last-child { text-align: right; font-weight: 700; color: #000; }
+    .summary-total { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white !important; font-weight: 700; font-size: 0.8rem; }
+    .summary-total td { color: white !important; border-bottom: none; padding: 8px; }
+    .footer { text-align: center; font-size: 0.62rem; color: #333; border-top: 2px solid #1e3a8a; margin-top: 8px; padding-top: 5px; background: white; position: relative; }
+    .footer p:first-child { font-weight: 700; color: #000; margin-bottom: 3px; }
+    @media screen {
+      body { background: #e5e7eb; display: flex; justify-content: center; padding: 8mm; }
+      .invoice-container { width: 206mm; max-width: 206mm; min-height: 293mm; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12); }
+    }
+    @media print {
+      body { font-size: 0.68rem; }
+      .invoice-container { box-shadow: none; padding: 0; max-width: none; margin: 0; }
+      .control-buttons { display: none !important; }
+      .watermark-logo { opacity: 0.06 !important; }
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      .products-table th, .summary-total, .document-info { background: #0f172a !important; color: white !important; }
+      .products-table th { color: white !important; }
+      .header, .info-section, .products-table, .summary-section, .payment-info, .footer { border-color: #0f172a !important; background: white !important; }
+      .observations-section { background: white !important; color: #1e40af !important; border-color: #0f172a !important; }
+      .observations-title { color: #1e3a8a !important; }
+      .observations-content { color: #1e40af !important; }
+      .footer { page-break-after: auto; break-after: auto; }
+    }
+    .header, .info-section, .products-table, .observations-section, .payment-info, .summary-section, .footer { background: white; position: relative; }
+  </style>
+</head>
+<body>
+<div class="control-buttons">
+  <button class="pdf-download-btn" onclick="downloadPDF()">Guardar como PDF</button>
+  <button class="pdf-print-btn" onclick="printPDF()">Imprimir</button>
+  <button class="brand-toggle-btn" onclick="toggleBrandColumn()">Ocultar Marca</button>
+</div>
+
+<div class="invoice-container" id="invoice-content">
+  <div class="watermark-logo"></div>
+  <div class="header">
+    <div class="company-info">
+      <img src="${staticBase}/img/KRATOS_LOGO.png" alt="Logo" class="company-logo">
+      <div class="company-name">KRATOS MAQUINARIAS E.I.R.L</div>
+      <div class="company-details">
+        <div><strong>RUC:</strong> 20610448926</div>
+        <div><strong>DIRECCION:</strong> Jr. Restauracion N.º 505, Breña, Lima</div>
+        <div><strong>Teléfono:</strong> 995 634 841</div>
+        <div><strong>Email:</strong> ventas@kratosmaquinarias.com</div>
+      </div>
+    </div>
+    <div class="document-info">
+      <div class="document-type">${documentType}</div>
+      <div class="document-number">N°: ${escapeHtml(venta.serie || '')}-${correlativo}</div>
+      <div class="document-date">${fecha}</div>
+    </div>
+  </div>
+
+  <div class="brands-logos-only">
+    <img src="${logosBase}/FERTON.png" alt="FERTON" class="brand-logo-color">
+    <img src="${logosBase}/HONDA.png" alt="HONDA" class="brand-logo-color">
+    <img src="${logosBase}/KARCHER.png" alt="KARCHER" class="brand-logo-color">
+    <img src="${logosBase}/big%20red.png" alt="Big Red" class="brand-logo-color">
+    <img src="${logosBase}/campbell.png" alt="Campbell" class="brand-logo-color">
+    <img src="${logosBase}/khomander.png" alt="Khomander" class="brand-logo-color">
+    <img src="${logosBase}/bonelly.png" alt="Bonelly" class="brand-logo-color">
+    <img src="${logosBase}/WARC.png" alt="WARC" class="brand-logo-color">
+  </div>
+
+  <div class="info-section">
+    <div class="info-column">
+      <h3>Cliente</h3>
+      <div class="info-row"><span class="info-label">Nombre:</span><span class="info-value">${escapeHtml(clienteDisplay)}</span></div>
+      <div class="info-row"><span class="info-label">Documento:</span><span class="info-value">${escapeHtml(clienteDocumento)}</span></div>
+      <div class="info-row"><span class="info-label">Direccion:</span><span class="info-value">${escapeHtml(venta.cliente_direccion || '—')}</span></div>
+      <div class="info-row"><span class="info-label">Telefono:</span><span class="info-value">${escapeHtml(venta.cliente_telefono || '—')}</span></div>
+    </div>
+    <div class="info-column">
+      <h3>Vendedor</h3>
+      <div class="info-row"><span class="info-label">Vendedor:</span><span class="info-value">${escapeHtml(venta.vendedor_nombre || '')}</span></div>
+      <div class="info-row"><span class="info-label">Celular:</span><span class="info-value">${escapeHtml(venta.vendedor_celular || '—')}</span></div>
+    </div>
+  </div>
+
+  <table class="products-table" id="productsTable">
+    <thead>
+      <tr>
+        <th>Codigo</th>
+        <th>Descripcion</th>
+        <th>Marca</th>
+        <th style="text-align:center;">Cant.</th>
+        <th>Precio Unit.</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rowsHtml}
+    </tbody>
+  </table>
+
+  <div class="bottom-section">
+    ${notasHtml}
+    <div class="payment-summary-section">
+      <div class="payment-info">
+        <div class="payment-title">Informacion de Pago</div>
+        <div class="banks-grid">
+          <div class="bank-section bcp">
+            <img src="${logosBase}/BCP.png" alt="BCP" class="bank-logo">
+            <div class="bank-info">
+              <span class="bank-cta">Soles: 192-99279-14057</span>
+              <span class="bank-cci">CCI:  00219200992791405730</span>
+            </div>
+          </div>
+          <div class="bank-section bbva">
+            <img src="${logosBase}/BBVA.png" alt="BBVA" class="bank-logo">
+            <div class="bank-info">
+              <span class="bank-cta">Soles: 001101640200783975</span>
+              <span class="bank-cci">CCI: -</span>
+            </div>
+          </div>
+          <div class="bank-section bcp-soles">
+            <img src="${logosBase}/BCP.png" alt="BCP" class="bank-logo">
+            <div class="bank-info">
+              <span class="bank-cta">Dolares: 193-99525-55166</span>
+              <span class="bank-cci">CCI:  00219300995255516611</span>
+            </div>
+          </div>
+          <div class="bank-section yape">
+            <img src="${logosBase}/yape.png" alt="YAPE" class="bank-logo">
+            <div class="bank-info">
+              <span class="bank-cta">933 912 288</span>
+              <span class="bank-cci">A NOMBRE KRATOS MAQUINARIAS</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="summary-section">
+        <table class="summary-table">
+          ${totalLine}
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p>Gracias por su confianza</p>
+    <p>Documento generado electronicamente - ${fechaCompleta}</p>
+  </div>
+</div>
+
+<script src="${staticBase}/js/html2pdf.bundle.min.js"></script>
+<script>
+  const BASE_FILENAME = ${JSON.stringify(baseFilename)};
+  const DEFAULT_DOCUMENT_TYPE = ${JSON.stringify(documentType)};
+  const A4_HEIGHT_MM = 297;
+  const PRINT_MARGIN_MM = 2;
+  const MIN_FIT_SCALE = 0.35;
+
+  function sanitizeFilename(value) {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\\u0300-\\u036f]/g, '')
+      .replace(/[<>:"/\\\\|?*\\x00-\\x1F]/g, '')
+      .replace(/\\s+/g, ' ')
+      .trim();
+  }
+
+  function buildPdfFilename() {
+    const cleaned = sanitizeFilename(BASE_FILENAME);
+    return (cleaned || DEFAULT_DOCUMENT_TYPE || 'COMPROBANTE') + '.pdf';
+  }
+
+  function mmToPx(mm) {
+    return (Number(mm) * 96) / 25.4;
+  }
+
+  function getPrintableHeightPx() {
+    return mmToPx(A4_HEIGHT_MM - PRINT_MARGIN_MM * 2);
+  }
+
+  function resetInvoiceScale(invoiceContent) {
+    if (!invoiceContent) return;
+    invoiceContent.style.transform = '';
+    invoiceContent.style.transformOrigin = '';
+    invoiceContent.style.width = '';
+  }
+
+  function fitInvoiceToSingleA4() {
+    const invoiceContent = document.getElementById('invoice-content');
+    if (!invoiceContent) {
+      return () => {};
+    }
+
+    resetInvoiceScale(invoiceContent);
+    const maxHeightPx = getPrintableHeightPx();
+    const naturalHeight = invoiceContent.scrollHeight;
+
+    if (!Number.isFinite(naturalHeight) || naturalHeight <= 0 || naturalHeight <= maxHeightPx) {
+      return () => resetInvoiceScale(invoiceContent);
+    }
+
+    let scale = maxHeightPx / naturalHeight;
+    scale = Math.max(MIN_FIT_SCALE, Math.min(scale, 1));
+    invoiceContent.style.transformOrigin = 'top left';
+    invoiceContent.style.transform = 'scale(' + scale + ')';
+    invoiceContent.style.width = (100 / scale) + '%';
+
+    const scaledHeight = invoiceContent.getBoundingClientRect().height;
+    if (scaledHeight > maxHeightPx) {
+      const correction = maxHeightPx / scaledHeight;
+      scale = Math.max(MIN_FIT_SCALE, Math.min(scale * correction, 1));
+      invoiceContent.style.transform = 'scale(' + scale + ')';
+      invoiceContent.style.width = (100 / scale) + '%';
+    }
+
+    return () => resetInvoiceScale(invoiceContent);
+  }
+
+  function waitForMediaReady() {
+    const images = Array.from(document.images || []).filter((img) => !img.complete);
+    if (!images.length) {
+      return Promise.resolve();
+    }
+    return Promise.all(
+      images.map(
+        (img) =>
+          new Promise((resolve) => {
+            img.addEventListener('load', resolve, { once: true });
+            img.addEventListener('error', resolve, { once: true });
+          })
+      )
+    ).then(() => undefined);
+  }
+
+  function setControlButtonsVisible(visible) {
+    const controlButtons = document.querySelector('.control-buttons');
+    if (controlButtons) {
+      controlButtons.style.display = visible ? '' : 'none';
+    }
+  }
+
+  function setButtonBusy(button, busyText, idleText, isBusy) {
+    if (!button) return;
+    button.textContent = isBusy ? busyText : idleText;
+    button.disabled = isBusy;
+  }
+
+  function toggleBrandColumn() {
+    const table = document.getElementById('productsTable');
+    const button = document.querySelector('.brand-toggle-btn');
+    if (table.classList.contains('hide-brand')) {
+      table.classList.remove('hide-brand');
+      button.textContent = 'Ocultar Marca';
+      button.classList.remove('active');
+    } else {
+      table.classList.add('hide-brand');
+      button.textContent = 'Mostrar Marca';
+      button.classList.add('active');
+    }
+  }
+
+  async function downloadPDF() {
+    const downloadButton = document.querySelector('.pdf-download-btn');
+    const invoiceContent = document.getElementById('invoice-content');
+    const filename = buildPdfFilename();
+    if (!invoiceContent) {
+      console.error('No se encontro el contenido de comprobante para exportar.');
+      return;
+    }
+
+    setButtonBusy(downloadButton, 'Generando PDF...', 'Guardar como PDF', true);
+    setControlButtonsVisible(false);
+    let restoreFitScale = () => {};
+    try {
+      if (!window.html2pdf) {
+        throw new Error('html2pdf no disponible');
+      }
+
+      await waitForMediaReady();
+      restoreFitScale = fitInvoiceToSingleA4();
+
+      await window
+        .html2pdf()
+        .set({
+          margin: [0, 0, 0, 0],
+          filename,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { scale: 1.8, useCORS: true, logging: false },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+        })
+        .from(invoiceContent)
+        .save();
+    } catch (error) {
+      console.error('No se pudo descargar PDF directo:', error);
+    } finally {
+      restoreFitScale();
+      setControlButtonsVisible(true);
+      setButtonBusy(downloadButton, 'Generando PDF...', 'Guardar como PDF', false);
+    }
+  }
+
+  async function printPDF(preferredFilename) {
+    const button = document.querySelector('.pdf-print-btn');
+    const prevTitle = document.title;
+    const filename = preferredFilename || buildPdfFilename();
+    let restoreFitScale = () => {};
+
+    setButtonBusy(button, 'Imprimiendo...', 'Imprimir', true);
+    setControlButtonsVisible(false);
+    await waitForMediaReady();
+    restoreFitScale = fitInvoiceToSingleA4();
+    document.title = String(filename || '').replace(/[.]pdf$/i, '') || prevTitle;
+
+    let restored = false;
+    const restore = () => {
+      if (restored) return;
+      restored = true;
+      restoreFitScale();
+      setControlButtonsVisible(true);
+      setButtonBusy(button, 'Imprimiendo...', 'Imprimir', false);
+      document.title = prevTitle;
+      window.removeEventListener('afterprint', restore);
+    };
+    window.addEventListener('afterprint', restore);
+    setTimeout(restore, 2000);
+    setTimeout(() => window.print(), 50);
+  }
+</script>
+</body>
+</html>`;
+};
+
+const getNextSerieCorrelativo = async (connection, serie) => {
+  const [rows] = await connection.execute(
+    'SELECT MAX(correlativo) as max_correlativo FROM comprobantes WHERE serie = ?',
+    [serie]
+  );
+  const max = rows[0]?.max_correlativo || 0;
+  const next =
+    Number(max) >= CORRELATIVO_INICIAL_COMPROBANTE
+      ? Number(max) + 1
+      : CORRELATIVO_INICIAL_COMPROBANTE;
+  return { serie, correlativo: next };
+};
+
+const parsePositiveInt = (value, fallback) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const isVentasOwnerScoped = (req) =>
+  req.usuario?.rol === 'ventas' && Number.isInteger(Number(req.usuario?.id));
+const getScopedUserId = (req) => {
+  const parsed = Number(req.usuario?.id);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+const isAdminUser = (req) => req.usuario?.rol === 'admin';
+const buildClientesFormularioQuery = (req) => {
+  if (isAdminUser(req)) {
+    return {
+      query: `SELECT id, tipo_cliente, dni, ruc, nombre, apellido, razon_social
+              FROM clientes ORDER BY id DESC`,
+      params: []
+    };
+  }
+  const scopedUserId = getScopedUserId(req);
+  if (!scopedUserId) {
+    return {
+      query: `SELECT id, tipo_cliente, dni, ruc, nombre, apellido, razon_social
+              FROM clientes WHERE 1 = 0`,
+      params: []
+    };
+  }
+  return {
+    query: `SELECT DISTINCT c.id, c.tipo_cliente, c.dni, c.ruc, c.nombre, c.apellido, c.razon_social
+            FROM clientes c
+            LEFT JOIN clientes_usuarios cu ON cu.cliente_id = c.id
+            WHERE (c.usuario_id = ? OR cu.usuario_id = ?)
+            ORDER BY c.id DESC`,
+    params: [scopedUserId, scopedUserId]
+  };
+};
+
+const crearComprobanteCabeceraConRetry = async (connection, payload) => {
+  const {
+    usuarioId,
+    clienteId,
+    total,
+    descuento = 0,
+    notas,
+    tipoComprobante
+  } = payload;
+  const normalizedTipo = normalizeTipoComprobante(tipoComprobante);
+  const serie = resolveSerieComprobante(normalizedTipo);
+  const maxAttempts = 5;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const { correlativo } = await getNextSerieCorrelativo(connection, serie);
+    try {
+      const [result] = await connection.execute(
+        `INSERT INTO comprobantes
+         (usuario_id, cliente_id, tipo_comprobante, total, descuento, nota, serie, correlativo, estado)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendiente')`,
+        [
+          usuarioId,
+          clienteId || null,
+          normalizedTipo,
+          total,
+          descuento,
+          notas || null,
+          serie,
+          correlativo
+        ]
+      );
+      return { id: result.insertId, serie, correlativo, tipo_comprobante: normalizedTipo };
+    } catch (error) {
+      if (!isDuplicateKeyError(error) || attempt === maxAttempts - 1) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error('No se pudo generar correlativo unico');
+};
+
+const normalizarProductos = (body) => {
+  if (Array.isArray(body.productos)) {
+    return body.productos.map((item) => {
+      const monto = Number(item.monto ?? item.precio_unitario ?? item.precio_regular ?? 0);
+      return {
+        producto_id: Number(item.producto_id),
+        cantidad: Number(item.cantidad || 0),
+        precio_unitario: monto,
+        precio_regular: monto,
+        monto,
+        almacen_origen: item.almacen_origen || 'productos'
+      };
+    });
+  }
+
+  const ids = body.producto_id || body.productos || [];
+  const cantidades = body.cantidad || [];
+  const montos = body.monto || body.precio_unitario || [];
+  const almacenes = body.almacen_origen || [];
+
+  return ids.map((id, idx) => {
+    const monto = Number(montos[idx] || 0);
+    return {
+      producto_id: Number(id),
+      cantidad: Number(cantidades[idx] || 0),
+      precio_unitario: monto,
+      precio_regular: monto,
+      monto,
+      almacen_origen: almacenes[idx] || 'productos'
+    };
+  });
+};
+
+
+const validarItemsComprobante = (items) => {
+  for (const item of items || []) {
+    const cantidad = Number(item.cantidad || 0);
+    const monto = Number(item.monto ?? item.precio_unitario ?? 0);
+    if (!Number.isFinite(cantidad) || cantidad <= 0) {
+      return 'Cantidad invalida en comprobante';
+    }
+    if (!isNonNegative(monto)) {
+      return 'Monto invalido en comprobante';
+    }
+  }
+  return null;
+};
+const calcularTotales = (items) => {
+  let total = 0;
+
+  items.forEach((item) => {
+    const monto = Number(item.precio_unitario || 0);
+    const cantidad = Number(item.cantidad || 0);
+    total += monto * cantidad;
+  });
+
+  return { subtotal: total, descuento: 0, total: Math.max(total, 0) };
+};
+
+exports.formularioComprobantes = async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const clientesQuery = buildClientesFormularioQuery(req);
+    const [clientes] = await connection.execute(clientesQuery.query, clientesQuery.params);
+    const [tipos] = await connection.execute(
+      'SELECT id, nombre FROM tipos_maquinas ORDER BY nombre'
+    );
+    const ultimasScope = isVentasOwnerScoped(req) ? 'WHERE usuario_id = ?' : '';
+    const ultimasParams = isVentasOwnerScoped(req) ? [Number(req.usuario.id)] : [];
+    const [ultimas] = await connection.execute(
+      `SELECT id, fecha, tipo_comprobante, total, serie, correlativo
+        FROM comprobantes
+       ${ultimasScope}
+        ORDER BY id DESC LIMIT 10`
+      ,
+      ultimasParams
+    );
+
+    res.json({ clientes, tipos, ultimas });
+  } catch (error) {
+    console.error('Error obteniendo formulario:', error);
+    res.status(500).json({ error: 'Error al obtener datos de comprobante' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
+exports.listarComprobantes = async (req, res) => {
+  const { cliente_id, usuario_id, fecha_inicio, fecha_fin } = req.query;
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    let query = `
+      SELECT c.id, c.fecha, c.tipo_comprobante, c.total, c.serie, c.correlativo,
+        c.usuario_id, c.cliente_id,
+        cl.tipo_cliente, cl.nombre as cliente_nombre, cl.apellido as cliente_apellido, cl.razon_social
+      FROM comprobantes c
+      LEFT JOIN clientes cl ON c.cliente_id = cl.id
+      WHERE 1=1
+    `;
+    const params = [];
+    if (cliente_id) {
+      query += ' AND c.cliente_id = ?';
+      params.push(cliente_id);
+    }
+    if (usuario_id) {
+      query += ' AND c.usuario_id = ?';
+      params.push(usuario_id);
+    }
+    if (isVentasOwnerScoped(req)) {
+      query += ' AND c.usuario_id = ?';
+      params.push(Number(req.usuario.id));
+    }
+    if (fecha_inicio) {
+      query += ' AND c.fecha >= ?';
+      params.push(fecha_inicio);
+    }
+    if (fecha_fin) {
+      query += ' AND c.fecha <= ?';
+      params.push(fecha_fin);
+    }
+    query += ' ORDER BY c.fecha DESC';
+    const [rows] = await connection.execute(query, params);
+    res.json(rows);
+  } catch (error) {
+    console.error('Error listando comprobantes:', error);
+    res.status(500).json({ error: 'Error al listar comprobantes' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
+exports.listarHistorialComprobantes = async (req, res) => {
+  const { cliente_id, usuario_id, fecha_inicio, fecha_fin, limite = 50, pagina = 1 } = req.query;
+  const limitValue = parsePositiveInt(limite, 50);
+  const pageValue = parsePositiveInt(pagina, 1);
+  const safeLimit = Math.min(limitValue, MAX_HISTORIAL_LIMIT);
+  const safePage = pageValue;
+  const offset = (safePage - 1) * safeLimit;
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    let query = `
+      SELECT
+        h.id,
+        h.comprobante_id,
+        h.usuario_id,
+        h.accion,
+        h.descripcion,
+        h.created_at,
+        u.nombre as usuario_nombre,
+        c.serie,
+        c.correlativo,
+        c.tipo_comprobante,
+        c.total,
+        c.cliente_id,
+        cl.tipo_cliente,
+        cl.nombre as cliente_nombre,
+        cl.apellido as cliente_apellido,
+        cl.razon_social
+      FROM historial_comprobantes h
+      LEFT JOIN usuarios u ON h.usuario_id = u.id
+      LEFT JOIN comprobantes c ON h.comprobante_id = c.id
+      LEFT JOIN clientes cl ON c.cliente_id = cl.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (cliente_id) {
+      query += ' AND c.cliente_id = ?';
+      params.push(cliente_id);
+    }
+    if (usuario_id) {
+      query += ' AND h.usuario_id = ?';
+      params.push(usuario_id);
+    }
+    if (isVentasOwnerScoped(req)) {
+      query += ' AND c.usuario_id = ?';
+      params.push(Number(req.usuario.id));
+    }
+    if (fecha_inicio) {
+      query += ' AND h.created_at >= ?';
+      params.push(fecha_inicio);
+    }
+    if (fecha_fin) {
+      query += ' AND h.created_at <= ?';
+      params.push(fecha_fin);
+    }
+
+    query += ` ORDER BY h.created_at DESC LIMIT ${safeLimit} OFFSET ${offset}`;
+    const [rows] = await connection.execute(query, params);
+    res.json(rows);
+  } catch (error) {
+    console.error('Error listando historial de comprobantes:', error);
+    res.status(500).json({ error: 'Error al obtener historial de comprobantes' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
+exports.obtenerComprobante = async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    let comprobanteQuery = 'SELECT * FROM comprobantes WHERE id = ?';
+    const comprobanteParams = [req.params.id];
+    if (isVentasOwnerScoped(req)) {
+      comprobanteQuery += ' AND usuario_id = ?';
+      comprobanteParams.push(Number(req.usuario.id));
+    }
+    const [comprobantes] = await connection.execute(comprobanteQuery, comprobanteParams);
+    if (!comprobantes.length) {
+      return res.status(404).json({ error: 'Comprobante no encontrado' });
+    }
+    const [detalles] = await connection.execute(
+      `SELECT d.*, m.codigo, m.descripcion, m.marca
+       FROM detalle_comprobante d
+       JOIN maquinas m ON d.producto_id = m.id
+       WHERE d.comprobante_id = ?`,
+      [req.params.id]
+    );
+    res.json({ comprobante: comprobantes[0], detalles });
+  } catch (error) {
+    console.error('Error obteniendo comprobante:', error);
+    res.status(500).json({ error: 'Error al obtener comprobante' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
+exports.crearComprobante = async (req, res) => {
+  const { cliente_id, notas, tipo_comprobante } = req.body;
+  const items = normalizarProductos(req.body).filter((item) => item.producto_id && item.cantidad);
+
+  if (!items.length) {
+    return res.status(400).json({ error: 'Debe agregar productos al comprobante' });
+  }
+  const validacionError = validarItemsComprobante(items);
+  if (validacionError) {
+    return res.status(400).json({ error: validacionError });
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    const { descuento, total } = calcularTotales(items);
+    const {
+      id: comprobanteId,
+      serie,
+      correlativo,
+      tipo_comprobante: tipoComprobanteNormalizado
+    } = await crearComprobanteCabeceraConRetry(connection, {
+      usuarioId: req.usuario.id,
+      clienteId: cliente_id || null,
+      total,
+      descuento,
+      notas,
+      tipoComprobante: tipo_comprobante
+    });
+    for (const item of items) {
+      const subtotal = Number(item.precio_unitario || 0) * Number(item.cantidad || 0);
+      await connection.execute(
+        `INSERT INTO detalle_comprobante
+         (comprobante_id, producto_id, cantidad, precio_unitario, precio_regular, subtotal, almacen_origen)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          comprobanteId,
+          item.producto_id,
+          item.cantidad,
+          item.precio_unitario,
+          item.precio_regular,
+          subtotal,
+          item.almacen_origen || 'productos'
+        ]
+      );
+    }
+
+    await connection.execute(
+      `INSERT INTO historial_comprobantes (comprobante_id, usuario_id, accion, descripcion)
+       VALUES (?, ?, 'crear', 'Comprobante creado')`,
+      [comprobanteId, req.usuario.id]
+    );
+
+    await registrarHistorial(connection, {
+      entidad: 'comprobantes',
+      entidad_id: comprobanteId,
+      usuario_id: req.usuario.id,
+      accion: 'crear',
+      descripcion: 'Comprobante creado',
+      antes: null,
+      despues: {
+        id: comprobanteId,
+        tipo_comprobante: tipoComprobanteNormalizado,
+        total,
+        descuento,
+        cliente_id: cliente_id || null,
+        items
+      }
+    });
+
+    await connection.commit();
+
+    res.status(201).json({
+      id: comprobanteId,
+      serie,
+      correlativo,
+      tipo_comprobante: tipoComprobanteNormalizado
+    });
+  } catch (error) {
+    console.error('Error creando comprobante:', error);
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (_) {}
+    }
+    res.status(500).json({ error: 'Error al crear comprobante' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
+exports.editarComprobante = async (req, res) => {
+  const { cliente_id, notas, tipo_comprobante } = req.body;
+  const items = normalizarProductos(req.body).filter((item) => item.producto_id && item.cantidad);
+  if (!items.length) {
+    return res.status(400).json({ error: 'Debe agregar productos al comprobante' });
+  }
+  const validacionError = validarItemsComprobante(items);
+  if (validacionError) {
+    return res.status(400).json({ error: validacionError });
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    let prevCotQuery = 'SELECT * FROM comprobantes WHERE id = ?';
+    const prevCotParams = [req.params.id];
+    if (isVentasOwnerScoped(req)) {
+      prevCotQuery += ' AND usuario_id = ?';
+      prevCotParams.push(Number(req.usuario.id));
+    }
+    const [prevCot] = await connection.execute(prevCotQuery, prevCotParams);
+    if (!prevCot.length) {
+      return res.status(404).json({ error: 'Comprobante no encontrado' });
+    }
+    await connection.beginTransaction();
+    const [prevDetalles] = await connection.execute(
+      'SELECT * FROM detalle_comprobante WHERE comprobante_id = ?',
+      [req.params.id]
+    );
+
+    const { descuento, total } = calcularTotales(items);
+    const tipoComprobanteNormalizado = normalizeTipoComprobante(
+      tipo_comprobante || prevCot[0].tipo_comprobante
+    );
+    const serieObjetivo = resolveSerieComprobante(tipoComprobanteNormalizado);
+    let correlativoObjetivo = prevCot[0].correlativo;
+
+    if (prevCot[0].serie !== serieObjetivo) {
+      const nextSerie = await getNextSerieCorrelativo(connection, serieObjetivo);
+      correlativoObjetivo = nextSerie.correlativo;
+    }
+
+    await connection.execute(
+      `UPDATE comprobantes
+       SET cliente_id = ?, tipo_comprobante = ?, total = ?, descuento = ?, nota = ?, serie = ?, correlativo = ?
+       WHERE id = ?`,
+      [
+        cliente_id || null,
+        tipoComprobanteNormalizado,
+        total,
+        descuento,
+        notas || null,
+        serieObjetivo,
+        correlativoObjetivo,
+        req.params.id
+      ]
+    );
+
+    await connection.execute('DELETE FROM detalle_comprobante WHERE comprobante_id = ?', [
+      req.params.id
+    ]);
+    for (const item of items) {
+      const subtotal = Number(item.precio_unitario || 0) * Number(item.cantidad || 0);
+      await connection.execute(
+        `INSERT INTO detalle_comprobante
+         (comprobante_id, producto_id, cantidad, precio_unitario, precio_regular, subtotal, almacen_origen)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.params.id,
+          item.producto_id,
+          item.cantidad,
+          item.precio_unitario,
+          item.precio_regular,
+          subtotal,
+          item.almacen_origen || 'productos'
+        ]
+      );
+    }
+
+    await registrarHistorial(connection, {
+      entidad: 'comprobantes',
+      entidad_id: req.params.id,
+      usuario_id: req.usuario.id,
+      accion: 'editar',
+      descripcion: 'Comprobante actualizado',
+      antes: { comprobante: prevCot[0], detalles: prevDetalles },
+      despues: {
+        comprobante: {
+          ...prevCot[0],
+          cliente_id: cliente_id || null,
+          tipo_comprobante: tipoComprobanteNormalizado,
+          total,
+          descuento,
+          nota: notas || null,
+          serie: serieObjetivo,
+          correlativo: correlativoObjetivo
+        },
+        detalles: items
+      }
+    });
+
+    await connection.commit();
+    res.json({
+      id: req.params.id,
+      serie: serieObjetivo,
+      correlativo: correlativoObjetivo,
+      tipo_comprobante: tipoComprobanteNormalizado
+    });
+  } catch (error) {
+    console.error('Error editando comprobante:', error);
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (_) {}
+    }
+    res.status(500).json({ error: 'Error al editar comprobante' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
+exports.verComprobante = async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    let ventaQuery = `SELECT v.*, c.tipo_cliente, c.dni as cliente_dni, c.ruc as cliente_ruc,
+        c.nombre as cliente_nombre, c.apellido as cliente_apellido, c.razon_social,
+        c.direccion as cliente_direccion, c.telefono as cliente_telefono,
+        u.nombre as vendedor_nombre,
+        u.telefono as vendedor_celular
+       FROM comprobantes v
+       LEFT JOIN clientes c ON v.cliente_id = c.id
+       LEFT JOIN usuarios u ON v.usuario_id = u.id
+       WHERE v.id = ?`;
+    const ventaParams = [req.params.id];
+    if (isVentasOwnerScoped(req)) {
+      ventaQuery += ' AND v.usuario_id = ?';
+      ventaParams.push(Number(req.usuario.id));
+    }
+    const [ventas] = await connection.execute(ventaQuery, ventaParams);
+
+    if (!ventas.length) {
+      return res.status(404).json({ error: 'Comprobante no encontrado' });
+    }
+
+    const [detalles] = await connection.execute(
+      `SELECT d.*, m.codigo, m.descripcion, m.marca
+       FROM detalle_comprobante d
+       JOIN maquinas m ON d.producto_id = m.id
+       WHERE d.comprobante_id = ?`,
+      [req.params.id]
+    );
+
+    const venta = ventas[0];
+    const staticBase = buildStaticBase();
+    const html = buildHtmlComprobante({
+      venta,
+      detalles,
+      total: Number(venta.total || 0),
+      staticBase
+    });
+    res.send(html);
+  } catch (error) {
+    console.error('Error obteniendo comprobante:', error);
+    res.status(500).json({ error: 'Error al obtener comprobante' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
+exports.pdfComprobante = async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    let ventaQuery = `SELECT v.*, c.tipo_cliente, c.dni as cliente_dni, c.ruc as cliente_ruc,
+        c.nombre as cliente_nombre, c.apellido as cliente_apellido, c.razon_social,
+        c.direccion as cliente_direccion, c.telefono as cliente_telefono,
+        u.nombre as vendedor_nombre,
+        u.telefono as vendedor_celular
+       FROM comprobantes v
+       LEFT JOIN clientes c ON v.cliente_id = c.id
+       LEFT JOIN usuarios u ON v.usuario_id = u.id
+       WHERE v.id = ?`;
+    const ventaParams = [req.params.id];
+    if (isVentasOwnerScoped(req)) {
+      ventaQuery += ' AND v.usuario_id = ?';
+      ventaParams.push(Number(req.usuario.id));
+    }
+    const [ventas] = await connection.execute(ventaQuery, ventaParams);
+
+    if (!ventas.length) {
+      return res.status(404).json({ error: 'Comprobante no encontrado' });
+    }
+
+    const [detalles] = await connection.execute(
+      `SELECT d.*, m.codigo, m.descripcion, m.marca
+       FROM detalle_comprobante d
+       JOIN maquinas m ON d.producto_id = m.id
+       WHERE d.comprobante_id = ?`,
+      [req.params.id]
+    );
+
+    const venta = ventas[0];
+    const staticBase = buildStaticBase();
+    const html = buildHtmlComprobante({
+      venta,
+      detalles,
+      total: Number(venta.total || 0),
+      staticBase
+    });
+    res.send(html);
+  } catch (error) {
+    console.error('Error generando pdf:', error);
+    res.status(500).json({ error: 'Error al generar pdf' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
+exports.buscarProductos = async (req, res) => {
+  const { q = '', limit = 20 } = req.query;
+  const term = `%${q}%`;
+  const limitValue = parsePositiveInt(limit, 20);
+  const safeLimit = Math.min(limitValue, MAX_PRODUCTOS_BUSQUEDA);
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [rows] = await connection.execute(
+      `SELECT id, codigo, descripcion, marca, precio_venta, stock
+      FROM maquinas
+      WHERE activo = TRUE AND (codigo LIKE ? OR descripcion LIKE ? OR marca LIKE ?)
+       ORDER BY descripcion
+       LIMIT ${safeLimit}`,
+      [term, term, term]
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error('Error buscando productos:', error);
+    res.status(500).json({ error: 'Error al buscar productos' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
+exports.obtenerProducto = async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const [rows] = await connection.execute(
+      `SELECT id, codigo, descripcion, marca, precio_venta, stock
+       FROM maquinas WHERE id = ? AND activo = TRUE`,
+      [req.params.id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+
+    res.json(rows[0]);
+  } catch (error) {
+    console.error('Error obteniendo producto:', error);
+    res.status(500).json({ error: 'Error al obtener producto' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
+exports.filtrosComprobante = async (req, res) => {
+  const { tipo } = req.query;
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    let query = `SELECT DISTINCT marca FROM maquinas WHERE activo = TRUE AND marca IS NOT NULL AND marca <> ''`;
+    const params = [];
+    if (tipo) {
+      query += ' AND tipo_maquina_id = ?';
+      params.push(tipo);
+    }
+    query += ' ORDER BY marca';
+    const [rows] = await connection.execute(query, params);
+
+    res.json(rows.map((row) => row.marca));
+  } catch (error) {
+    console.error('Error obteniendo marcas:', error);
+    res.status(500).json({ error: 'Error al obtener marcas' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
+exports.productosComprobante = async (req, res) => {
+  const { tipo, marca } = req.query;
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    let query = `SELECT id, codigo, descripcion, marca, precio_venta, stock
+      FROM maquinas WHERE activo = TRUE`;
+    const params = [];
+    if (tipo) {
+      query += ' AND tipo_maquina_id = ?';
+      params.push(tipo);
+    }
+    if (marca) {
+      query += ' AND marca = ?';
+      params.push(marca);
+    }
+    query += ' ORDER BY descripcion';
+    const [rows] = await connection.execute(query, params);
+
+    res.json(rows);
+  } catch (error) {
+    console.error('Error obteniendo productos:', error);
+    res.status(500).json({ error: 'Error al obtener productos' });
+  } finally {
+    releaseConnection(connection);
+  }
+};
+
+exports._test = {
+  validarItemsComprobante
+};
+

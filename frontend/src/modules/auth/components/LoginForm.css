@@ -9,7 +9,7 @@
 }
 
 .login-form h2 {
-  color: #2c3e50;
+  color: #1c214f;
   margin-bottom: 20px;
   font-size: 18px;
 }
@@ -19,41 +19,44 @@
 }
 
 .login-form .form-group label {
-  color: #2c3e50;
+  color: #27304f;
   font-weight: 600;
   margin-bottom: 8px;
 }
 
 .login-form .form-group input {
   width: 100%;
-  padding: 10px 12px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
+  padding: 11px 12px;
+  border: 1px solid rgba(28, 33, 79, 0.14);
+  border-radius: 10px;
   font-size: 14px;
   transition: all 0.3s ease;
+  background: rgba(255, 255, 255, 0.94);
+  color: #1c214f;
 }
 
 .login-form .form-group input:focus {
   outline: none;
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  border-color: #f4b319;
+  box-shadow: 0 0 0 4px rgba(244, 179, 25, 0.18);
 }
 
 .login-form button[type="submit"] {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #2c2f6f 0%, #4148a1 100%);
   color: white;
-  padding: 12px;
+  padding: 13px;
   border: none;
-  border-radius: 6px;
-  font-weight: 600;
+  border-radius: 12px;
+  font-weight: 700;
   cursor: pointer;
-  margin-top: 10px;
+  margin-top: 12px;
   transition: all 0.3s ease;
+  box-shadow: 0 14px 26px rgba(44, 47, 111, 0.24);
 }
 
 .login-form button[type="submit"]:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+  transform: translateY(-1px);
+  box-shadow: 0 18px 28px rgba(44, 47, 111, 0.3);
 }
 
 .login-form button[type="submit"]:disabled {
@@ -62,18 +65,18 @@
 }
 
 .error-message {
-  background-color: #fadbd8;
-  color: #c0392b;
+  background-color: rgba(220, 38, 38, 0.1);
+  color: #b42318;
   padding: 12px 15px;
-  border-radius: 6px;
+  border-radius: 10px;
   margin-bottom: 16px;
-  border-left: 4px solid #e74c3c;
+  border-left: 4px solid #dc2626;
 }
 
 .link-button {
   background: none;
   border: none;
-  color: #667eea;
+  color: #2c2f6f;
   cursor: pointer;
   font-size: 13px;
   text-align: center;
@@ -84,5 +87,5 @@
 }
 
 .link-button:hover {
-  color: #764ba2;
+  color: #d99600;
 }
