@@ -496,6 +496,104 @@
   color: #b91c1c;
 }
 
+.inventario-detail-cards {
+  display: none;
+}
+
+.inventario-detail-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.inventario-detail-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.inventario-detail-table .icon-btn--delete,
+.inventario-detail-cards .icon-btn--delete {
+  font-size: 0;
+}
+
+.inventario-detail-table .icon-btn--delete::before,
+.inventario-detail-cards .icon-btn--delete::before {
+  content: '×';
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 700;
+  color: #dc2626;
+}
+
+.inventario-detail-card__header strong {
+  display: block;
+  font-size: 12px;
+  color: #111827;
+}
+
+.inventario-detail-card__header p {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: #475569;
+}
+
+.inventario-detail-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: #334155;
+}
+
+.inventario-detail-card__controls {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.inventario-detail-card__controls label {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.inventario-detail-card__controls input {
+  width: 100%;
+  max-width: 110px;
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.inventario-detail-card__diff {
+  display: grid;
+  gap: 3px;
+  justify-items: end;
+  font-size: 11px;
+  color: #475569;
+}
+
+.inventario-detail-card__diff strong {
+  font-size: 14px;
+}
+
+.inventario-detail-empty {
+  padding: 12px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  background: #f8fafc;
+  font-size: 11px;
+  color: #64748b;
+}
+
 /* Oculta componentes viejos del template anterior */
 .zone-row,
 .zone-active,
@@ -516,8 +614,13 @@
     padding: 10px;
   }
 
-  .inventario-table {
-    min-width: 480px;
+  .inventario-detail-table {
+    display: none;
+  }
+
+  .inventario-detail-cards {
+    display: grid;
+    gap: 8px;
   }
 
   .zone-grid {
@@ -620,7 +723,15 @@
     width: 100%;
   }
 
-  .inventario-table {
-    min-width: 360px;
+  .inventario-detail-card {
+    padding: 9px;
+  }
+
+  .inventario-detail-card__controls {
+    grid-template-columns: 1fr;
+  }
+
+  .inventario-detail-card__diff {
+    justify-items: start;
   }
 }

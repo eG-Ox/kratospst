@@ -821,6 +821,9 @@ CREATE TABLE IF NOT EXISTS lista_productos (
   precio_minimo DECIMAL(10, 2) NOT NULL DEFAULT 0,
   ficha_web VARCHAR(255),
   ficha_tecnica_ruta VARCHAR(255),
+  imagen_ruta VARCHAR(255),
+  video_r_ruta VARCHAR(255),
+  video_uso_ruta VARCHAR(255),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (tipo_id) REFERENCES lista_productos_tipos(id) ON DELETE RESTRICT,
@@ -1338,6 +1341,44 @@ async function inicializarBaseDatos() {
     console.log('Creando tabla lista_productos...');
     await connection.execute(crearListaProductos);
     console.log('âœ“ Tabla lista_productos creada exitosamente');
+    try {
+      await connection.execute(
+        'ALTER TABLE lista_productos ADD COLUMN imagen_ruta VARCHAR(255) NULL AFTER ficha_tecnica_ruta'
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute(
+        'ALTER TABLE lista_productos ADD COLUMN video_r_ruta VARCHAR(255) NULL AFTER imagen_ruta'
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute(
+        'ALTER TABLE lista_productos ADD COLUMN video_uso_ruta VARCHAR(255) NULL AFTER video_r_ruta'
+      );
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') {
+        throw error;
+      }
+    }
+    try {
+      await connection.execute(
+        `UPDATE lista_productos
+         SET video_r_ruta = video_ruta
+         WHERE (video_r_ruta IS NULL OR video_r_ruta = '')
+           AND video_ruta IS NOT NULL
+           AND video_ruta <> ''`
+      );
+    } catch (_) {
+      // La columna antigua video_ruta puede no existir en instalaciones nuevas.
+    }
 
     // Asegurar columnas de ubicacion en maquinas
     try {

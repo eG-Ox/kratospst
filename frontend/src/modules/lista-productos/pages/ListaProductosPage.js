@@ -2,8 +2,15 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { listaProductosService } from '../../../core/services/apiServices';
 import '../../productos/styles/ProductosPage.css';
+import '../styles/ListaProductosPage.css';
 
 const PAGE_SIZE = 60;
+const getProductoImageAlt = (producto) =>
+  `Imagen de ${producto?.codigo || 'producto'}${producto?.descripcion ? ` - ${producto.descripcion}` : ''}`;
+const getProductoVideoLabel = (producto, tipo = 'Video') =>
+  `${tipo} de ${producto?.codigo || 'producto'}${producto?.descripcion ? ` - ${producto.descripcion}` : ''}`;
+const getTipoFallbackLabel = (tipoId, tipoNombre = '') =>
+  tipoNombre || (tipoId ? `Tipo #${tipoId}` : 'Tipo no disponible');
 
 const ListaProductosPage = () => {
   const [productos, setProductos] = useState([]);
@@ -19,6 +26,11 @@ const ListaProductosPage = () => {
   const [editandoProducto, setEditandoProducto] = useState(null);
   const [mostrarModalTipo, setMostrarModalTipo] = useState(false);
   const [editandoTipo, setEditandoTipo] = useState(null);
+  const [imagenPreviewUrl, setImagenPreviewUrl] = useState('');
+  const [imagenExpandida, setImagenExpandida] = useState(null);
+  const [videoRPreviewUrl, setVideoRPreviewUrl] = useState('');
+  const [videoUsoPreviewUrl, setVideoUsoPreviewUrl] = useState('');
+  const [videoExpandido, setVideoExpandido] = useState(null);
 
   const [filtros, setFiltros] = useState({
     q: '',
@@ -40,7 +52,13 @@ const ListaProductosPage = () => {
     precio_venta: '',
     precio_minimo: 0,
     ficha_web: '',
-    ficha_tecnica: null
+    ficha_tecnica: null,
+    imagen: null,
+    video_r: null,
+    video_uso: null,
+    eliminar_imagen: false,
+    eliminar_video_r: false,
+    eliminar_video_uso: false
   });
 
   const [tipoForm, setTipoForm] = useState({
@@ -49,6 +67,9 @@ const ListaProductosPage = () => {
   });
 
   const fileInputRef = useRef(null);
+  const imagenInputRef = useRef(null);
+  const videoRInputRef = useRef(null);
+  const videoUsoInputRef = useRef(null);
 
   const cargarCatalogos = useCallback(async () => {
     try {
@@ -102,6 +123,54 @@ const ListaProductosPage = () => {
     return () => clearTimeout(debounce);
   }, [cargarProductos, filtros, page]);
 
+  useEffect(() => {
+    if (formularioData.imagen instanceof File) {
+      const objectUrl = window.URL.createObjectURL(formularioData.imagen);
+      setImagenPreviewUrl(objectUrl);
+      return () => window.URL.revokeObjectURL(objectUrl);
+    }
+
+    if (editandoProducto?.imagen_ruta && !formularioData.eliminar_imagen) {
+      setImagenPreviewUrl(listaProductosService.getImagenUrl(editandoProducto.imagen_ruta));
+      return undefined;
+    }
+
+    setImagenPreviewUrl('');
+    return undefined;
+  }, [editandoProducto, formularioData.eliminar_imagen, formularioData.imagen]);
+
+  useEffect(() => {
+    if (formularioData.video_r instanceof File) {
+      const objectUrl = window.URL.createObjectURL(formularioData.video_r);
+      setVideoRPreviewUrl(objectUrl);
+      return () => window.URL.revokeObjectURL(objectUrl);
+    }
+
+    if (editandoProducto?.video_r_ruta && !formularioData.eliminar_video_r) {
+      setVideoRPreviewUrl(listaProductosService.getVideoUrl(editandoProducto.video_r_ruta));
+      return undefined;
+    }
+
+    setVideoRPreviewUrl('');
+    return undefined;
+  }, [editandoProducto, formularioData.eliminar_video_r, formularioData.video_r]);
+
+  useEffect(() => {
+    if (formularioData.video_uso instanceof File) {
+      const objectUrl = window.URL.createObjectURL(formularioData.video_uso);
+      setVideoUsoPreviewUrl(objectUrl);
+      return () => window.URL.revokeObjectURL(objectUrl);
+    }
+
+    if (editandoProducto?.video_uso_ruta && !formularioData.eliminar_video_uso) {
+      setVideoUsoPreviewUrl(listaProductosService.getVideoUrl(editandoProducto.video_uso_ruta));
+      return undefined;
+    }
+
+    setVideoUsoPreviewUrl('');
+    return undefined;
+  }, [editandoProducto, formularioData.eliminar_video_uso, formularioData.video_uso]);
+
   const resetFormulario = () => {
     setFormularioData({
       codigo: '',
@@ -114,8 +183,20 @@ const ListaProductosPage = () => {
       precio_venta: '',
       precio_minimo: 0,
       ficha_web: '',
-      ficha_tecnica: null
+      ficha_tecnica: null,
+      imagen: null,
+      video_r: null,
+      video_uso: null,
+      eliminar_imagen: false,
+      eliminar_video_r: false,
+      eliminar_video_uso: false
     });
+    setImagenPreviewUrl('');
+    setVideoRPreviewUrl('');
+    setVideoUsoPreviewUrl('');
+    limpiarInputArchivo(imagenInputRef);
+    limpiarInputArchivo(videoRInputRef);
+    limpiarInputArchivo(videoUsoInputRef);
     setEditandoProducto(null);
   };
 
@@ -127,6 +208,11 @@ const ListaProductosPage = () => {
   const handleGuardarProducto = async (e) => {
     e.preventDefault();
     try {
+      const tipoValido = tipos.some((tipo) => String(tipo.id) === String(formularioData.tipo_id));
+      if (formularioData.tipo_id && !tipoValido) {
+        setError('El tipo seleccionado ya no existe. Selecciona uno valido antes de guardar.');
+        return;
+      }
       const payload = { ...formularioData };
       if (editandoProducto) {
         await listaProductosService.update(editandoProducto.id, payload);
@@ -154,10 +240,73 @@ const ListaProductosPage = () => {
       precio_venta: producto.precio_venta ?? '',
       precio_minimo: producto.precio_minimo ?? 0,
       ficha_web: producto.ficha_web || '',
-      ficha_tecnica: null
+      ficha_tecnica: null,
+      imagen: null,
+      video_r: null,
+      video_uso: null,
+      eliminar_imagen: false,
+      eliminar_video_r: false,
+      eliminar_video_uso: false
     });
     setEditandoProducto(producto);
     setMostrarModalProducto(true);
+  };
+
+  const limpiarInputArchivo = (inputRef) => {
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
+  };
+
+  const quitarImagenSeleccionada = () => {
+    limpiarInputArchivo(imagenInputRef);
+    setFormularioData((prev) => ({
+      ...prev,
+      imagen: null
+    }));
+  };
+
+  const toggleEliminarImagenActual = () => {
+    limpiarInputArchivo(imagenInputRef);
+    setFormularioData((prev) => ({
+      ...prev,
+      imagen: null,
+      eliminar_imagen: !prev.eliminar_imagen
+    }));
+  };
+
+  const quitarVideoRSeleccionado = () => {
+    limpiarInputArchivo(videoRInputRef);
+    setFormularioData((prev) => ({
+      ...prev,
+      video_r: null
+    }));
+  };
+
+  const toggleEliminarVideoRActual = () => {
+    limpiarInputArchivo(videoRInputRef);
+    setFormularioData((prev) => ({
+      ...prev,
+      video_r: null,
+      eliminar_video_r: !prev.eliminar_video_r
+    }));
+  };
+
+  const quitarVideoUsoSeleccionado = () => {
+    limpiarInputArchivo(videoUsoInputRef);
+    setFormularioData((prev) => ({
+      ...prev,
+      video_uso: null
+    }));
+  };
+
+  const toggleEliminarVideoUsoActual = () => {
+    limpiarInputArchivo(videoUsoInputRef);
+    setFormularioData((prev) => ({
+      ...prev,
+      video_uso: null,
+      eliminar_video_uso: !prev.eliminar_video_uso
+    }));
   };
 
   const handleEliminar = async (id) => {
@@ -303,8 +452,40 @@ const ListaProductosPage = () => {
     }
   };
 
+  const abrirImagen = (producto) => {
+    if (!producto?.imagen_ruta) return;
+    setImagenExpandida({
+      src: listaProductosService.getImagenUrl(producto.imagen_ruta),
+      alt: getProductoImageAlt(producto)
+    });
+  };
+
+  const abrirVideo = (producto, srcOverride = '', tipo = 'Video') => {
+    const src =
+      srcOverride ||
+      (producto ? listaProductosService.getVideoUrl(tipo === 'Video R' ? producto.video_r_ruta : producto.video_uso_ruta) : '');
+    if (!src) return;
+    setVideoExpandido({
+      src,
+      label: getProductoVideoLabel(producto, tipo)
+    });
+  };
+
   const formatearMoneda = (value) => `S/. ${Number(value || 0).toFixed(2)}`;
   const totalPages = Math.max(Math.ceil(total / PAGE_SIZE) || 1, 1);
+  const tipoActualNoDisponible =
+    Boolean(formularioData.tipo_id) &&
+    !tipos.some((tipo) => String(tipo.id) === String(formularioData.tipo_id));
+  const tiposDisponibles = tipoActualNoDisponible
+    ? [
+        {
+          id: formularioData.tipo_id,
+          nombre: getTipoFallbackLabel(formularioData.tipo_id, editandoProducto?.tipo_nombre),
+          unavailable: true
+        },
+        ...tipos
+      ]
+    : tipos;
 
   return (
     <div className="productos-container">
@@ -420,39 +601,118 @@ const ListaProductosPage = () => {
             </button>
           </div>
 
-          <div className="productos-table-container">
+          <div className="productos-table-container lista-productos-table-container">
             {productos.length > 0 ? (
-              <table className="productos-table">
+              <table className="productos-table lista-productos-table">
+                <colgroup>
+                  <col className="lista-productos-col-codigo" />
+                  <col className="lista-productos-col-tipo" />
+                  <col className="lista-productos-col-marca" />
+                  <col className="lista-productos-col-descripcion" />
+                  <col className="lista-productos-col-proveedor" />
+                  <col className="lista-productos-col-stock" />
+                  <col className="lista-productos-col-precio" />
+                  <col className="lista-productos-col-precio" />
+                  <col className="lista-productos-col-precio" />
+                  <col className="lista-productos-col-imagen" />
+                  <col className="lista-productos-col-video" />
+                  <col className="lista-productos-col-video" />
+                  <col className="lista-productos-col-icon" />
+                  <col className="lista-productos-col-icon" />
+                  <col className="lista-productos-col-acciones" />
+                </colgroup>
                 <thead>
                   <tr>
-                    <th>Codigo</th>
-                    <th>Tipo</th>
-                    <th>Marca</th>
-                    <th>Descripcion</th>
+                    <th>CODIGO</th>
+                    <th>TIPO</th>
+                    <th>MARCA</th>
+                    <th>DESCRIPCION</th>
                     <th>PROVEEDOR</th>
-                    <th>Stock</th>
-                    <th>Precio Compra</th>
-                    <th>Precio Venta</th>
-                    <th>Precio Minimo</th>
-                    <th>Ficha Web</th>
-                    <th>Ficha Tecnica</th>
-                    <th>Acciones</th>
+                    <th>STOCK</th>
+                    <th>PRECIO COMPRA</th>
+                    <th>PRECIO VENTA</th>
+                    <th>PRECIO MINIMO</th>
+                    <th>IMAGEN</th>
+                    <th title="Video R" aria-label="Video R">▶ R</th>
+                    <th title="Video Uso" aria-label="Video Uso">▶ U</th>
+                    <th>FICHA WEB</th>
+                    <th>FICHA TECNICA</th>
+                    <th>ACCIONES</th>
                   </tr>
                 </thead>
                 <tbody>
                   {productos.map((prod) => (
                     <tr key={prod.id}>
                       <td>{prod.codigo}</td>
-                      <td>{prod.tipo_nombre}</td>
-                      <td>{prod.marca || '-'}</td>
-                      <td>{prod.descripcion || '-'}</td>
-                      <td>{prod.proveedor || '-'}</td>
+                      <td title={prod.tipo_nombre || '-'}>
+                        <span className="lista-productos-cell-text">{prod.tipo_nombre || '-'}</span>
+                      </td>
+                      <td title={prod.marca || '-'}>
+                        <span className="lista-productos-cell-text">{prod.marca || '-'}</span>
+                      </td>
+                      <td title={prod.descripcion || '-'}>
+                        <span className="lista-productos-cell-text">{prod.descripcion || '-'}</span>
+                      </td>
+                      <td title={prod.proveedor || '-'}>
+                        <span className="lista-productos-cell-text">{prod.proveedor || '-'}</span>
+                      </td>
                       <td className={Number(prod.stock || 0) <= 0 ? 'low-stock' : ''}>
                         {prod.stock}
                       </td>
                       <td>{formatearMoneda(prod.precio_compra)}</td>
                       <td>{formatearMoneda(prod.precio_venta)}</td>
                       <td>{formatearMoneda(prod.precio_minimo)}</td>
+                      <td className="lista-productos-thumb-col">
+                        {prod.imagen_ruta ? (
+                          <button
+                            type="button"
+                            className="lista-productos-thumb-button"
+                            onClick={() => abrirImagen(prod)}
+                            title="Ver imagen"
+                            aria-label={`Ver imagen de ${prod.codigo}`}
+                          >
+                            <img
+                              className="lista-productos-thumb"
+                              src={listaProductosService.getImagenUrl(prod.imagen_ruta)}
+                              alt={getProductoImageAlt(prod)}
+                              loading="lazy"
+                              crossOrigin="use-credentials"
+                            />
+                          </button>
+                        ) : (
+                          <span className="lista-productos-thumb-empty">-</span>
+                        )}
+                      </td>
+                      <td className="lista-productos-video-col">
+                        {prod.video_r_ruta ? (
+                          <button
+                            type="button"
+                            className="lista-productos-video-button"
+                            onClick={() => abrirVideo(prod, '', 'Video R')}
+                            title="Ver video R"
+                            aria-label={`Ver video R de ${prod.codigo}`}
+                          >
+                            ▶
+                          </button>
+                        ) : (
+                          <span className="lista-productos-thumb-empty">-</span>
+                        )}
+                      </td>
+                      <td className="lista-productos-video-col">
+                        {prod.video_uso_ruta ? (
+                          <button
+                            type="button"
+                            className="lista-productos-video-button"
+                            onClick={() => abrirVideo(prod, '', 'Video Uso')}
+                            title="Ver video uso"
+                            aria-label={`Ver video uso de ${prod.codigo}`}
+                          >
+                            ▶
+                          </button>
+                        ) : (
+                          <span className="lista-productos-thumb-empty">-</span>
+                        )}
+                      </td>
                       <td className="icon-col">
                         {prod.ficha_web ? (
                           <a
@@ -552,7 +812,7 @@ const ListaProductosPage = () => {
       {mostrarModalProducto &&
         createPortal(
           <div className="modal-overlay">
-            <div className="modal-content">
+            <div className="modal-content lista-productos-product-modal">
               <div className="modal-header">
                 <h2>{editandoProducto ? 'Editar Producto' : 'Nuevo Producto'}</h2>
                 <button
@@ -566,7 +826,7 @@ const ListaProductosPage = () => {
                   X
                 </button>
               </div>
-              <form onSubmit={handleGuardarProducto}>
+              <form className="lista-productos-product-form" onSubmit={handleGuardarProducto}>
                 <div className="modal-body">
                   <div className="form-row">
                     <div className="form-group">
@@ -590,12 +850,18 @@ const ListaProductosPage = () => {
                         }
                       >
                         <option value="">Seleccionar tipo</option>
-                        {tipos.map((tipo) => (
-                          <option key={tipo.id} value={tipo.id}>
+                        {tiposDisponibles.map((tipo) => (
+                          <option key={`${tipo.id}-${tipo.unavailable ? 'missing' : 'ok'}`} value={tipo.id}>
                             {tipo.nombre}
+                            {tipo.unavailable ? ' (no disponible)' : ''}
                           </option>
                         ))}
                       </select>
+                      {tipoActualNoDisponible && (
+                        <span className="lista-productos-warning">
+                          El tipo guardado ya no existe en catalogo. Debes elegir uno valido.
+                        </span>
+                      )}
                       <button type="button" className="btn-link" onClick={abrirModalTipo}>
                         + Agregar tipo si no esta en la lista
                       </button>
@@ -737,6 +1003,218 @@ const ListaProductosPage = () => {
                       </button>
                     )}
                   </div>
+
+                  <div className="form-group">
+                    <label>Imagen del producto</label>
+                    <input
+                      ref={imagenInputRef}
+                      type="file"
+                      accept=".jpg,.jpeg,.png,.gif,.webp,image/*"
+                      onChange={(e) =>
+                        setFormularioData({
+                          ...formularioData,
+                          imagen: e.target.files?.[0] || null,
+                          eliminar_imagen: false
+                        })
+                      }
+                    />
+                    <span className="lista-productos-help">
+                      Se mostrara como miniatura en la tabla y podras ampliarla al hacer click.
+                    </span>
+                    {imagenPreviewUrl && (
+                      <button
+                        type="button"
+                        className="lista-productos-form-image"
+                        onClick={() =>
+                          setImagenExpandida({
+                            src: imagenPreviewUrl,
+                            alt: getProductoImageAlt(editandoProducto || formularioData)
+                          })
+                        }
+                      >
+                        <img
+                          src={imagenPreviewUrl}
+                          alt={getProductoImageAlt(editandoProducto || formularioData)}
+                          crossOrigin="use-credentials"
+                        />
+                        <span>Click para ver grande</span>
+                      </button>
+                    )}
+                    {(formularioData.imagen instanceof File || editandoProducto?.imagen_ruta) && (
+                      <div className="lista-productos-media-actions">
+                        {formularioData.imagen instanceof File && (
+                          <button
+                            type="button"
+                            className="btn-link"
+                            onClick={quitarImagenSeleccionada}
+                          >
+                            Quitar imagen seleccionada
+                          </button>
+                        )}
+                        {editandoProducto?.imagen_ruta &&
+                          !(formularioData.imagen instanceof File) && (
+                          <button
+                            type="button"
+                            className="btn-link lista-productos-danger-link"
+                            onClick={toggleEliminarImagenActual}
+                          >
+                            {formularioData.eliminar_imagen
+                              ? 'Restaurar imagen actual'
+                              : 'Eliminar imagen actual'}
+                          </button>
+                          )}
+                      </div>
+                    )}
+                    {editandoProducto?.imagen_ruta && formularioData.eliminar_imagen && (
+                      <span className="lista-productos-warning">
+                        La imagen actual se eliminara al guardar.
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Video R</label>
+                      <input
+                        ref={videoRInputRef}
+                        type="file"
+                        accept=".mp4,.webm,.ogg,video/*"
+                        onChange={(e) =>
+                          setFormularioData({
+                            ...formularioData,
+                            video_r: e.target.files?.[0] || null,
+                            eliminar_video_r: false
+                          })
+                        }
+                      />
+                      <span className="lista-productos-help">
+                        Formatos permitidos: MP4, WEBM y OGG.
+                      </span>
+                      {videoRPreviewUrl && (
+                        <div className="lista-productos-form-video">
+                          <button
+                            type="button"
+                            className="lista-productos-video-preview-button"
+                            aria-label={getProductoVideoLabel(editandoProducto || formularioData, 'Video R')}
+                            onClick={() =>
+                              abrirVideo(editandoProducto || formularioData, videoRPreviewUrl, 'Video R')
+                            }
+                          >
+                            <video
+                              src={videoRPreviewUrl}
+                              preload="metadata"
+                              muted
+                              playsInline
+                              crossOrigin="use-credentials"
+                              className="lista-productos-video-preview"
+                            />
+                          </button>
+                          <span>Click para ver grande</span>
+                        </div>
+                      )}
+                      {(formularioData.video_r instanceof File || editandoProducto?.video_r_ruta) && (
+                        <div className="lista-productos-media-actions">
+                          {formularioData.video_r instanceof File && (
+                            <button
+                              type="button"
+                              className="btn-link"
+                              onClick={quitarVideoRSeleccionado}
+                            >
+                              Quitar video R seleccionado
+                            </button>
+                          )}
+                          {editandoProducto?.video_r_ruta &&
+                            !(formularioData.video_r instanceof File) && (
+                            <button
+                              type="button"
+                              className="btn-link lista-productos-danger-link"
+                              onClick={toggleEliminarVideoRActual}
+                            >
+                              {formularioData.eliminar_video_r
+                                ? 'Restaurar video R actual'
+                                : 'Eliminar video R actual'}
+                            </button>
+                            )}
+                        </div>
+                      )}
+                      {editandoProducto?.video_r_ruta && formularioData.eliminar_video_r && (
+                        <span className="lista-productos-warning">
+                          El video R actual se eliminara al guardar.
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="form-group">
+                      <label>Video Uso</label>
+                      <input
+                        ref={videoUsoInputRef}
+                        type="file"
+                        accept=".mp4,.webm,.ogg,video/*"
+                        onChange={(e) =>
+                          setFormularioData({
+                            ...formularioData,
+                            video_uso: e.target.files?.[0] || null,
+                            eliminar_video_uso: false
+                          })
+                        }
+                      />
+                      <span className="lista-productos-help">
+                        Formatos permitidos: MP4, WEBM y OGG.
+                      </span>
+                      {videoUsoPreviewUrl && (
+                        <div className="lista-productos-form-video">
+                          <button
+                            type="button"
+                            className="lista-productos-video-preview-button"
+                            aria-label={getProductoVideoLabel(editandoProducto || formularioData, 'Video Uso')}
+                            onClick={() =>
+                              abrirVideo(editandoProducto || formularioData, videoUsoPreviewUrl, 'Video Uso')
+                            }
+                          >
+                            <video
+                              src={videoUsoPreviewUrl}
+                              preload="metadata"
+                              muted
+                              playsInline
+                              crossOrigin="use-credentials"
+                              className="lista-productos-video-preview"
+                            />
+                          </button>
+                          <span>Click para ver grande</span>
+                        </div>
+                      )}
+                      {(formularioData.video_uso instanceof File || editandoProducto?.video_uso_ruta) && (
+                        <div className="lista-productos-media-actions">
+                          {formularioData.video_uso instanceof File && (
+                            <button
+                              type="button"
+                              className="btn-link"
+                              onClick={quitarVideoUsoSeleccionado}
+                            >
+                              Quitar video uso seleccionado
+                            </button>
+                          )}
+                          {editandoProducto?.video_uso_ruta &&
+                            !(formularioData.video_uso instanceof File) && (
+                            <button
+                              type="button"
+                              className="btn-link lista-productos-danger-link"
+                              onClick={toggleEliminarVideoUsoActual}
+                            >
+                              {formularioData.eliminar_video_uso
+                                ? 'Restaurar video uso actual'
+                                : 'Eliminar video uso actual'}
+                            </button>
+                            )}
+                        </div>
+                      )}
+                      {editandoProducto?.video_uso_ruta && formularioData.eliminar_video_uso && (
+                        <span className="lista-productos-warning">
+                          El video uso actual se eliminara al guardar.
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
                 <div className="modal-footer">
                   <button type="submit" className="btn-success">
@@ -754,6 +1232,81 @@ const ListaProductosPage = () => {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {imagenExpandida &&
+        createPortal(
+          <div
+            className="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Vista previa de imagen"
+            onClick={() => setImagenExpandida(null)}
+          >
+            <div
+              className="modal-content lista-productos-image-modal"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="modal-header">
+                <h2>Imagen del producto</h2>
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => setImagenExpandida(null)}
+                >
+                  X
+                </button>
+              </div>
+              <div className="modal-body lista-productos-image-modal-body">
+                <img
+                  src={imagenExpandida.src}
+                  alt={imagenExpandida.alt}
+                  className="lista-productos-image-full"
+                  crossOrigin="use-credentials"
+                />
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {videoExpandido &&
+        createPortal(
+          <div
+            className="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Vista previa de video"
+            onClick={() => setVideoExpandido(null)}
+          >
+            <div
+              className="modal-content lista-productos-media-modal"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="modal-header">
+                <h2>{videoExpandido.label}</h2>
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => setVideoExpandido(null)}
+                >
+                  X
+                </button>
+              </div>
+              <div className="modal-body lista-productos-media-modal-body">
+                <video
+                  src={videoExpandido.src}
+                  controls
+                  autoPlay
+                  playsInline
+                  preload="metadata"
+                  crossOrigin="use-credentials"
+                  className="lista-productos-video-full"
+                />
+              </div>
             </div>
           </div>,
           document.body

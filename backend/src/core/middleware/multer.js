@@ -28,7 +28,11 @@ const fileFilter = (req, file, cb) => {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'image/jpeg',
     'image/png',
-    'image/gif'
+    'image/gif',
+    'image/webp',
+    'video/mp4',
+    'video/webm',
+    'video/ogg'
   ];
 
   if (allowedMimes.includes(file.mimetype)) {
@@ -42,7 +46,7 @@ const multerUpload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10 MB
+    fileSize: 50 * 1024 * 1024 // 50 MB
   }
 });
 

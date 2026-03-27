@@ -1,6 +1,7 @@
 const pool = require('../../core/config/database');
-const { ExcelJS, addSheetFromObjects, workbookToBuffer } = require('../../shared/utils/excel');
+const { ExcelJS, workbookToBuffer } = require('../../shared/utils/excel');
 const { registrarHistorial } = require('../../shared/utils/historial');
+const { tienePermiso } = require('../../core/middleware/auth');
 const releaseConnection = (connection) => {
   if (!connection) return;
   try {
@@ -66,6 +67,9 @@ const formatLocalDate = (value) => {
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
+const formatUbicacionLabel = (letra, numero) =>
+  letra ? `${letra}${numero || ''}` : '';
 
 const mapDetalle = (row) => ({
   id: row.id,
@@ -757,24 +761,65 @@ exports.exportarInventario = async (req, res) => {
     }
 
     const [detalles] = await connection.execute(
-      `SELECT d.*, m.codigo, m.descripcion
+      `SELECT d.*, m.codigo, m.descripcion, m.marca, m.precio_compra, m.precio_venta, m.precio_minimo,
+              m.ubicacion_letra AS ubicacion_principal_letra,
+              m.ubicacion_numero AS ubicacion_principal_numero,
+              m.activo, t.nombre AS tipo_nombre
        FROM inventario_detalle d
        JOIN maquinas m ON d.producto_id = m.id
-       WHERE d.inventario_id = ?`,
+       LEFT JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id
+       WHERE d.inventario_id = ?
+       ORDER BY m.codigo, d.ubicacion_letra, d.ubicacion_numero, d.id`,
       [req.params.id]
     );
 
+    const puedeVerPrecioCompra = tienePermiso(req, 'productos.precio_compra.ver');
     const data = detalles.map((row) => ({
       codigo: row.codigo || '',
+      tipo: row.tipo_nombre || '',
+      marca: row.marca || '',
       descripcion: row.descripcion || '',
-      ubicacion: row.ubicacion_letra ? `${row.ubicacion_letra}${row.ubicacion_numero || ''}` : '',
+      ubicacion_principal: formatUbicacionLabel(
+        row.ubicacion_principal_letra,
+        row.ubicacion_principal_numero
+      ),
+      ubicacion_inventario: formatUbicacionLabel(row.ubicacion_letra, row.ubicacion_numero),
       stock_actual: Number(row.stock_actual || 0),
       conteo: Number(row.conteo || 0),
-      diferencia: Number(row.diferencia || 0)
+      diferencia: Number(row.diferencia || 0),
+      precio_compra: puedeVerPrecioCompra ? Number(row.precio_compra || 0) : null,
+      precio_venta: Number(row.precio_venta || 0),
+      precio_minimo: Number(row.precio_minimo || 0),
+      activo: Number(row.activo) === 1 ? 'SI' : 'NO'
     }));
 
     const workbook = new ExcelJS.Workbook();
-    addSheetFromObjects(workbook, 'Inventario', data);
+    const sheet = workbook.addWorksheet('Inventario');
+    sheet.columns = [
+      { header: 'CODIGO', key: 'codigo', width: 18 },
+      { header: 'TIPO', key: 'tipo', width: 18 },
+      { header: 'MARCA', key: 'marca', width: 18 },
+      { header: 'DESCRIPCION', key: 'descripcion', width: 36 },
+      { header: 'UBICACION PRINCIPAL', key: 'ubicacion_principal', width: 20 },
+      { header: 'UBICACION INVENTARIO', key: 'ubicacion_inventario', width: 22 },
+      { header: 'STOCK ACTUAL', key: 'stock_actual', width: 14 },
+      { header: 'CONTEO', key: 'conteo', width: 12 },
+      { header: 'DIFERENCIA', key: 'diferencia', width: 14 },
+      { header: 'PRECIO COMPRA', key: 'precio_compra', width: 16 },
+      { header: 'PRECIO VENTA', key: 'precio_venta', width: 16 },
+      { header: 'PRECIO MINIMO', key: 'precio_minimo', width: 16 },
+      { header: 'ACTIVO', key: 'activo', width: 10 }
+    ];
+    data.forEach((row) => sheet.addRow(row));
+    sheet.getRow(1).font = { bold: true };
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+    sheet.autoFilter = {
+      from: 'A1',
+      to: 'M1'
+    };
+    sheet.getColumn('precio_compra').numFmt = '"S/." #,##0.00';
+    sheet.getColumn('precio_venta').numFmt = '"S/." #,##0.00';
+    sheet.getColumn('precio_minimo').numFmt = '"S/." #,##0.00';
     const buffer = await workbookToBuffer(workbook);
 
     res.setHeader(

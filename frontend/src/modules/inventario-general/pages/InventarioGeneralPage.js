@@ -11,6 +11,9 @@ const normalizarCodigo = (value) =>
     .trim()
     .toUpperCase();
 
+const getDiferenciaClass = (diferencia) =>
+  diferencia === 0 ? '' : diferencia > 0 ? 'diff-plus' : 'diff-minus';
+
 const InventarioGeneralPage = () => {
   const [inventarioId, setInventarioId] = useState(null);
   const [estadoInventario, setEstadoInventario] = useState('abierto');
@@ -33,6 +36,7 @@ const InventarioGeneralPage = () => {
   const [faseConteo, setFaseConteo] = useState('zona');
   const [ultimoScanOk, setUltimoScanOk] = useState(null);
   const [ultimoScanTexto, setUltimoScanTexto] = useState('');
+  const [codigoPrioritario, setCodigoPrioritario] = useState('');
   const PRODUCTOS_PAGE_SIZE = 2000;
 
   const isNativeScannerAvailable = () =>
@@ -63,6 +67,16 @@ const InventarioGeneralPage = () => {
     () => historial.find((item) => item.estado === 'abierto'),
     [historial]
   );
+
+  const detallesOrdenados = useMemo(() => {
+    const codigoObjetivo = normalizarCodigo(codigoPrioritario);
+    if (!codigoObjetivo) return detalles;
+    return [...detalles].sort((a, b) => {
+      const aPrimero = normalizarCodigo(a.codigo) === codigoObjetivo ? 0 : 1;
+      const bPrimero = normalizarCodigo(b.codigo) === codigoObjetivo ? 0 : 1;
+      return aPrimero - bPrimero;
+    });
+  }, [codigoPrioritario, detalles]);
 
   const cargarProductos = useCallback(async () => {
     try {
@@ -138,6 +152,7 @@ const InventarioGeneralPage = () => {
       setEstadoInventario(resp.data.inventario.estado);
       setInventarioInfo(resp.data.inventario);
       setDetalles(resp.data.detalles || []);
+      setCodigoPrioritario('');
       setTab('conteo');
       setShowInicioModal(false);
     } catch (err) {
@@ -164,6 +179,7 @@ const InventarioGeneralPage = () => {
         setEstadoInventario('abierto');
         setInventarioInfo(null);
         setDetalles([]);
+        setCodigoPrioritario('');
       }
     } catch (err) {
       console.error('Error eliminando inventario:', err);
@@ -314,6 +330,7 @@ const InventarioGeneralPage = () => {
       reproducirBeep();
       setUltimoScanOk(true);
       setUltimoScanTexto(codigoFinal);
+      setCodigoPrioritario(codigoFinal);
       setSuccess(`Codigo leido: ${codigoFinal}`);
       setTimeout(() => setSuccess(''), 900);
       setCodigo('');
@@ -775,7 +792,8 @@ const InventarioGeneralPage = () => {
                 </div>
 
                 <div className="inventario-table-container">
-                  <table className="inventario-table">
+                  <div className="inventario-detail-table">
+                    <table className="inventario-table">
                     <thead>
                       <tr>
                         <th>Codigo</th>
@@ -788,12 +806,12 @@ const InventarioGeneralPage = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {detalles.length === 0 ? (
+                      {detallesOrdenados.length === 0 ? (
                         <tr>
-                          <td colSpan="6" className="empty-message">No hay conteos. Empieza a escanear.</td>
+                          <td colSpan="7" className="empty-message">No hay conteos. Empieza a escanear.</td>
                         </tr>
                       ) : (
-                        detalles.map((item) => (
+                        detallesOrdenados.map((item) => (
                           <tr key={item.id}>
                             <td>{item.codigo}</td>
                             <td>{item.descripcion}</td>
@@ -806,7 +824,7 @@ const InventarioGeneralPage = () => {
                                 onChange={(e) => ajustarConteo(item.id, e.target.value)}
                               />
                             </td>
-                            <td className={item.diferencia === 0 ? '' : item.diferencia > 0 ? 'diff-plus' : 'diff-minus'}>
+                            <td className={getDiferenciaClass(item.diferencia)}>
                               {item.diferencia}
                             </td>
                             <td>
@@ -824,7 +842,51 @@ const InventarioGeneralPage = () => {
                         ))
                       )}
                     </tbody>
-                  </table>
+                    </table>
+                  </div>
+                  <div className="inventario-detail-cards">
+                    {detallesOrdenados.length === 0 ? (
+                      <div className="inventario-detail-empty">No hay conteos. Empieza a escanear.</div>
+                    ) : (
+                      detallesOrdenados.map((item) => (
+                        <article className="inventario-detail-card" key={`mobile-${item.id}`}>
+                          <div className="inventario-detail-card__header">
+                            <div>
+                              <strong>{item.codigo}</strong>
+                              <p>{item.descripcion || '-'}</p>
+                            </div>
+                            <button
+                              type="button"
+                              className="icon-btn icon-btn--delete"
+                              onClick={() => eliminarDetalle(item.id)}
+                              title="Eliminar"
+                              aria-label={`Eliminar ${item.codigo}`}
+                            >
+                              ðŸ—‘ï¸
+                            </button>
+                          </div>
+                          <div className="inventario-detail-card__meta">
+                            <span>Ubicacion: {formatearUbicacion(item)}</span>
+                            <span>Stock: {item.stock_actual}</span>
+                          </div>
+                          <div className="inventario-detail-card__controls">
+                            <label>
+                              <span>Conteo</span>
+                              <input
+                                type="number"
+                                value={item.conteo}
+                                onChange={(e) => ajustarConteo(item.id, e.target.value)}
+                              />
+                            </label>
+                            <div className={`inventario-detail-card__diff ${getDiferenciaClass(item.diferencia)}`}>
+                              <span>Diferencia</span>
+                              <strong>{item.diferencia}</strong>
+                            </div>
+                          </div>
+                        </article>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

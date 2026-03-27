@@ -22,17 +22,32 @@ router.post(
 router.post(
   '/',
   autorizar('productos.editar'),
-  multerUpload.single('ficha_tecnica'),
+  multerUpload.fields([
+    { name: 'ficha_tecnica', maxCount: 1 },
+    { name: 'imagen', maxCount: 1 },
+    { name: 'video_r', maxCount: 1 },
+    { name: 'video_uso', maxCount: 1 }
+  ]),
   controller.crear
 );
 router.put(
   '/:id',
   autorizar('productos.editar'),
-  multerUpload.single('ficha_tecnica'),
+  multerUpload.fields([
+    { name: 'ficha_tecnica', maxCount: 1 },
+    { name: 'imagen', maxCount: 1 },
+    { name: 'video_r', maxCount: 1 },
+    { name: 'video_uso', maxCount: 1 }
+  ]),
   controller.actualizar
 );
 router.delete('/:id', autorizar('productos.editar'), controller.eliminar);
+router.get('/descargar', autorizar('productos.ver'), controller.descargarFichaTecnica);
 router.get('/descargar/:filename', autorizar('productos.ver'), controller.descargarFichaTecnica);
+router.get('/imagen', autorizar('productos.ver'), controller.verImagen);
+router.get('/imagen/:filename', autorizar('productos.ver'), controller.verImagen);
+router.get('/video', autorizar('productos.ver'), controller.verVideo);
+router.get('/video/:filename', autorizar('productos.ver'), controller.verVideo);
 router.get('/:id', autorizar('productos.ver'), controller.obtenerPorId);
 
 module.exports = router;

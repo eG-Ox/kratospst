@@ -101,6 +101,14 @@ export const listaProductosService = {
     }),
   getById: (id) => api.get(`/lista-productos/${id}`),
   getByCodigo: (codigo) => api.get(`/lista-productos/codigo/${encodeURIComponent(codigo)}`),
+  getImagenUrl: (filename) =>
+    filename
+      ? `${String(api.defaults.baseURL || '').replace(/\/$/, '')}/lista-productos/imagen?path=${encodeURIComponent(filename)}`
+      : '',
+  getVideoUrl: (filename) =>
+    filename
+      ? `${String(api.defaults.baseURL || '').replace(/\/$/, '')}/lista-productos/video?path=${encodeURIComponent(filename)}`
+      : '',
   listarTipos: () => api.get('/lista-productos/tipos'),
   crearTipo: (data) => api.post('/lista-productos/tipos', data),
   actualizarTipo: (id, data) => api.put(`/lista-productos/tipos/${id}`, data),
@@ -114,7 +122,12 @@ export const listaProductosService = {
       headers: { 'Content-Type': 'multipart/form-data' }
     }),
   create: (data) => {
-    if (data?.ficha_tecnica instanceof File) {
+    if (
+      data?.ficha_tecnica instanceof File ||
+      data?.imagen instanceof File ||
+      data?.video_r instanceof File ||
+      data?.video_uso instanceof File
+    ) {
       const formData = new FormData();
       Object.keys(data).forEach((key) => {
         if (data[key] !== null && data[key] !== undefined) {
@@ -127,10 +140,18 @@ export const listaProductosService = {
     }
     const payload = { ...data };
     delete payload.ficha_tecnica;
+    delete payload.imagen;
+    delete payload.video_r;
+    delete payload.video_uso;
     return api.post('/lista-productos', payload);
   },
   update: (id, data) => {
-    if (data?.ficha_tecnica instanceof File) {
+    if (
+      data?.ficha_tecnica instanceof File ||
+      data?.imagen instanceof File ||
+      data?.video_r instanceof File ||
+      data?.video_uso instanceof File
+    ) {
       const formData = new FormData();
       Object.keys(data).forEach((key) => {
         if (data[key] !== null && data[key] !== undefined) {
@@ -143,11 +164,17 @@ export const listaProductosService = {
     }
     const payload = { ...data };
     delete payload.ficha_tecnica;
+    delete payload.imagen;
+    delete payload.video_r;
+    delete payload.video_uso;
     return api.put(`/lista-productos/${id}`, payload);
   },
   delete: (id) => api.delete(`/lista-productos/${id}`),
   descargarFichaTecnica: (filename) =>
-    api.get(`/lista-productos/descargar/${filename}`, { responseType: 'blob' })
+    api.get('/lista-productos/descargar', {
+      params: { path: filename },
+      responseType: 'blob'
+    })
 };
 
 // Servicios para Movimientos (Ingresos/Salidas)
