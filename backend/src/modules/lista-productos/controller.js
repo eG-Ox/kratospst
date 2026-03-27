@@ -248,8 +248,15 @@ const columnExists = async (connection, tableName, columnName) => {
 };
 
 const addColumnIfMissing = async (connection, tableName, columnName, statement) => {
-  if (!(await columnExists(connection, tableName, columnName))) {
+  if (await columnExists(connection, tableName, columnName)) {
+    return;
+  }
+  try {
     await connection.execute(statement);
+  } catch (error) {
+    if (error?.code !== 'ER_DUP_FIELDNAME') {
+      throw error;
+    }
   }
 };
 
@@ -529,7 +536,10 @@ const mapProductoRow = (row) => ({
   video_uso_ruta: row.video_uso_ruta || null
 });
 
-const ensureSchema = async (connection) => {
+let ensureSchemaPromise = null;
+let schemaReady = false;
+
+const runEnsureSchema = async (connection) => {
   await connection.execute(CREATE_LISTA_PRODUCTOS_TIPOS_SQL);
   await connection.execute(CREATE_LISTA_PRODUCTOS_SQL);
   await addColumnIfMissing(
@@ -555,10 +565,27 @@ const ensureSchema = async (connection) => {
       `UPDATE lista_productos
        SET video_r_ruta = video_ruta
        WHERE (video_r_ruta IS NULL OR video_r_ruta = '')
-         AND video_ruta IS NOT NULL
-         AND video_ruta <> ''`
+       AND video_ruta IS NOT NULL
+       AND video_ruta <> ''`
     );
   }
+};
+
+const ensureSchema = async (connection) => {
+  if (schemaReady) {
+    return;
+  }
+  if (!ensureSchemaPromise) {
+    ensureSchemaPromise = runEnsureSchema(connection)
+      .then(() => {
+        schemaReady = true;
+      })
+      .catch((error) => {
+        ensureSchemaPromise = null;
+        throw error;
+      });
+  }
+  await ensureSchemaPromise;
 };
 
 exports.listar = async (req, res) => {
