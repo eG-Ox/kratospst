@@ -133,8 +133,40 @@ const parseNonNegativeInt = (value) => {
 };
 
 const parseDecimal = (value) => {
-  const normalized = normalizeText(value).replace(',', '.');
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  let normalized = normalizeText(value);
   if (!normalized) return null;
+
+  normalized = normalized.replace(/[^\d,.-]/g, '');
+  if (!normalized) return null;
+
+  const lastComma = normalized.lastIndexOf(',');
+  const lastDot = normalized.lastIndexOf('.');
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) {
+      normalized = normalized.replace(/\./g, '').replace(',', '.');
+    } else {
+      normalized = normalized.replace(/,/g, '');
+    }
+  } else if (lastComma >= 0) {
+    const commaParts = normalized.split(',');
+    normalized =
+      commaParts.length === 2 && commaParts[1].length !== 3
+        ? `${commaParts[0]}.${commaParts[1]}`
+        : commaParts.join('');
+  } else if (lastDot >= 0) {
+    const dotParts = normalized.split('.');
+    if (dotParts.length === 2 && dotParts[1].length === 3) {
+      normalized = dotParts.join('');
+    } else if (dotParts.length > 2) {
+      normalized = dotParts.join('');
+    }
+  }
+
   const parsed = Number.parseFloat(normalized);
   if (!Number.isFinite(parsed)) return null;
   return parsed;
@@ -161,6 +193,40 @@ const normalizeHeader = (value) =>
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-zA-Z0-9]/g, '')
     .toLowerCase();
+
+const IMPORT_HEADER_ALIASES = {
+  codigo: ['codigo', 'cod', 'sku', 'item', 'codigoproducto'],
+  tipo: ['tipo', 'tipomaquina', 'tipoproducto'],
+  marca: ['marca'],
+  descripcion: ['descripcion', 'descripcionproducto', 'producto', 'nombre', 'detalle'],
+  proveedor: ['proveedor', 'supplier'],
+  stock: ['stock', 'cantidad', 'existencia'],
+  precio_compra: ['preciocompra', 'preciocosto', 'costocompra', 'costounitario', 'costo'],
+  precio_venta: ['precioventa', 'venta', 'pvp', 'preciopublico'],
+  precio_minimo: ['preciominimo', 'minimo', 'preciominimoventa'],
+  ficha_web: ['fichaweb', 'fichaw', 'web', 'link', 'url', 'paginaweb']
+};
+
+const hasImportedHeader = (headers, field) =>
+  (IMPORT_HEADER_ALIASES[field] || [field]).some((alias) => headers.includes(alias));
+
+const getImportedValue = (row, field) => {
+  const aliases = IMPORT_HEADER_ALIASES[field] || [field];
+  let fallbackValue = null;
+  for (const alias of aliases) {
+    if (!Object.prototype.hasOwnProperty.call(row, alias)) {
+      continue;
+    }
+    const value = row[alias];
+    if (normalizeText(value)) {
+      return value;
+    }
+    if (fallbackValue === null) {
+      fallbackValue = value;
+    }
+  }
+  return fallbackValue;
+};
 
 const sanitizePathSegment = (segment) => {
   const normalized = normalizeText(segment);
@@ -1421,6 +1487,21 @@ exports.importarExcel = async (req, res) => {
   let connection;
   try {
     const rawRows = await readFirstSheetToJson(req.file.path);
+    const detectedHeaders = rawRows.length
+      ? Object.keys(rawRows[0] || {})
+        .map((header) => normalizeHeader(header))
+        .filter(Boolean)
+      : [];
+    const missingHeaders = ['codigo', 'tipo', 'marca', 'stock', 'precio_compra', 'precio_venta']
+      .filter((field) => !hasImportedHeader(detectedHeaders, field));
+
+    if (missingHeaders.length) {
+      return res.status(400).json({
+        error: `Faltan columnas requeridas: ${missingHeaders.join(', ')}`,
+        encabezados_detectados: detectedHeaders
+      });
+    }
+
     connection = await pool.getConnection();
     await ensureSchema(connection);
     await connection.beginTransaction();
@@ -1448,7 +1529,7 @@ exports.importarExcel = async (req, res) => {
         normalized[normalizeHeader(key)] = row[key];
       });
 
-      const codigo = normalizeCode(normalized.codigo);
+      const codigo = normalizeCode(getImportedValue(normalized, 'codigo'));
       if (!codigo) {
         continue;
       }
@@ -1459,18 +1540,16 @@ exports.importarExcel = async (req, res) => {
       }
       codigosProcesados.add(codigoKey);
 
-      const tipoNombre = normalizeText(
-        normalized.tipo || normalized.tipomaquina || normalized.tipoproducto
-      );
-      const marca = normalizeText(normalized.marca);
-      const descripcion = normalizeText(normalized.descripcion) || null;
-      const proveedor = normalizeText(normalized.proveedor) || null;
-      const stock = parseNonNegativeInt(normalized.stock);
-      const precioCompra = parseDecimal(normalized.preciocompra);
-      const precioVenta = parseDecimal(normalized.precioventa);
-      const precioMinimoRaw = parseDecimal(normalized.preciominimo);
+      const tipoNombre = normalizeText(getImportedValue(normalized, 'tipo'));
+      const marca = normalizeText(getImportedValue(normalized, 'marca'));
+      const descripcion = normalizeText(getImportedValue(normalized, 'descripcion')) || null;
+      const proveedor = normalizeText(getImportedValue(normalized, 'proveedor')) || null;
+      const stock = parseNonNegativeInt(getImportedValue(normalized, 'stock'));
+      const precioCompra = parseDecimal(getImportedValue(normalized, 'precio_compra'));
+      const precioVenta = parseDecimal(getImportedValue(normalized, 'precio_venta'));
+      const precioMinimoRaw = parseDecimal(getImportedValue(normalized, 'precio_minimo'));
       const precioMinimo = precioMinimoRaw === null ? 0 : precioMinimoRaw;
-      const fichaWebValidation = validateFichaWeb(normalized.fichaweb);
+      const fichaWebValidation = validateFichaWeb(getImportedValue(normalized, 'ficha_web'));
 
       if (!tipoNombre || !marca) {
         errores.push(`Fila ${index + 2}: tipo y marca son requeridos`);
