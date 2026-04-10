@@ -2,33 +2,30 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { parseQRPayload } from '../shared/utils/qr';
 import { maquinasService, movimientosService } from '../services/api';
+import { normalizeTrimmedText, normalizeUpperText } from '../shared/utils/text';
 import '../styles/SalidasPage.css';
 
 
-const normalizarCodigo = (value) =>
-  String(value || '')
-    .trim()
-    .toUpperCase();
+const normalizarCodigo = (value) => normalizeUpperText(value);
 
 const extraerCodigoDesdeTexto = (texto) => {
-  const raw = String(texto || '').trim();
+  const raw = normalizeTrimmedText(texto);
   if (!raw) return '';
   const tokens = raw
-    .replace(//g, '')
-    .split(/[
-,;\/\s]+/g)
-    .map((item) => item.trim())
+    .replace(/\r/g, '')
+    .split(/[,;\/\s]+/g)
+    .map((item) => normalizeTrimmedText(item))
     .filter(Boolean);
   return tokens[0] || raw;
 };
 
 const extraerCodigoDesdeTextoComa = (texto) => {
-  const raw = String(texto || '').trim();
+  const raw = normalizeTrimmedText(texto);
   if (!raw) return '';
   const tokens = raw
     .replace(/\r/g, '')
     .split(',')
-    .map((item) => item.trim())
+    .map((item) => normalizeTrimmedText(item))
     .filter(Boolean);
   return tokens[0] || raw;
 };

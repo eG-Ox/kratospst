@@ -338,6 +338,7 @@ const buildHtmlComprobante = ({ venta, detalles, total, staticBase }) => {
 
   function sanitizeFilename(value) {
     return String(value || '')
+      .normalize('NFKC')
       .normalize('NFD')
       .replace(/[\\u0300-\\u036f]/g, '')
       .replace(/[<>:"/\\\\|?*\\x00-\\x1F]/g, '')

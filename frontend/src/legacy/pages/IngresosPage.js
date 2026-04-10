@@ -3,6 +3,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { maquinasService, movimientosService } from '../services/api';
 import { productosService, tiposMaquinasService, marcasService } from '../core/services/apiServices';
 import { parseQRPayload } from '../shared/utils/qr';
+import { normalizeTrimmedText, normalizeUpperText } from '../shared/utils/text';
 import '../styles/IngresosPage.css';
 
 const IngresosPage = ({ usuario }) => {
@@ -64,11 +65,9 @@ const IngresosPage = ({ usuario }) => {
 
 
   const normalizarCodigo = (value) =>
-    String(value || '')
-      .trim()
-      .toUpperCase();
+    normalizeUpperText(value);
 
-  const normalizarMarcaCodigo = (value) => String(value || '').trim().toUpperCase();
+  const normalizarMarcaCodigo = (value) => normalizeUpperText(value);
 
   const resolverMarcaCodigo = (value) => {
     const code = normalizarMarcaCodigo(value);
@@ -77,12 +76,12 @@ const IngresosPage = ({ usuario }) => {
   };
 
   const extraerCodigoDesdeTexto = (texto) => {
-    const raw = String(texto || '').trim();
+    const raw = normalizeTrimmedText(texto);
     if (!raw) return '';
     const tokens = raw
       .replace(/\r/g, '')
       .split(',')
-      .map((item) => item.trim())
+      .map((item) => normalizeTrimmedText(item))
       .filter(Boolean);
     return tokens[0] || raw;
   };
@@ -120,7 +119,7 @@ const IngresosPage = ({ usuario }) => {
   };
 
   const obtenerTipoPorNombre = async (nombre) => {
-    const nombreNormalizado = String(nombre || '').trim();
+    const nombreNormalizado = normalizeTrimmedText(nombre);
     if (!nombreNormalizado) {
       return obtenerTipoDefault();
     }
@@ -138,7 +137,7 @@ const IngresosPage = ({ usuario }) => {
 
   const crearProductoDesdeQR = async (data) => {
     const tipoId = await obtenerTipoPorNombre(data.tipo_maquina);
-    const ubicacionFinal = data?.ubicacion && String(data.ubicacion).trim() ? data.ubicacion : 'H1';
+    const ubicacionFinal = normalizeTrimmedText(data?.ubicacion) || 'H1';
     const marcaFinal = resolverMarcaCodigo(data?.marca);
     const response = await productosService.create({
       codigo: data.codigo,

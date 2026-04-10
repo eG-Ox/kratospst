@@ -1,15 +1,19 @@
-﻿const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
+const { normalizeTrimmedText } = require('./text');
 
-const normalizeString = (value) => (typeof value === 'string' ? value.trim() : value);
+const isNonEmptyString = (value) =>
+  typeof value === 'string' && normalizeTrimmedText(value).length > 0;
+
+const normalizeString = (value) =>
+  (typeof value === 'string' ? normalizeTrimmedText(value) : value);
 
 const isEmail = (value) => {
   if (!isNonEmptyString(value)) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeTrimmedText(value));
 };
 
 const isUsuarioIdentificador = (value) => {
   if (!isNonEmptyString(value)) return false;
-  const normalized = value.trim();
+  const normalized = normalizeTrimmedText(value);
   if (normalized.includes('@')) {
     return isEmail(normalized);
   }
@@ -33,7 +37,7 @@ const isNonNegative = (value) => {
 };
 
 const validateDocumento = (tipo, documento) => {
-  const doc = String(documento || '').trim();
+  const doc = normalizeTrimmedText(documento);
   if (tipo === 'dni') return /^\d{8}$/.test(doc);
   if (tipo === 'ruc') return /^\d{11}$/.test(doc);
   return false;

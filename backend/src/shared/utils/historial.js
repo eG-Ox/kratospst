@@ -1,3 +1,5 @@
+const { normalizeHeaderKey, normalizeTrimmedText } = require('./text');
+
 const REDACTED_VALUE = '[REDACTED]';
 const SENSITIVE_KEYS = new Set([
   'contrasena',
@@ -15,11 +17,7 @@ const SENSITIVE_KEYS = new Set([
 let historialMovimientosTableAvailable = null;
 let historialAccionesSupportsOperationIds = null;
 
-const normalizeKey = (key) =>
-  String(key || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+const normalizeKey = (key) => normalizeHeaderKey(key);
 
 const sanitizeForHistory = (value) => {
   if (Array.isArray(value)) {
@@ -41,7 +39,7 @@ const sanitizeForHistory = (value) => {
 
 const asCleanString = (value) => {
   if (value === null || value === undefined) return null;
-  const text = String(value).trim();
+  const text = normalizeTrimmedText(value);
   return text || null;
 };
 

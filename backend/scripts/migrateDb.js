@@ -1,5 +1,6 @@
 const mysql = require('mysql2/promise');
 const dotenv = require('dotenv');
+const { normalizeSearchText } = require('../src/shared/utils/text');
 
 dotenv.config({ path: './.env' });
 
@@ -26,12 +27,7 @@ const DRY_RUN_DESTRUCTIVE_MIGRATION = parseBoolean(
   false
 );
 
-const normalizarBusqueda = (value) =>
-  String(value || '')
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^A-Z0-9]/g, '');
+const normalizarBusqueda = (value) => normalizeSearchText(value);
 
 const crearMaquinasUbicaciones = `
 CREATE TABLE IF NOT EXISTS maquinas_ubicaciones (

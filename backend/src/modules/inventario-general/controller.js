@@ -2,6 +2,7 @@ const pool = require('../../core/config/database');
 const { ExcelJS, workbookToBuffer } = require('../../shared/utils/excel');
 const { registrarHistorial } = require('../../shared/utils/historial');
 const { tienePermiso } = require('../../core/middleware/auth');
+const { normalizeTrimmedText, normalizeUpperText } = require('../../shared/utils/text');
 const releaseConnection = (connection) => {
   if (!connection) return;
   try {
@@ -23,7 +24,7 @@ const rollbackSilently = async (connection) => {
 const UBICACION_VALIDAS = new Set(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']);
 
 const parseUbicacion = (value) => {
-  const raw = String(value || '').trim().toUpperCase();
+  const raw = normalizeUpperText(value);
   if (!raw) {
     return { letra: null, numero: null };
   }
@@ -237,15 +238,15 @@ exports.agregarConteo = async (req, res) => {
 
   let connection;
   try {
-    const rawCodigo = String(codigo || '').trim();
+    const rawCodigo = normalizeTrimmedText(codigo);
     const tokenCodigo = rawCodigo
       .replace(/\r/g, '')
       .split(',')
-      .map((item) => item.trim())
+      .map((item) => normalizeTrimmedText(item))
       .filter(Boolean)[0];
     const codigoFinal = tokenCodigo || rawCodigo;
 
-    const ubicacionFinal = ubicacion && String(ubicacion).trim() ? ubicacion : 'H1';
+    const ubicacionFinal = normalizeTrimmedText(ubicacion) || 'H1';
     const ubicacionParse = parseUbicacion(ubicacionFinal);
     if (ubicacionParse.error) {
       return res.status(400).json({ error: ubicacionParse.error });

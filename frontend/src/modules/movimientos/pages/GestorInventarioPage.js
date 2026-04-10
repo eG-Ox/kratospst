@@ -9,14 +9,12 @@ import {
 } from '../../../core/services/apiServices';
 import { parseQRPayload } from '../../../shared/utils/qr';
 import useMountedRef from '../../../shared/hooks/useMountedRef';
+import { normalizeTrimmedText, normalizeUpperText } from '../../../shared/utils/text';
 import '../styles/MovimientosPage.css';
 
-const normalizarMarcaCodigo = (value) => String(value || '').trim().toUpperCase();
+const normalizarMarcaCodigo = (value) => normalizeUpperText(value);
 
-const normalizarCodigo = (value) =>
-  String(value || '')
-    .trim()
-    .toUpperCase();
+const normalizarCodigo = (value) => normalizeUpperText(value);
 
 const GestorInventarioPage = () => {
   const mountedRef = useMountedRef();
@@ -204,7 +202,7 @@ const GestorInventarioPage = () => {
   };
 
   const construirMotivo = () => {
-    const base = (motivo || '').trim();
+    const base = normalizeTrimmedText(motivo);
     if (!base) return '';
     if (base === 'VENTA') {
       const documento = normalizarDocumento(dniCliente);
@@ -298,7 +296,7 @@ const GestorInventarioPage = () => {
   }, [formatearUbicacion]);
 
   const agregarCodigo = useCallback(async (valor) => {
-    const raw = String(valor || '').trim();
+    const raw = normalizeTrimmedText(valor);
     if (!raw) return;
     const parsed = parsearQR(raw);
     const code = parsed?.codigo || raw;
@@ -574,7 +572,7 @@ const GestorInventarioPage = () => {
   };
 
   const obtenerTipoPorNombre = async (nombre) => {
-    const nombreNormalizado = String(nombre || '').trim();
+    const nombreNormalizado = normalizeTrimmedText(nombre);
     if (!nombreNormalizado) {
       return obtenerTipoDefault();
     }
@@ -617,7 +615,7 @@ const GestorInventarioPage = () => {
       setError('Selecciona un motivo');
       return;
     }
-    if ((motivo === 'COMPRA' || motivo === 'DEVOLUCION') && !numeroGuia.trim()) {
+    if ((motivo === 'COMPRA' || motivo === 'DEVOLUCION') && !normalizeTrimmedText(numeroGuia)) {
       setError('Numero de guia requerido');
       return;
     }
@@ -645,8 +643,7 @@ const GestorInventarioPage = () => {
   };
   const crearProductoDesdeQR = async (data) => {
     const tipoId = await obtenerTipoPorNombre(data.tipo_maquina);
-    const ubicacionFinal =
-      data?.ubicacion && String(data.ubicacion).trim() ? data.ubicacion : 'H1';
+    const ubicacionFinal = normalizeTrimmedText(data?.ubicacion) || 'H1';
     const marcaFinal = resolverMarcaCodigo(data?.marca);
     const response = await productosService.create({
       codigo: data.codigo,
@@ -873,7 +870,7 @@ const GestorInventarioPage = () => {
                       id="codigo"
                       type="text"
                       value={codigoInput}
-                      onChange={(e) => setCodigoInput(e.target.value.trim())}
+                      onChange={(e) => setCodigoInput(normalizeTrimmedText(e.target.value))}
                       placeholder="Escanea o escribe el codigo"
                       disabled={isSubmitting}
                       onKeyDown={(e) => {

@@ -530,79 +530,79 @@ const ListaProductosPage = () => {
         onChange={handleImportarExcel}
         style={{ display: 'none' }}
       />
+      <>
+        <div className="productos-filters">
+          <input
+            type="text"
+            placeholder="Buscar codigo, descripcion, marca, proveedor..."
+            value={filtros.q}
+            onChange={(e) => {
+              setFiltros((prev) => ({ ...prev, q: e.target.value }));
+              setPage(1);
+            }}
+          />
+          <select
+            value={filtros.tipo}
+            onChange={(e) => {
+              setFiltros((prev) => ({ ...prev, tipo: e.target.value }));
+              setPage(1);
+            }}
+          >
+            <option value="">Tipo</option>
+            {tipos.map((tipo) => (
+              <option key={tipo.id} value={tipo.id}>
+                {tipo.nombre}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filtros.marca}
+            onChange={(e) => {
+              setFiltros((prev) => ({ ...prev, marca: e.target.value }));
+              setPage(1);
+            }}
+          >
+            <option value="">Marca</option>
+            {marcas.map((marca) => (
+              <option key={marca} value={marca}>
+                {marca}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filtros.stock}
+            onChange={(e) => {
+              setFiltros((prev) => ({ ...prev, stock: e.target.value }));
+              setPage(1);
+            }}
+          >
+            <option value="all">Stock</option>
+            <option value="sin">Sin stock</option>
+          </select>
+          <button
+            type="button"
+            className="btn-secondary icon-btn-inline"
+            onClick={() => {
+              setFiltros({ q: '', tipo: '', marca: '', stock: 'all' });
+              setPage(1);
+            }}
+            title="Limpiar"
+            aria-label="Limpiar filtros"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6h12v2H6z" />
+              <path d="M9 11h6v2H9z" />
+              <path d="M11 16h2v2h-2z" />
+            </svg>
+          </button>
+        </div>
 
-      {loading ? (
-        <div className="loading">Cargando lista de productos...</div>
-      ) : (
-        <>
-          <div className="productos-filters">
-            <input
-              type="text"
-              placeholder="Buscar codigo, descripcion, marca, proveedor..."
-              value={filtros.q}
-              onChange={(e) => {
-                setFiltros((prev) => ({ ...prev, q: e.target.value }));
-                setPage(1);
-              }}
-            />
-            <select
-              value={filtros.tipo}
-              onChange={(e) => {
-                setFiltros((prev) => ({ ...prev, tipo: e.target.value }));
-                setPage(1);
-              }}
-            >
-              <option value="">Tipo</option>
-              {tipos.map((tipo) => (
-                <option key={tipo.id} value={tipo.id}>
-                  {tipo.nombre}
-                </option>
-              ))}
-            </select>
-            <select
-              value={filtros.marca}
-              onChange={(e) => {
-                setFiltros((prev) => ({ ...prev, marca: e.target.value }));
-                setPage(1);
-              }}
-            >
-              <option value="">Marca</option>
-              {marcas.map((marca) => (
-                <option key={marca} value={marca}>
-                  {marca}
-                </option>
-              ))}
-            </select>
-            <select
-              value={filtros.stock}
-              onChange={(e) => {
-                setFiltros((prev) => ({ ...prev, stock: e.target.value }));
-                setPage(1);
-              }}
-            >
-              <option value="all">Stock</option>
-              <option value="sin">Sin stock</option>
-            </select>
-            <button
-              type="button"
-              className="btn-secondary icon-btn-inline"
-              onClick={() => {
-                setFiltros({ q: '', tipo: '', marca: '', stock: 'all' });
-                setPage(1);
-              }}
-              title="Limpiar"
-              aria-label="Limpiar filtros"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M6 6h12v2H6z" />
-                <path d="M9 11h6v2H9z" />
-                <path d="M11 16h2v2h-2z" />
-              </svg>
-            </button>
-          </div>
-
-          <div className="productos-table-container lista-productos-table-container">
-            {productos.length > 0 ? (
+        <div className="productos-table-container lista-productos-table-container">
+          {loading && productos.length === 0 ? (
+            <div className="loading">Cargando lista de productos...</div>
+          ) : productos.length > 0 ? (
+            <>
+              {loading && <div className="loading">Actualizando resultados...</div>}
               <table className="productos-table lista-productos-table">
                 <colgroup>
                   <col className="lista-productos-col-codigo" />
@@ -773,41 +773,41 @@ const ListaProductosPage = () => {
                   ))}
                 </tbody>
               </table>
-            ) : (
-              <p className="empty-message">No hay productos creados</p>
-            )}
+            </>
+          ) : (
+            <p className="empty-message">No hay productos creados</p>
+          )}
 
-            {productos.length > 0 && (
-              <div className="table-pagination">
+          {productos.length > 0 && (
+            <div className="table-pagination">
+              <span>
+                Mostrando {productos.length} de {total}
+              </span>
+              <div className="page-controls">
+                <button
+                  type="button"
+                  className="btn-secondary btn-small"
+                  onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
+                  disabled={page <= 1}
+                >
+                  Anterior
+                </button>
                 <span>
-                  Mostrando {productos.length} de {total}
+                  Pagina {page} / {totalPages}
                 </span>
-                <div className="page-controls">
-                  <button
-                    type="button"
-                    className="btn-secondary btn-small"
-                    onClick={() => setPage((prev) => Math.max(prev - 1, 1))}
-                    disabled={page <= 1}
-                  >
-                    Anterior
-                  </button>
-                  <span>
-                    Pagina {page} / {totalPages}
-                  </span>
-                  <button
-                    type="button"
-                    className="btn-secondary btn-small"
-                    onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
-                    disabled={page >= totalPages}
-                  >
-                    Siguiente
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="btn-secondary btn-small"
+                  onClick={() => setPage((prev) => Math.min(prev + 1, totalPages))}
+                  disabled={page >= totalPages}
+                >
+                  Siguiente
+                </button>
               </div>
-            )}
-          </div>
-        </>
-      )}
+            </div>
+          )}
+        </div>
+      </>
 
       {mostrarModalProducto &&
         createPortal(

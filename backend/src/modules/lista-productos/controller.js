@@ -7,6 +7,12 @@ const {
   workbookToBuffer,
   readFirstSheetToJson
 } = require('../../shared/utils/excel');
+const {
+  canonicalizeUnicode,
+  normalizeTrimmedText,
+  normalizeUpperText,
+  normalizeHeaderKey
+} = require('../../shared/utils/text');
 
 const PAGE_SIZE_DEFAULT = 60;
 const PAGE_SIZE_MAX = 200;
@@ -114,9 +120,9 @@ const removeFileIfExists = (filePath) => {
   });
 };
 
-const normalizeText = (value) => String(value || '').trim();
+const normalizeText = (value) => normalizeTrimmedText(value);
 
-const normalizeCode = (value) => normalizeText(value).toUpperCase();
+const normalizeCode = (value) => normalizeUpperText(value);
 
 const parsePositiveInt = (value, fallback, maxValue = Number.MAX_SAFE_INTEGER) => {
   const parsed = Number.parseInt(value, 10);
@@ -188,11 +194,7 @@ const parseBooleanFlag = (value) => {
 const isNonNegative = (value) => Number.isFinite(value) && value >= 0;
 
 const normalizeHeader = (value) =>
-  String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9]/g, '')
-    .toLowerCase();
+  normalizeHeaderKey(value);
 
 const IMPORT_HEADER_ALIASES = {
   codigo: ['codigo', 'cod', 'sku', 'item', 'codigoproducto'],
@@ -602,6 +604,87 @@ const mapProductoRow = (row) => ({
   video_uso_ruta: row.video_uso_ruta || null
 });
 
+const buildNormalizedProductoFields = (row) => {
+  const descripcion = normalizeText(row.descripcion);
+  const proveedor = normalizeText(row.proveedor);
+  return {
+    codigo: normalizeCode(row.codigo),
+    marca: normalizeText(row.marca),
+    descripcion: descripcion || null,
+    proveedor: proveedor || null
+  };
+};
+
+const normalizeExistingProductos = async (connection) => {
+  const [rows] = await connection.execute(
+    'SELECT id, codigo, marca, descripcion, proveedor FROM lista_productos'
+  );
+  if (!rows.length) {
+    return;
+  }
+
+  const normalizedCodeOwners = new Map();
+  rows.forEach((row) => {
+    const normalizedCode = normalizeCode(row.codigo);
+    const owners = normalizedCodeOwners.get(normalizedCode) || [];
+    owners.push(row.id);
+    normalizedCodeOwners.set(normalizedCode, owners);
+  });
+
+  let updatedCount = 0;
+
+  for (const row of rows) {
+    const normalizedFields = buildNormalizedProductoFields(row);
+    const updates = [];
+    const params = [];
+
+    if (normalizedFields.codigo && normalizedFields.codigo !== row.codigo) {
+      const owners = normalizedCodeOwners.get(normalizedFields.codigo) || [];
+      if (owners.length === 1) {
+        updates.push('codigo = ?');
+        params.push(normalizedFields.codigo);
+      } else {
+        console.warn(
+          `Aviso normalizando lista-productos: codigo "${row.codigo}" (id ${row.id}) no se pudo convertir a "${normalizedFields.codigo}" por conflicto de unicidad`
+        );
+      }
+    }
+
+    if (normalizedFields.marca !== row.marca) {
+      updates.push('marca = ?');
+      params.push(normalizedFields.marca);
+    }
+
+    const currentDescripcion = row.descripcion || null;
+    if (normalizedFields.descripcion !== currentDescripcion) {
+      updates.push('descripcion = ?');
+      params.push(normalizedFields.descripcion);
+    }
+
+    const currentProveedor = row.proveedor || null;
+    if (normalizedFields.proveedor !== currentProveedor) {
+      updates.push('proveedor = ?');
+      params.push(normalizedFields.proveedor);
+    }
+
+    if (!updates.length) {
+      continue;
+    }
+
+    await connection.execute(
+      `UPDATE lista_productos
+       SET ${updates.join(', ')}
+       WHERE id = ?`,
+      [...params, row.id]
+    );
+    updatedCount += 1;
+  }
+
+  if (updatedCount > 0) {
+    console.log(`Normalizados ${updatedCount} registros de lista_productos`);
+  }
+};
+
 let ensureSchemaPromise = null;
 let schemaReady = false;
 
@@ -635,6 +718,7 @@ const runEnsureSchema = async (connection) => {
        AND video_ruta <> ''`
     );
   }
+  await normalizeExistingProductos(connection);
 };
 
 const ensureSchema = async (connection) => {

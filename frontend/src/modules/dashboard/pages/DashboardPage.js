@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import { marcasService, movimientosService, productosService, ventasService } from '../../../core/services/apiServices';
 import useMountedRef from '../../../shared/hooks/useMountedRef';
+import { normalizeTrimmedText, normalizeUpperText } from '../../../shared/utils/text';
 import '../styles/DashboardPage.css';
 
 const DashboardPage = ({ usuario }) => {
@@ -195,7 +196,7 @@ const DashboardPage = ({ usuario }) => {
   const marcasCodigos = useMemo(() => {
     const set = new Set();
     (marcas || []).forEach((marca) => {
-      const code = String(marca.codigo || '').trim().toUpperCase();
+      const code = normalizeUpperText(marca.codigo);
       if (code) {
         set.add(code);
       }
@@ -205,7 +206,7 @@ const DashboardPage = ({ usuario }) => {
 
   const productosSinMarcaRegistrada = useMemo(() => {
     return (productos || []).filter((p) => {
-      const marcaValue = String(p.marca || '').trim();
+      const marcaValue = normalizeTrimmedText(p.marca);
       if (!marcaValue) return true;
       const marcaCodigo = marcaValue.toUpperCase();
       if (/^M\d{4}$/.test(marcaCodigo)) {

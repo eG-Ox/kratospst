@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { marcasService, permisosService, productosService, tiposMaquinasService } from '../../../core/services/apiServices';
+import { normalizeTrimmedText, normalizeUpperText } from '../../../shared/utils/text';
 import '../styles/ProductosPage.css';
 
 const ProductosPage = () => {
@@ -57,7 +58,7 @@ const ProductosPage = () => {
   const marcasDisponibles = useMemo(() => {
     const marcasSet = new Set();
     (marcas || []).forEach((item) => {
-      const nombre = String(item.nombre || item.codigo || '').trim();
+      const nombre = normalizeTrimmedText(item.nombre || item.codigo);
       if (nombre) {
         marcasSet.add(nombre);
       }
@@ -65,14 +66,14 @@ const ProductosPage = () => {
     return Array.from(marcasSet).sort((a, b) => a.localeCompare(b));
   }, [marcas]);
 
-  const normalizarMarcaCodigo = (value) => String(value || '').trim().toUpperCase();
+  const normalizarMarcaCodigo = (value) => normalizeUpperText(value);
 
   const marcasMap = useMemo(() => {
     const map = new Map();
     (marcas || []).forEach((marcaItem) => {
       const code = normalizarMarcaCodigo(marcaItem.codigo);
       if (code) {
-        map.set(code, String(marcaItem.nombre || '').trim());
+        map.set(code, normalizeTrimmedText(marcaItem.nombre));
       }
     });
     return map;
@@ -438,12 +439,7 @@ const ProductosPage = () => {
         onChange={handleImportarExcel}
         style={{ display: 'none' }}
       />
-
-
-      {loading ? (
-        <div className="loading">Cargando productos...</div>
-      ) : (
-        <>
+      <>
         <div className="productos-filters">
           <input
             type="text"
@@ -510,7 +506,11 @@ const ProductosPage = () => {
           </button>
         </div>
         <div className="productos-table-container">
-          {productos.length > 0 ? (
+          {loading && productos.length === 0 ? (
+            <div className="loading">Cargando productos...</div>
+          ) : productos.length > 0 ? (
+            <>
+            {loading && <div className="loading">Actualizando resultados...</div>}
             <table className="productos-table">
               <thead>
                 <tr>
@@ -612,6 +612,7 @@ const ProductosPage = () => {
                 ))}
               </tbody>
             </table>
+            </>
           ) : (
             <p className="empty-message">No hay productos creados</p>
           )}
@@ -644,8 +645,7 @@ const ProductosPage = () => {
             </div>
           )}
         </div>
-        </>
-      )}
+      </>
 
       {mostrarModalProducto && createPortal(
         <div className="modal-overlay">

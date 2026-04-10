@@ -1,11 +1,7 @@
 ﻿const pool = require('../config/database');
+const { normalizeSearchText, normalizeTrimmedText } = require('../src/shared/utils/text');
 
-const normalizarBusqueda = (value) =>
-  String(value || '')
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^A-Z0-9]/g, '');
+const normalizarBusqueda = (value) => normalizeSearchText(value);
 
 const parseBoolean = (value, fallback = false) => {
   if (value === undefined || value === null || value === '') return fallback;
@@ -32,7 +28,7 @@ const safeParseJsonText = (value) => {
 
 const asCleanText = (value) => {
   if (value === null || value === undefined) return null;
-  const text = String(value).trim();
+  const text = normalizeTrimmedText(value);
   return text || null;
 };
 

@@ -1,7 +1,8 @@
 const pool = require('../../core/config/database');
 const { registrarHistorial } = require('../../shared/utils/historial');
+const { normalizeUpperText } = require('../../shared/utils/text');
 
-const normalizarTextoMayus = (value) => String(value || '').trim().toUpperCase();
+const normalizarTextoMayus = (value) => normalizeUpperText(value);
 
 const releaseConnection = (connection) => {
   if (!connection) return;

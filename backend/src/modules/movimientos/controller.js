@@ -1,5 +1,6 @@
 const pool = require('../../core/config/database');
 const { registrarHistorial } = require('../../shared/utils/historial');
+const { normalizeTrimmedText } = require('../../shared/utils/text');
 const { isPositiveInt, isNonEmptyString } = require('../../shared/utils/validation');
 const { syncUbicacionPrincipal } = require('../../shared/utils/ubicaciones');
 
@@ -17,12 +18,12 @@ const DOCUMENTO_TOKEN_REGEX = /\b(?:DNI|RUC|GUIA|CAMBIO\s+CODIGO)\s*:\s*[^|]+/gi
 
 const normalizeOptionalText = (value) => {
   if (value === null || value === undefined) return null;
-  const normalized = String(value).trim();
+  const normalized = normalizeTrimmedText(value);
   return normalized || null;
 };
 
 const normalizeDocumentoLabel = (label) => (
-  String(label || '')
+  normalizeTrimmedText(label)
     .toUpperCase()
     .replace(/\s+/g, ' ')
     .trim()

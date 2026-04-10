@@ -6,22 +6,20 @@ const { registrarHistorial } = require('../../shared/utils/historial');
 const { isNonNegative, toNumber } = require('../../shared/utils/validation');
 const { tienePermiso } = require('../../core/middleware/auth');
 const { syncUbicacionPrincipal } = require('../../shared/utils/ubicaciones');
+const {
+  canonicalizeUnicode,
+  normalizeTrimmedText,
+  normalizeUpperText,
+  normalizeSearchText,
+  normalizeHeaderKey
+} = require('../../shared/utils/text');
 
 const normalizarHeader = (header) =>
-  String(header || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]/g, '');
+  normalizeHeaderKey(header);
 
-const normalizarBusqueda = (value) =>
-  String(value || '')
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^A-Z0-9]/g, '');
+const normalizarBusqueda = (value) => normalizeSearchText(value);
 
-const normalizarTextoMayus = (value) => String(value || '').trim().toUpperCase();
+const normalizarTextoMayus = (value) => normalizeUpperText(value);
 
 const parseNumero = (value, fallback = 0) => {
   const parsed = Number(String(value).replace(',', '.'));
@@ -44,7 +42,7 @@ const parsePositiveInt = (value, fallback) => {
 const MAX_PRODUCTOS_LIST_LIMIT = 500;
 
 const parseUbicacionString = (value) => {
-  const raw = String(value || '').trim().toUpperCase();
+  const raw = normalizeUpperText(value);
   if (!raw) {
     return { letra: null, numero: null };
   }
@@ -60,7 +58,7 @@ const parseUbicacionString = (value) => {
 };
 
 const normalizarUbicacion = (data) => {
-  let letra = String(data?.ubicacion_letra || '').trim().toUpperCase();
+  let letra = normalizeUpperText(data?.ubicacion_letra);
   let numero = data?.ubicacion_numero;
 
   if (data?.ubicacion) {
@@ -98,7 +96,7 @@ const normalizarUbicacion = (data) => {
 };
 
 const validarFichaWeb = (value) => {
-  const raw = String(value ?? '').trim();
+  const raw = canonicalizeUnicode(value).trim();
   if (!raw) {
     return { value: null };
   }
@@ -112,6 +110,115 @@ const validarFichaWeb = (value) => {
     return { error: 'ficha_web invalida. Solo se permite http/https' };
   }
   return { value: parsed.toString() };
+};
+
+const buildNormalizedMaquinaFields = (row) => {
+  const codigo = normalizarTextoMayus(row.codigo);
+  const marca = normalizarTextoMayus(row.marca);
+  const descripcion = normalizarTextoMayus(row.descripcion) || null;
+  return {
+    codigo,
+    marca,
+    descripcion,
+    codigo_busqueda: normalizarBusqueda(codigo),
+    descripcion_busqueda: normalizarBusqueda(descripcion)
+  };
+};
+
+let ensureProductosNormalizationPromise = null;
+let productosNormalizationReady = false;
+
+const runEnsureProductosNormalization = async (connection) => {
+  const [rows] = await connection.execute(
+    'SELECT id, codigo, marca, descripcion, codigo_busqueda, descripcion_busqueda FROM maquinas'
+  );
+  if (!rows.length) {
+    return;
+  }
+
+  const normalizedCodeOwners = new Map();
+  rows.forEach((row) => {
+    const normalizedCode = normalizarTextoMayus(row.codigo);
+    const owners = normalizedCodeOwners.get(normalizedCode) || [];
+    owners.push(row.id);
+    normalizedCodeOwners.set(normalizedCode, owners);
+  });
+
+  let updatedCount = 0;
+
+  for (const row of rows) {
+    const normalizedFields = buildNormalizedMaquinaFields(row);
+    const updates = [];
+    const params = [];
+
+    if (normalizedFields.codigo && normalizedFields.codigo !== row.codigo) {
+      const owners = normalizedCodeOwners.get(normalizedFields.codigo) || [];
+      if (owners.length === 1) {
+        updates.push('codigo = ?');
+        params.push(normalizedFields.codigo);
+      } else {
+        console.warn(
+          `Aviso normalizando productos: codigo "${row.codigo}" (id ${row.id}) no se pudo convertir a "${normalizedFields.codigo}" por conflicto de unicidad`
+        );
+      }
+    }
+
+    if (normalizedFields.marca !== row.marca) {
+      updates.push('marca = ?');
+      params.push(normalizedFields.marca);
+    }
+
+    const currentDescripcion = row.descripcion || null;
+    if (normalizedFields.descripcion !== currentDescripcion) {
+      updates.push('descripcion = ?');
+      params.push(normalizedFields.descripcion);
+    }
+
+    const currentCodigoBusqueda = row.codigo_busqueda || '';
+    if (normalizedFields.codigo_busqueda !== currentCodigoBusqueda) {
+      updates.push('codigo_busqueda = ?');
+      params.push(normalizedFields.codigo_busqueda);
+    }
+
+    const currentDescripcionBusqueda = row.descripcion_busqueda || '';
+    if (normalizedFields.descripcion_busqueda !== currentDescripcionBusqueda) {
+      updates.push('descripcion_busqueda = ?');
+      params.push(normalizedFields.descripcion_busqueda);
+    }
+
+    if (!updates.length) {
+      continue;
+    }
+
+    await connection.execute(
+      `UPDATE maquinas
+       SET ${updates.join(', ')}
+       WHERE id = ?`,
+      [...params, row.id]
+    );
+    updatedCount += 1;
+  }
+
+  if (updatedCount > 0) {
+    console.log(`Normalizados ${updatedCount} registros de maquinas`);
+  }
+};
+
+const ensureProductosNormalizados = async (connection) => {
+  if (productosNormalizationReady) {
+    return;
+  }
+  if (!ensureProductosNormalizationPromise) {
+    ensureProductosNormalizationPromise = runEnsureProductosNormalization(connection)
+      .then(() => {
+        productosNormalizationReady = true;
+      })
+      .catch((error) => {
+        ensureProductosNormalizationPromise = null;
+        throw error;
+      });
+  }
+  await ensureProductosNormalizationPromise;
 };
 
 // Obtener todas las máquinas
@@ -146,7 +253,7 @@ exports.getMaquinas = async (req, res) => {
     } else if (stock === 'sin') {
       where.push('m.stock <= 0');
     }
-    const qText = String(q || '').trim();
+    const qText = normalizarTextoMayus(q);
     if (qText) {
       const normalized = normalizarBusqueda(qText);
       const clauses = [];
@@ -184,6 +291,7 @@ exports.getMaquinas = async (req, res) => {
     }
 
     connection = await pool.getConnection();
+    await ensureProductosNormalizados(connection);
     const [maquinas] = await connection.execute(query, params);
 
     if (hasQuery) {
@@ -225,6 +333,7 @@ exports.getMaquina = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
+    await ensureProductosNormalizados(connection);
     const [maquina] = await connection.execute(
       'SELECT m.*, t.nombre as tipo_nombre FROM maquinas m JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id WHERE m.id = ?',
       [req.params.id]
@@ -301,6 +410,7 @@ exports.getMaquinaPorCodigo = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
+    await ensureProductosNormalizados(connection);
     const [maquina] = await connection.execute(
       'SELECT m.*, t.nombre as tipo_nombre FROM maquinas m JOIN tipos_maquinas t ON m.tipo_maquina_id = t.id WHERE m.codigo = ? AND m.activo = TRUE',
       [codigo]
@@ -395,6 +505,7 @@ exports.crearMaquina = async (req, res) => {
     }
 
     connection = await pool.getConnection();
+    await ensureProductosNormalizados(connection);
     await connection.beginTransaction();
 
     // Verificar que el tipo de maquina existe
@@ -864,6 +975,7 @@ exports.exportarExcel = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
+    await ensureProductosNormalizados(connection);
     const [rowsPorUbicacion] = await connection.execute(`
       SELECT m.codigo, t.nombre as tipo_maquina, m.marca, m.descripcion,
         COALESCE(mu.ubicacion_letra, m.ubicacion_letra) as ubicacion_letra,
@@ -940,6 +1052,7 @@ exports.exportarStockMinimo = async (req, res) => {
   let connection;
   try {
     connection = await pool.getConnection();
+    await ensureProductosNormalizados(connection);
     const [rows] = await connection.execute(
       `
       SELECT m.codigo, m.descripcion, m.marca, m.stock, m.precio_venta
@@ -988,16 +1101,17 @@ exports.importarExcel = async (req, res) => {
     const rawRows = await readFirstSheetToJson(req.file.path);
 
     connection = await pool.getConnection();
+    await ensureProductosNormalizados(connection);
     await connection.beginTransaction();
 
     const [tipos] = await connection.execute('SELECT id, nombre FROM tipos_maquinas');
     const tiposMap = new Map(
-      tipos.map((tipo) => [String(tipo.nombre || '').toLowerCase(), tipo.id])
+      tipos.map((tipo) => [normalizarTextoMayus(tipo.nombre).toLowerCase(), tipo.id])
     );
 
     const [existentes] = await connection.execute('SELECT id, codigo, activo FROM maquinas');
     const existentesMap = new Map(
-      existentes.map((item) => [String(item.codigo || '').toLowerCase(), item])
+      existentes.map((item) => [normalizarTextoMayus(item.codigo).toLowerCase(), item])
     );
 
     const errores = [];
@@ -1213,6 +1327,7 @@ exports.eliminarMaquina = async (req, res) => {
 
   try {
     connection = await pool.getConnection();
+    await ensureProductosNormalizados(connection);
     await connection.beginTransaction();
 
     // Obtener la maquina

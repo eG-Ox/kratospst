@@ -13,6 +13,11 @@ const {
   isNonNegative,
   validateDocumento
 } = require('../src/shared/utils/validation');
+const {
+  normalizeTrimmedText,
+  normalizeUpperText,
+  normalizeSearchText
+} = require('../src/shared/utils/text');
 const cotizacionesController = require('../src/modules/cotizaciones/controller');
 const { _test: cotizacionesTest = {} } = require('../src/modules/cotizaciones/controller');
 const { validarItemsCotizacion } = cotizacionesTest;
@@ -103,6 +108,40 @@ run('validation.isUsuarioIdentificador acepta usuario y email', () => {
 
 run('validation.normalizeString recorta espacios', () => {
   assert.equal(normalizeString('  KRATOS  '), 'KRATOS');
+});
+
+run('text.normalizeTrimmedText aplana unicode decorativo', () => {
+  assert.equal(
+    normalizeTrimmedText(
+      '\u{1D40C}\u{1D40E}\u{1D413}\u{1D40E}\u{1D411} \u{1D7D0}\u{1D7D4}\u{1D407}\u{1D40F} '
+    ),
+    'MOTOR 26HP'
+  );
+});
+
+run('text.normalizeUpperText convierte codigo bold a ASCII', () => {
+  assert.equal(
+    normalizeUpperText(
+      '\u{1D401}\u{1D40D}\u{1D411}-\u{1D7D5}\u{1D7D2}\u{1D7CE}\u{1D404}\u{1D7D0}'
+    ),
+    'BNR-740E2'
+  );
+});
+
+run('validation.normalizeString canonicaliza unicode decorativo', () => {
+  assert.equal(
+    normalizeString('\u{1D401}\u{1D40D}\u{1D411}-\u{1D7D5}\u{1D7D2}\u{1D7CE}\u{1D404}\u{1D7D0}'),
+    'BNR-740E2'
+  );
+});
+
+run('text.normalizeSearchText rellena tokens de busqueda desde unicode decorativo', () => {
+  assert.equal(
+    normalizeSearchText(
+      '\u{1D40C}\u{1D40E}\u{1D413}\u{1D40E}\u{1D411} \u{1D7D0}\u{1D7D4}\u{1D407}\u{1D40F}'
+    ),
+    'MOTOR26HP'
+  );
 });
 
 run('validation.isNonEmptyString detecta vacios', () => {

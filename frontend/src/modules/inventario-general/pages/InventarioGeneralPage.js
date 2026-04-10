@@ -4,12 +4,10 @@ import {
   inventarioGeneralService,
   productosService
 } from '../../../core/services/apiServices';
+import { normalizeTrimmedText, normalizeUpperText } from '../../../shared/utils/text';
 import '../styles/InventarioGeneralPage.css';
 
-const normalizarCodigo = (value) =>
-  String(value || '')
-    .trim()
-    .toUpperCase();
+const normalizarCodigo = (value) => normalizeUpperText(value);
 
 const getDiferenciaClass = (diferencia) =>
   diferencia === 0 ? '' : diferencia > 0 ? 'diff-plus' : 'diff-minus';
@@ -251,7 +249,7 @@ const InventarioGeneralPage = () => {
   }, [refrescarDetalles, refreshTimerRef]);
 
   const parsearQR = useCallback((textoQR) => {
-    const raw = String(textoQR || '').trim();
+    const raw = normalizeTrimmedText(textoQR);
     if (!raw) {
       setError('QR invalido');
       return null;
@@ -259,18 +257,18 @@ const InventarioGeneralPage = () => {
     const tokens = raw
       .replace(/\r/g, '')
       .split(',')
-      .map((item) => item.trim())
+      .map((item) => normalizeTrimmedText(item))
       .filter(Boolean);
     const codigo = tokens[0] || raw;
     return { codigo, partial: true };
   }, []);
 
   const parsearZonaQR = useCallback((textoQR) => {
-    const raw = String(textoQR || '').trim().toUpperCase();
+    const raw = normalizeUpperText(textoQR);
     if (!raw) {
       return { error: 'Zona vacia' };
     }
-    const cleaned = raw.startsWith('ZONA:') ? raw.replace('ZONA:', '').trim() : raw;
+    const cleaned = raw.startsWith('ZONA:') ? normalizeTrimmedText(raw.replace('ZONA:', '')) : raw;
     const match = cleaned.match(/^([A-H])\s*(\d+)$/);
     if (!match) {
       return { error: 'Zona invalida. Usa ZONA:A1 o A1' };
@@ -288,14 +286,14 @@ const InventarioGeneralPage = () => {
       return;
     }
     const zonaFinal = zonaLetra && zonaNumero
-      ? `${zonaLetra}${zonaNumero}`.trim().toUpperCase()
+      ? normalizeUpperText(`${zonaLetra}${zonaNumero}`)
       : 'H1';
     if (!codigoScan) {
       return;
     }
     try {
       limpiarErrores();
-      let codigoFinal = String(codigoScan || '').trim();
+      let codigoFinal = normalizeTrimmedText(codigoScan);
       if (codigoFinal.includes('\n') || (codigoFinal.match(/,/g) || []).length >= 1) {
         const parsed = parsearQR(codigoFinal);
         if (!parsed) {
@@ -760,7 +758,7 @@ const InventarioGeneralPage = () => {
                       id="codigo"
                       type="text"
                       value={codigo}
-                      onChange={(e) => setCodigo(e.target.value.trim())}
+                      onChange={(e) => setCodigo(normalizeTrimmedText(e.target.value))}
                       placeholder="Escanea o escribe el codigo"
                     />
                     <button

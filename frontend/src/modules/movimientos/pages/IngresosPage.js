@@ -3,6 +3,7 @@ import { BrowserMultiFormatReader } from '@zxing/browser';
 import { movimientosService, productosService, tiposMaquinasService, marcasService } from '../../../core/services/apiServices';
 import { parseQRPayload } from '../../../shared/utils/qr';
 import useMountedRef from '../../../shared/hooks/useMountedRef';
+import { normalizeTrimmedText, normalizeUpperText } from '../../../shared/utils/text';
 import '../styles/MovimientosPage.css';
 
 const IngresosPage = ({ usuario }) => {
@@ -81,11 +82,8 @@ const IngresosPage = ({ usuario }) => {
     }
   };
 
-  const normalizarMarcaCodigo = (value) => String(value || '').trim().toUpperCase();
-  const normalizarCodigo = (value) =>
-    String(value || '')
-      .trim()
-      .toUpperCase();
+  const normalizarMarcaCodigo = (value) => normalizeUpperText(value);
+  const normalizarCodigo = (value) => normalizeUpperText(value);
 
   const marcasMap = useMemo(() => {
     const map = {};
@@ -156,12 +154,12 @@ const IngresosPage = ({ usuario }) => {
   };
 
   const extraerCodigoDesdeTexto = (texto) => {
-    const raw = String(texto || '').trim();
+    const raw = normalizeTrimmedText(texto);
     if (!raw) return '';
     const tokens = raw
       .replace(/\r/g, '')
       .split(',')
-      .map((item) => item.trim())
+      .map((item) => normalizeTrimmedText(item))
       .filter(Boolean);
     return tokens[0] || raw;
   };
@@ -204,7 +202,7 @@ const IngresosPage = ({ usuario }) => {
   };
 
   const obtenerTipoPorNombre = async (nombre) => {
-    const nombreNormalizado = String(nombre || '').trim();
+    const nombreNormalizado = normalizeTrimmedText(nombre);
     if (!nombreNormalizado) {
       return obtenerTipoDefault();
     }
@@ -224,7 +222,7 @@ const IngresosPage = ({ usuario }) => {
 
   const crearProductoDesdeQR = async (data) => {
     const tipoId = await obtenerTipoPorNombre(data.tipo_maquina);
-    const ubicacionFinal = data?.ubicacion && String(data.ubicacion).trim() ? data.ubicacion : 'H1';
+    const ubicacionFinal = normalizeTrimmedText(data?.ubicacion) || 'H1';
     const marcaFinal = resolverMarcaCodigo(data?.marca);
     const response = await productosService.create({
       codigo: data.codigo,

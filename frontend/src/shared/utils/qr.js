@@ -1,5 +1,7 @@
+import { normalizeTrimmedText, normalizeUpperText } from './text';
+
 export const parseQRPayload = (value) => {
-  const raw = String(value || '').trim();
+  const raw = normalizeTrimmedText(value);
   if (!raw) {
     return { ok: false, error: 'QR vacio' };
   }
@@ -7,11 +9,15 @@ export const parseQRPayload = (value) => {
   const normalized = raw.replace(/\r/g, '');
   const parts = normalized.split(',');
   const tokens = parts
-    .map((item) => String(item).trim().replace(/,+$/, ''))
+    .map((item) => normalizeTrimmedText(item).replace(/,+$/, ''))
     .filter((item) => item.length > 0);
 
   if (tokens.length === 1) {
-    return { ok: true, partial: true, data: { codigo: tokens[0] } };
+    return {
+      ok: true,
+      partial: true,
+      data: { codigo: normalizeUpperText(tokens[0]) }
+    };
   }
 
   if (tokens.length < 5) {
@@ -21,17 +27,17 @@ export const parseQRPayload = (value) => {
     };
   }
 
-  const codigo = tokens[0];
-  const tipo_maquina = tokens[1];
-  const marca = tokens[2];
-  const ubicacion = tokens[tokens.length - 1];
-  const descripcion = tokens.slice(3, tokens.length - 1).join(',').trim();
+  const codigo = normalizeUpperText(tokens[0]);
+  const tipo_maquina = normalizeUpperText(tokens[1]);
+  const marca = normalizeUpperText(tokens[2]);
+  const ubicacion = normalizeUpperText(tokens[tokens.length - 1]);
+  const descripcion = normalizeUpperText(tokens.slice(3, tokens.length - 1).join(','));
 
   if (!codigo || !tipo_maquina || !marca || !descripcion || !ubicacion) {
     return { ok: false, error: 'QR invalido: campos vacios' };
   }
 
-  const ubicacionMatch = String(ubicacion).trim().toUpperCase().match(/^([A-H])\s*(\d+)$/);
+  const ubicacionMatch = ubicacion.match(/^([A-H])\s*(\d+)$/);
   if (!ubicacionMatch) {
     return { ok: false, error: 'Ubicacion invalida. Usa A1, A2, B1...' };
   }

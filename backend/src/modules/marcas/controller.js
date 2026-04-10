@@ -1,8 +1,9 @@
 const pool = require('../../core/config/database');
 const { registrarHistorial } = require('../../shared/utils/historial');
+const { normalizeUpperText } = require('../../shared/utils/text');
 
-const normalizarCodigo = (value) => String(value || '').trim().toUpperCase();
-const normalizarNombre = (value) => String(value || '').trim().toUpperCase();
+const normalizarCodigo = (value) => normalizeUpperText(value);
+const normalizarNombre = (value) => normalizeUpperText(value);
 
 const parsePositiveInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
@@ -39,7 +40,7 @@ const generarCodigoMarca = async (connection) => {
 const sincronizarMarcaEnMaquinas = async (connection, nombreDestino, candidatos = []) => {
   const filtros = [...new Set(
     (candidatos || [])
-      .map((item) => String(item || '').trim().toUpperCase())
+      .map((item) => normalizeUpperText(item))
       .filter(Boolean)
   )];
   if (!filtros.length) {

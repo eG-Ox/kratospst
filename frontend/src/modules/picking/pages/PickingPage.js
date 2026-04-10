@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { ventasService } from '../../../core/services/apiServices';
 import { parseQRPayload } from '../../../shared/utils/qr';
+import { normalizeTrimmedText, normalizeUpperText } from '../../../shared/utils/text';
 import '../styles/PickingPage.css';
 
 const PickingPage = () => {
@@ -168,19 +169,16 @@ const PickingPage = () => {
       ultimoTextoRef.current = valor;
       ultimoTextoAtRef.current = ahora;
       const parsed = parseQRPayload(valor);
-      const normalizeCode = (value) =>
-        String(value || '')
-          .trim()
-          .toUpperCase();
+      const normalizeCode = (value) => normalizeUpperText(value);
       let code = '';
       if (parsed.ok && parsed.data?.codigo) {
         code = parsed.data.codigo;
       } else {
-        const raw = String(valor || '').trim();
+        const raw = normalizeTrimmedText(valor);
         const tokens = raw
           .replace(/\r/g, '')
           .split(',')
-          .map((item) => item.trim())
+          .map((item) => normalizeTrimmedText(item))
           .filter(Boolean);
         code = tokens[0] || raw;
       }
@@ -189,7 +187,7 @@ const PickingPage = () => {
         return;
       }
       const normalizedCode = normalizeCode(code);
-      setCodigo(code);
+      setCodigo(normalizeTrimmedText(code));
       if (itemSeleccionado) {
         const normalizedItem = normalizeCode(itemSeleccionado.codigo);
         const rawNormalized = normalizeCode(valor);
@@ -303,18 +301,22 @@ const PickingPage = () => {
   }, [cameraActive, iniciarEscaneo]);
 
   const ventasFiltradas = useMemo(() => {
-    if (!codigo.trim()) return ventasPendientes;
+    const codigoNormalizado = normalizeUpperText(codigo);
+    if (!codigoNormalizado) return ventasPendientes;
     return ventasPendientes.filter((venta) =>
-      (venta.items || []).some((item) => item.codigo === codigo.trim())
+      (venta.items || []).some(
+        (item) => normalizeUpperText(item.codigo) === codigoNormalizado
+      )
     );
   }, [codigo, ventasPendientes]);
 
   const handleBuscar = async () => {
-    if (!codigo.trim()) {
+    const codigoNormalizado = normalizeTrimmedText(codigo);
+    if (!codigoNormalizado) {
       await cargarPendientes();
       return;
     }
-    await cargarPendientes({ codigo: codigo.trim() });
+    await cargarPendientes({ codigo: codigoNormalizado });
   };
 
   const seleccionarVenta = (venta) => {
@@ -362,7 +364,7 @@ const PickingPage = () => {
               <input
                 type="text"
                 value={codigo}
-                onChange={(e) => setCodigo(e.target.value)}
+                onChange={(e) => setCodigo(normalizeTrimmedText(e.target.value))}
                 placeholder="Buscar por codigo"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleBuscar();

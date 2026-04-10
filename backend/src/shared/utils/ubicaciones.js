@@ -1,3 +1,5 @@
+const { normalizeUpperText } = require('./text');
+
 const toNonNegativeInt = (value, fallback = 0) => {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 0) {
@@ -7,7 +9,7 @@ const toNonNegativeInt = (value, fallback = 0) => {
 };
 
 const normalizeUbicacion = (letra, numero) => {
-  const normalizedLetter = String(letra || '').trim().toUpperCase();
+  const normalizedLetter = normalizeUpperText(letra);
   const parsedNumber = Number.parseInt(numero, 10);
   if (!normalizedLetter || !Number.isFinite(parsedNumber) || parsedNumber <= 0) {
     return null;
@@ -58,7 +60,7 @@ const syncUbicacionPrincipal = async (connection, { id, ubicacion_letra, ubicaci
   if (targetUbicacion) {
     const existsTarget = ubicaciones.some(
       (row) =>
-        String(row.ubicacion_letra || '').toUpperCase() === targetUbicacion.letra &&
+        normalizeUpperText(row.ubicacion_letra) === targetUbicacion.letra &&
         Number(row.ubicacion_numero) === targetUbicacion.numero
     );
 
@@ -81,7 +83,7 @@ const syncUbicacionPrincipal = async (connection, { id, ubicacion_letra, ubicaci
     (targetUbicacion &&
       ubicaciones.find(
         (row) =>
-          String(row.ubicacion_letra || '').toUpperCase() === targetUbicacion.letra &&
+          normalizeUpperText(row.ubicacion_letra) === targetUbicacion.letra &&
           Number(row.ubicacion_numero) === targetUbicacion.numero
       )) ||
     ubicaciones[0];

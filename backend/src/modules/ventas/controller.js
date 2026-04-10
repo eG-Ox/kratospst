@@ -4,6 +4,7 @@ const { isNonEmptyString, isNonNegative, isPositiveInt, validateDocumento, toNum
 const { syncUbicacionPrincipal } = require('../../shared/utils/ubicaciones');
 const { tienePermiso } = require('../../core/middleware/auth');
 const { registrarHistorial } = require('../../shared/utils/historial');
+const { normalizeTrimmedText, normalizeUpperText, normalizeSearchText } = require('../../shared/utils/text');
 
 const formatDate = (value) => {
   if (!value) return null;
@@ -24,13 +25,11 @@ const PERMISO_VER_PRECIO_COMPRA = 'productos.precio_compra.ver';
 const OPERACION_ID_MAX_LENGTH = 64;
 
 const normalizarOperacionToken = (value) =>
-  String(value || '')
-    .trim()
-    .toUpperCase()
+  normalizeUpperText(value)
     .replace(/[^A-Z0-9_-]/g, '');
 
 const recortarOperacionId = (value) => {
-  const text = String(value || '').trim();
+  const text = normalizeTrimmedText(value);
   return text ? text.slice(0, OPERACION_ID_MAX_LENGTH) : null;
 };
 
@@ -96,17 +95,17 @@ const createProductoIdResolver = (connection) => {
     if (Number.isInteger(directId) && directId > 0) {
       return directId;
     }
-    const codigo = String(item?.codigo || '').trim();
-    if (!codigo) {
+    const codigo = normalizarTextoMayus(item?.codigo);
+    const cacheKey = normalizarClave(codigo);
+    if (!cacheKey) {
       return null;
     }
-    const cacheKey = codigo.toUpperCase();
     if (cache.has(cacheKey)) {
       return cache.get(cacheKey);
     }
     const [rows] = await connection.execute(
-      'SELECT id FROM maquinas WHERE codigo = ? LIMIT 1',
-      [codigo]
+      'SELECT id FROM maquinas WHERE codigo_busqueda = ? LIMIT 1',
+      [cacheKey]
     );
     const productoId = rows[0]?.id ? Number(rows[0].id) : null;
     cache.set(cacheKey, productoId);
@@ -138,9 +137,10 @@ const buildDetalleRows = async (ventaId, items, tipo, resolveProductoId) => {
 
 const parseArray = (value) => {
   if (Array.isArray(value)) return value;
-  if (typeof value === 'string' && value.trim().length > 0) {
+  const normalized = normalizeTrimmedText(value);
+  if (typeof value === 'string' && normalized.length > 0) {
     try {
-      const parsed = JSON.parse(value);
+      const parsed = JSON.parse(normalized);
       return Array.isArray(parsed) ? parsed : [];
     } catch (error) {
       return [];
@@ -177,9 +177,9 @@ const commitSilently = async (connection) => {
   await connection.commit();
 };
 
-const normalizarDocumentoTipo = (value) => String(value || '').trim().toLowerCase();
-const normalizarAgencia = (value) => String(value || '').trim().toUpperCase();
-const normalizarEstadoEnvio = (value) => String(value || 'PENDIENTE').trim().toUpperCase();
+const normalizarDocumentoTipo = (value) => normalizeTrimmedText(value).toLowerCase();
+const normalizarAgencia = (value) => normalizeUpperText(value);
+const normalizarEstadoEnvio = (value) => normalizeUpperText(value || 'PENDIENTE');
 const isValidDateInput = (value) =>
   value === undefined || value === null || value === '' || !Number.isNaN(Date.parse(value));
 const isVentasScopedByOwner = (req) => req.usuario?.rol === 'ventas' && isPositiveInt(req.usuario?.id);
@@ -194,9 +194,7 @@ const appendOwnerScope = (req, params, alias = 'v') => {
 };
 
 const parseNumeroCotizacion = (value) => {
-  const normalized = String(value || '')
-    .trim()
-    .toUpperCase()
+  const normalized = normalizeUpperText(value)
     .replace(/\s+/g, '');
   if (!normalized) return [];
 
@@ -263,14 +261,9 @@ const validarDetalleItems = (items, label) => {
   }
   return null;
 };
-const normalizarTexto = (value) => String(value || '').trim();
-const normalizarTextoMayus = (value) => normalizarTexto(value).toUpperCase();
-const normalizarClave = (value) =>
-  normalizarTexto(value)
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^A-Z0-9]/g, '');
+const normalizarTexto = (value) => normalizeTrimmedText(value);
+const normalizarTextoMayus = (value) => normalizeUpperText(value);
+const normalizarClave = (value) => normalizeSearchText(value);
 
 const normalizarEntero = (value) => {
   const parsed = Number(value);

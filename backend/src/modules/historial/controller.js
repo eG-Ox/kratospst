@@ -1,5 +1,6 @@
 const pool = require('../../core/config/database');
 const { ExcelJS, addSheetFromObjects, workbookToBuffer } = require('../../shared/utils/excel');
+const { normalizeTrimmedText } = require('../../shared/utils/text');
 
 const MAX_HISTORY_LIST_LIMIT = 500;
 
@@ -64,7 +65,7 @@ const DOCUMENTO_TOKEN_SINGLE_REGEX = /\b(DNI|RUC|GUIA|CAMBIO\s+CODIGO)\s*:\s*([^
 
 const asCleanString = (value) => {
   if (value === null || value === undefined) return null;
-  const text = String(value).trim();
+  const text = normalizeTrimmedText(value);
   return text ? text : null;
 };
 
@@ -88,7 +89,7 @@ const normalizeAction = (value) => {
 };
 
 const normalizeDocumentoLabel = (label) => (
-  String(label || '')
+  normalizeTrimmedText(label)
     .toUpperCase()
     .replace(/\s+/g, ' ')
     .trim()

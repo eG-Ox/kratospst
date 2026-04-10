@@ -19,6 +19,10 @@ describe('ventasUtils', () => {
     expect(normalizarClaveLocal(' a-b/1 ')).toBe('AB1');
   });
 
+  test('normalizarClaveLocal canonicaliza unicode decorativo', () => {
+    expect(normalizarClaveLocal(' 𝐁𝐍𝐑-𝟕𝟒𝟎𝐄𝟐 ')).toBe('BNR740E2');
+  });
+
   test('constantes incluyen valores esperados', () => {
     expect(agencias).toContain('SHALOM');
     expect(estadosEnvio).toContain('PENDIENTE');
